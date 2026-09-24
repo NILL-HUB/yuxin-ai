@@ -33,6 +33,9 @@ _LEGACY_TIER_ALIASES = {
 # 系统预置的 feature_key 默认配置。
 # feature_key 由代码注册，管理员在后台仅为其绑定模型/开关/档位，不能新建或删除。
 # 启动时通过 ensure_builtin_features() 自动补齐缺失记录，避免迁移脚本多 head 问题。
+# 注：runtime_fallback / media_fetch / agent_checkpoint_by_conversation 三条行为开关类
+# feature 已迁移至「全局控制配置」板块（global_control_config 表，/admin/global-control-config），
+# 此处仅保留模型绑定类 feature。
 _BUILTIN_FEATURES: list[dict[str, Any]] = [
     {
         "feature_key": "conductor",
@@ -70,17 +73,6 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "model_type": "chat",   # 视觉调用走 OpenAI 兼容 image_url 多模态（本质是 chat LLM）
         "fallback_tier": "2",   # 标准型 Flash 级模型即可胜任视觉描述
         "billable": True,       # 用户主动发起（对话内识图/视频解析），按用量计费
-    },
-    {
-        "feature_key": "media_fetch",
-        "feature_name": "外部素材获取",
-        "feature_category": "conversation",
-        "feature_description": "从对话内调用 fetch_media 工具下载外部视频/音频 URL 入知识库",
-        # 非模型绑定的能力开关：model_type 照抄其它非模型类 feature 的占位约定（此处不用于选模型）。
-        "model_type": "chat",
-        "fallback_tier": "2",   # 工具本身不耗 token；档位仅作为无绑定时的兜底占位
-        "billable": False,      # 系统能力开关，管理后台可视化控制，不直接计费
-        "default_enabled": False,  # 默认关闭：须管理员在公共 AI 配置显式开启
     },
 ]
 

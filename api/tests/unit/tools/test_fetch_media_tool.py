@@ -57,7 +57,7 @@ def test_dispatch_uses_kwargs(monkeypatch):
 
 
 def test_factory_passes_enabled_flag():
-    # 工厂从 kwargs 注入 enabled（挂载点把 is_feature_enabled("media_fetch") 结果传进来）
+    # 工厂从 kwargs 注入 enabled（挂载点把 GlobalControlConfigService media_fetch 开关结果传进来）
     assert fetch_media(enabled=True).enabled is True
     assert fetch_media(enabled=False).enabled is False
     assert fetch_media().enabled is True  # 未显式传入时默认开启

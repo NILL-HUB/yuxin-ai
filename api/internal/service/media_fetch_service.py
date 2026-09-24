@@ -20,6 +20,26 @@ logger = logging.getLogger(__name__)
 ALLOWED_EXTRACTORS = {"youtube", "bilibili", "vimeo", "dailymotion", "twitch"}
 
 
+def _load_media_fetch_extra_config() -> dict:
+    """读取 media_fetch 的 admin 全局控制配置。
+
+    优先 ``global_control_config.media_fetch``（admin /admin/global-control-config
+    中「外部素材获取」分组，含 max_bytes_fallback 体积估算上限），读取失败时
+    返回空 dict，调用方降级到环境变量。惰性取 injector，避免循环导入与
+    初始化顺序问题。
+    """
+    try:
+        from app.http.module import injector
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        return injector.get(GlobalControlConfigService).get_config("media_fetch")
+    except Exception:
+        pass
+    return {}
+
+
 class MediaFetchError(Exception):
     """外部素材获取业务失败（不重试）。其子类是 Celery 判定不重试的边界。"""
 
@@ -45,7 +65,12 @@ class MediaFetchService:
         for key in ("filesize", "filesize_approx"):
             size = max(size, int(info.get(key) or 0))
         if size <= 0:
-            size = int(os.getenv("MEDIA_FETCH_MAX_BYTES_FALLBACK", "536870912") or "536870912")  # 512MB
+            # 上游未给出体积时的估算兜底：优先 admin media_fetch 分组配置，其次环境变量
+            size = int(
+                _load_media_fetch_extra_config().get("max_bytes_fallback")
+                or os.getenv("MEDIA_FETCH_MAX_BYTES_FALLBACK", "536870912")
+                or "536870912"
+            )  # 512MB
         if size > max_bytes:
             return {"ok": False, "error": f"素材体积约 {size // 1024 // 1024} MiB 超出本板块上限，请降低分辨率后重试"}
         return {"ok": True}
@@ -214,16 +239,16 @@ class MediaFetchService:
 
         # 主媒体流式上传（保 key，不读进内存）。注入对象实际是运行时存储代理
         # （RuntimeStorageProxy），不暴露 CosService._build_object_key，故直接调静态方法生成 key。
-        from internal.service.cos_service import CosService
+        from internal.service.cos_service import CosService, _load_active_backend
         target_key = CosService._build_object_key(filename)
         try:
             media_hash = self._stream_sha3(media_path)
             self._cos.upload_local_file(source_path=media_path, target_key=target_key)
 
             extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            # 注入对象为运行时存储代理，直接取激活后端；未注入时走 admin 配置链兜底
             active_backend = getattr(self._cos, "active_backend", None)
-            backend = str(active_backend() if callable(active_backend) else os.getenv("STORAGE_BACKEND", "cos")).strip().lower()
-            backend = "local" if backend in ("", "local") else "cos"
+            backend = str(active_backend() if callable(active_backend) else _load_active_backend()).strip().lower()
             main_upload = self._upload_file_service.create_upload_file(
                 account_id=account.id,
                 name=filename,

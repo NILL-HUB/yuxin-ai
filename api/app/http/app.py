@@ -45,8 +45,22 @@ init_runtime(app)
 
 def _should_sync_skill_catalog_on_startup() -> bool:
     mode = os.getenv("MODE", "api")
-    enabled = app.config.get("SKILL_CATALOG_SYNC_ENABLED", False)
-    return mode != "celery" and bool(enabled)
+    if mode == "celery":
+        return False
+    # 优先 admin「全局控制配置 → 技能目录同步」开关（global_control_config 表），
+    # 读取失败时降级到环境变量 SKILL_CATALOG_SYNC_ENABLED（默认关）。
+    try:
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        return bool(
+            injector.get(GlobalControlConfigService)
+            .get_config("skill_catalog_sync")
+            .get("enabled", False)
+        )
+    except Exception:
+        return bool(app.config.get("SKILL_CATALOG_SYNC_ENABLED", False))
 
 
 def _is_truthy_env(env_name: str, default: str = "0") -> bool:
@@ -163,6 +177,17 @@ def run_startup_sync_initialization() -> None:
             injector.get(StorageConfigService).ensure_default_config()
         except Exception:
             logging.exception("启动时初始化存储配置失败")
+
+    # 启动时确保全局控制配置默认行存在
+    if os.getenv("MODE", "api") != "celery":
+        try:
+            from internal.service.global_control_config_service import (
+                GlobalControlConfigService,
+            )
+
+            injector.get(GlobalControlConfigService).ensure_default_config()
+        except Exception:
+            logging.exception("启动时初始化全局控制配置失败")
 
     # 初始化记忆系统降级管理器
     try:

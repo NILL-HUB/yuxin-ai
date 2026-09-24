@@ -2596,3 +2596,49 @@ class TestAssistantAgentService:
 
         # 验证结果 - 应该返回空列表
         assert len(messages) == 0
+
+
+def test_checkpoint_by_conversation_should_be_off_when_config_missing(monkeypatch):
+    """全局控制配置记录不存在时应视为关闭（保持既有默认行为，不产生 checkpoint 写入）。"""
+    from app.http import module
+    import internal.service.assistant_agent_service as aas
+
+    monkeypatch.setattr(
+        module,
+        "injector",
+        SimpleNamespace(
+            get=lambda _cls: SimpleNamespace(get_config=lambda _s: {})
+        ),
+    )
+
+    assert aas._is_checkpoint_by_conversation_enabled() is False
+
+
+def test_checkpoint_by_conversation_should_follow_admin_switch(monkeypatch):
+    """开启/关闭应遵循 admin 全局控制配置 agent_checkpoint 分组的 enabled 字段。"""
+    from app.http import module
+    import internal.service.assistant_agent_service as aas
+
+    def _service(enabled):
+        return SimpleNamespace(
+            get_config=lambda _s: {"enabled": enabled}
+        )
+
+    monkeypatch.setattr(module, "injector", SimpleNamespace(get=lambda _cls: _service(False)))
+    assert aas._is_checkpoint_by_conversation_enabled() is False
+
+    monkeypatch.setattr(module, "injector", SimpleNamespace(get=lambda _cls: _service(True)))
+    assert aas._is_checkpoint_by_conversation_enabled() is True
+
+
+def test_checkpoint_by_conversation_should_fallback_to_off_on_error(monkeypatch):
+    """读取失败时应安全兜底为关闭，不影响主流程。"""
+    from app.http import module
+    import internal.service.assistant_agent_service as aas
+
+    def _boom(_cls):
+        raise RuntimeError("injector unavailable")
+
+    monkeypatch.setattr(module, "injector", SimpleNamespace(get=_boom))
+
+    assert aas._is_checkpoint_by_conversation_enabled() is False

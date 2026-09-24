@@ -66,19 +66,24 @@ def test_get_feature_fallback_tier_passes_through_numeric_value():
     assert svc.get_feature_fallback_tier("conductor") == "3"
 
 
-def test_media_fetch_builtin_defaults_to_disabled():
-    """media_fetch 内置 feature 的默认落库应为关闭（default_enabled=False）。"""
+def test_behavior_switch_features_not_in_builtin_features():
+    """行为开关类 feature（runtime_fallback / media_fetch / agent_checkpoint_by_conversation）
+    已迁移至「全局控制配置」板块（global_control_config 表），不得再被 seed。"""
     from internal.service.public_ai_feature_service import _BUILTIN_FEATURES
 
-    feat = next(f for f in _BUILTIN_FEATURES if f["feature_key"] == "media_fetch")
-    assert feat.get("default_enabled", True) is False
+    keys = {f["feature_key"] for f in _BUILTIN_FEATURES}
+    assert "media_fetch" not in keys
+    assert "runtime_fallback" not in keys
+    assert "agent_checkpoint_by_conversation" not in keys
+    # 模型绑定类 feature 保留
+    assert {"conductor", "schedule_intent_parser", "admin_agent", "vision_analyze"} <= keys
 
 
 def test_is_feature_enabled_reflects_record_flag():
     """is_feature_enabled 以表记录 enabled 为唯一事实源（无记录视为启用 fallback）。"""
     svc = _feature_service(SimpleNamespace(enabled=False))
-    assert svc.is_feature_enabled("media_fetch") is False
+    assert svc.is_feature_enabled("conductor") is False
     svc = _feature_service(SimpleNamespace(enabled=True))
-    assert svc.is_feature_enabled("media_fetch") is True
+    assert svc.is_feature_enabled("conductor") is True
     svc = _feature_service(None)
-    assert svc.is_feature_enabled("media_fetch") is True
+    assert svc.is_feature_enabled("conductor") is True

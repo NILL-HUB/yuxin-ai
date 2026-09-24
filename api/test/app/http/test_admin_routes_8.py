@@ -860,6 +860,84 @@ class TestAdminPublicAIFeature:
         assert resp.status_code == 200
         assert payload["data"]["feature_key"] == "feature_routing"
 
+    def test_update_feature_merges_extra_config(self, monkeypatch):
+        """_update_public_ai_feature 合并透传 extra_config：新增键生效、未传入键保留。"""
+        from contextlib import contextmanager
+        from internal.extension import database_extension
+        from internal.lib import runtime_context
+
+        record = SimpleNamespace(
+            model_config_id=None,
+            enabled=True,
+            fallback_tier="2",
+            billable=False,
+            extra_config={"keep": 1, "max_bytes_fallback": 1073741824},
+        )
+        query = SimpleNamespace(
+            filter_by=lambda **kwargs: SimpleNamespace(first=lambda: record)
+        )
+        fake_db = SimpleNamespace(
+            session=SimpleNamespace(
+                query=lambda cls: query,
+                commit=lambda: None,
+                refresh=lambda r: None,
+            )
+        )
+
+        @contextmanager
+        def _scope():
+            yield
+
+        monkeypatch.setattr(runtime_context, "app_session_scope", _scope)
+        monkeypatch.setattr(database_extension, "db", fake_db)
+
+        result = admin_routes_8._update_public_ai_feature(
+            "media_fetch",
+            {"enabled": False, "extra_config": {"max_bytes_fallback": 268435456}},
+        )
+        assert result.enabled is False
+        assert result.extra_config == {
+            "keep": 1,
+            "max_bytes_fallback": 268435456,
+        }
+
+    def test_update_feature_ignores_non_dict_extra_config(self, monkeypatch):
+        """extra_config 非 dict（如字符串）时应被忽略，不破坏既有配置。"""
+        from contextlib import contextmanager
+        from internal.extension import database_extension
+        from internal.lib import runtime_context
+
+        record = SimpleNamespace(
+            model_config_id=None,
+            enabled=True,
+            fallback_tier="2",
+            billable=False,
+            extra_config={"max_bytes_fallback": 1073741824},
+        )
+        query = SimpleNamespace(
+            filter_by=lambda **kwargs: SimpleNamespace(first=lambda: record)
+        )
+        fake_db = SimpleNamespace(
+            session=SimpleNamespace(
+                query=lambda cls: query,
+                commit=lambda: None,
+                refresh=lambda r: None,
+            )
+        )
+
+        @contextmanager
+        def _scope():
+            yield
+
+        monkeypatch.setattr(runtime_context, "app_session_scope", _scope)
+        monkeypatch.setattr(database_extension, "db", fake_db)
+
+        result = admin_routes_8._update_public_ai_feature(
+            "media_fetch",
+            {"enabled": True, "extra_config": "not-a-dict"},
+        )
+        assert result.extra_config == {"max_bytes_fallback": 1073741824}
+
     def test_batch_bind_preview(self, monkeypatch):
         """批量绑定预览：调用模块 helper 并返回受影响功能清单。"""
         self._setup(monkeypatch)
@@ -1744,3 +1822,93 @@ class _FakeSmsConfigService:
         if self._test_error is not None:
             raise self._test_error
         return {"ok": True, "provider": "aliyun", "code": "OK"}
+
+
+class TestAdminGlobalControlConfig:
+    """admin「系统配置 → 全局控制配置」（global_control_config 单行 JSONB）路由测试。"""
+
+    def _setup(self, monkeypatch):
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        svc = _FakeGlobalControlConfigService()
+        _setup(monkeypatch, {GlobalControlConfigService: svc})
+        return svc
+
+    def test_get(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(
+                    f"/admin/global-control-config?account_id={uuid4()}"
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["configs"]["media_fetch"]["enabled"] is False
+        assert svc.calls[0] == ("get_all",)
+
+    def test_put(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/global-control-config?account_id={uuid4()}",
+                    json={
+                        "section": "media_fetch",
+                        "configs": {"enabled": True, "max_bytes_fallback": 200},
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["section"] == "media_fetch"
+        assert payload["data"]["configs"]["enabled"] is True
+        assert svc.calls[0] == ("update", "media_fetch", {"enabled": True, "max_bytes_fallback": 200})
+
+    def test_put_validate_error(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/global-control-config?account_id={uuid4()}",
+                    json={"section": "unknown_section", "configs": {"enabled": True}},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+        assert "unknown_section" in payload["message"]
+
+
+class _FakeGlobalControlConfigService:
+    def __init__(self):
+        self.calls = []
+        self._all = {
+            "runtime_fallback": {"enabled": True, "retry_attempts": 5},
+            "media_fetch": {"enabled": False, "max_bytes_fallback": 536870912},
+            "agent_checkpoint": {"enabled": False},
+            "skill_catalog_sync": {"enabled": False},
+            "image_request_policy": {"policy": "strict"},
+            "vision_fallback": {"provider": "", "model": ""},
+        }
+
+    def get_all_configs(self):
+        self.calls.append(("get_all",))
+        return dict(self._all)
+
+    def update_config(self, section, patch):
+        self.calls.append(("update", section, patch))
+        if section not in self._all:
+            raise ValueError(f"不支持的配置分组: {section}")
+        merged = {**self._all[section], **patch}
+        self._all[section] = merged
+        return dict(merged)

@@ -225,6 +225,14 @@ def _update_public_ai_feature(feature_key, payload):
         if billable_value is not None:
             record.billable = bool(billable_value)
 
+        # extra_config 合并透传（如 media_fetch.max_bytes_fallback 等扩展参数）：
+        # 未显式传入时保持不变，避免清空既有扩展配置。
+        extra_config = payload.get("extra_config")
+        if extra_config is not None and isinstance(extra_config, dict):
+            current = dict(record.extra_config or {})
+            current.update(extra_config)
+            record.extra_config = current
+
         db.session.commit()
         db.session.refresh(record)
         return record
@@ -1808,3 +1816,48 @@ def register_routes(quart_app):
         except ValueError as exc:
             return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
         return a._ok({"configs": cfg})
+
+    # ------------------------------------------------------------------
+    # admin 全局控制配置（global_control_config 单行 JSONB）：读取 / 更新
+    # 系统级全局行为配置（模型运行时降级 / 外部素材获取 / 会话级 Checkpoint /
+    # 技能目录同步 / 图像请求策略 / 视觉兜底模型），按 section 分组更新。
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/global-control-config")
+    async def admin_global_control_config_get():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        configs = await a._to_thread(a._get_service(GlobalControlConfigService).get_all_configs)
+        return a._ok({"configs": configs})
+
+    @quart_app.put("/admin/global-control-config")
+    async def admin_global_control_config_put():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        section = str(payload.get("section") or "").strip()
+        patch = payload.get("configs") or {}
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        try:
+            cfg = await a._to_thread(
+                a._get_service(GlobalControlConfigService).update_config,
+                section,
+                patch,
+            )
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
+        return a._ok({"section": section, "configs": cfg})

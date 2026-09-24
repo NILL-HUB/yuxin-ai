@@ -752,10 +752,12 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     # 支付配置。
     if _admin_match(segments, ("admin", "payment-configs")):
         return "payment_config:read" if method == "GET" else "payment_config:manage"
-    # 邮件/短信发送配置、桌面客户端连接配置（系统配置域）。
+    # 邮件/短信发送配置、桌面客户端连接配置、全局控制配置（系统配置域）。
     if _admin_match(segments, ("admin", "mail-config")) or _admin_match(
         segments, ("admin", "sms-config")
-    ) or _admin_match(segments, ("admin", "desktop-client-config")):
+    ) or _admin_match(segments, ("admin", "desktop-client-config")) or _admin_match(
+        segments, ("admin", "global-control-config")
+    ):
         return "system_config:manage"
 
     return None

@@ -1,8 +1,8 @@
 """fetch_media 运行时挂载单测（KB-P6 Task 6）。
 
 挂载点位于 `assistant_agent_service._build_assistant_runtime_tools`，其决策逻辑抽为
-模块级 `_build_media_fetch_tool`：按 admin 公共 AI 配置 `media_fetch` 开关（经
-`PublicAIFeatureService.is_feature_enabled` 在挂载点读取）决定是否从
+模块级 `_build_media_fetch_tool`：按 admin 全局控制配置 `media_fetch` 开关（经
+`GlobalControlConfigService.get_config("media_fetch")` 在挂载点读取）决定是否从
 `builtin_provider_manager` 取工厂并注入 fetch_media 工具实例；未开启时连工厂都不查。
 
 本仓 `api/tests/` 没有构造 AssistantAgentService 的既有测试范式（其 __init__ 依赖

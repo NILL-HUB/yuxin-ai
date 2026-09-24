@@ -95,7 +95,7 @@ def _build_file_items(
             in_use = False
         resolved_backend = (
             (getattr(file, "storage_backend", "") or "").strip()
-            or (_os.getenv("STORAGE_BACKEND") or "local").strip().lower()
+            or runtime_storage_service.active_backend()
         )
         items.append(
             {

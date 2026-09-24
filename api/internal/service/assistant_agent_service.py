@@ -130,9 +130,9 @@ def _get_system_knowledge_context(db) -> str:
 def _build_media_fetch_tool(builtin_provider_manager, *, feature_enabled: bool,
                             account_id: str = "", message_id: str = "",
                             conversation_id: str = "") -> Any | None:
-    """按 admin 公共 AI 配置 media_fetch 开关构建 fetch_media 工具。
+    """按 admin 全局控制配置 media_fetch 开关构建 fetch_media 工具。
 
-    feature_enabled 由调用方在挂载点经 `PublicAIFeatureService.is_feature_enabled("media_fetch")`
+    feature_enabled 由调用方在挂载点经 `GlobalControlConfigService.get_config("media_fetch")`
     读取；未启用时连工厂都不查（不存在拿到工具的路径），启用后把 enabled=True 注入实例。
     """
     if not feature_enabled:
@@ -147,6 +147,28 @@ def _build_media_fetch_tool(builtin_provider_manager, *, feature_enabled: bool,
         enabled=True,
     )
 
+
+
+def _is_checkpoint_by_conversation_enabled() -> bool:
+    """会话级 checkpoint 开关（admin 全局控制配置 agent_checkpoint 分组）。
+
+    记录不存在时视为关闭（保持既有默认行为，不额外产生 Redis checkpoint 写入）；
+    仅管理员在 /admin/global-control-config 显式开启后生效。惰性取 injector，
+    避免循环导入与初始化顺序问题。
+    """
+    try:
+        from app.http.module import injector
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        return bool(
+            injector.get(GlobalControlConfigService)
+            .get_config("agent_checkpoint")
+            .get("enabled", False)
+        )
+    except Exception:
+        return False
 
 
 @inject
@@ -1136,12 +1158,18 @@ class AssistantAgentService(BaseService):
                     )
 
         # 外部素材获取工具：把公开视频/音频链接下载入库。默认关闭，管理员在
-        # admin 公共 AI 配置开启 media_fetch 开关后才挂载（挂载点读取该配置，注入 enabled）。
+        # admin 全局控制配置开启 media_fetch 开关后才挂载（挂载点读取该配置，注入 enabled）。
         if self.app_config_service is not None:
             try:
                 from app.http.module import injector
-                from internal.service.public_ai_feature_service import PublicAIFeatureService
-                feature_enabled = injector.get(PublicAIFeatureService).is_feature_enabled("media_fetch")
+                from internal.service.global_control_config_service import (
+                    GlobalControlConfigService,
+                )
+                feature_enabled = bool(
+                    injector.get(GlobalControlConfigService)
+                    .get_config("media_fetch")
+                    .get("enabled", False)
+                )
                 me_tool = _build_media_fetch_tool(
                     self.app_config_service.builtin_provider_manager,
                     feature_enabled=feature_enabled,
@@ -1596,15 +1624,12 @@ class AssistantAgentService(BaseService):
         )
 
         # 进程级 checkpoint 的 thread_id 默认策略：调用方未显式指定时，
-        # 若开启 AGENT_CHECKPOINT_BY_CONVERSATION=1 则以会话维度启用——
+        # 若管理员在公共 AI 配置开启「会话级 Checkpoint 续跑」则以会话维度启用——
         # 同一会话（conversation）内的执行共享一条 checkpoint 链，崩溃后
         # 同会话重发请求可从断点续跑（LangGraph 节点边界，不重放已完成工具）。
         # 默认关闭：保持现有行为不变（不产生额外 Redis checkpoint 写入）。
-        import os as _os
-
-        if not (checkpoint_thread_id or "").strip():
-            if _os.getenv("AGENT_CHECKPOINT_BY_CONVERSATION", "").strip().lower() in {"1", "true", "yes", "on"}:
-                checkpoint_thread_id = f"conv:{conversation.id}"
+        if not (checkpoint_thread_id or "").strip() and _is_checkpoint_by_conversation_enabled():
+            checkpoint_thread_id = f"conv:{conversation.id}"
 
         # 3.在落库前解析运行时模型能力，避免带图请求被静默降级
         if self.language_model_service is not None:
