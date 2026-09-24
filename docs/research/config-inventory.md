@@ -34,7 +34,7 @@
 ## C. 合理保留 env（密钥 / 部署基础设施 / 迁移脚本）
 
 - **第三方凭据与密钥**：COS SecretId/SecretKey、OSS AccessKey、OAuth 客户端、外部 API Key（gaode/newsapi/github/stability 等 builtin 工具 provider）——密钥类一律不入库，走 env 是正确位置。
-  - **2026-09-25 收编**：builtin 工具 provider 内 23 处凭证裸读（17 文件）已统一收敛到
+  - **2026-09-25 收编**：builtin 工具 provider 内凭证裸读（17 文件，约 23 处读取点）已统一收敛到
     `internal/service/tool_credential_resolver.py` 的 `get_tool_credential()`；工具层不再直接
     调用 `os.getenv`。**存放位置不变（仍在 env），仅收敛读取方式**；三种缺凭证语义
     （`return None` / 中文提示串 / `raise FailException`）保留在各自调用点。

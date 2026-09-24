@@ -107,7 +107,7 @@
 | `api/internal/service/assistant_agent_service.py` | 补 `browser_automation` 运行时挂载点 | 修改 |
 | `api/test/internal/core/tools/test_browser_action_tool.py` | 补动态 bridge 用例 + 隔离 DESKTOP_BRIDGE env | 修改 |
 | `api/internal/model/mcp.py` | 新增 `tool_schema` JSONB 列 | 修改 |
-| `api/internal/migration/versions/h2c3d4e5f6a9_add_mcp_tool_schema.py` | 建 `tool_schema` 列 | 新建 |
+| `api/internal/migration/versions/j4e5f6a7b8c1_add_mcp_tool_schema.py` | 建 `tool_schema` 列 | 新建 |
 | `api/internal/core/tools/mcp_tools/providers/mcp_stdio_client.py` | 新增 `protocol="raw"` 模式（argv 模板执行） | 修改 |
 | `api/internal/core/tools/mcp_tools/providers/mcp_tool_factory.py` | `SUPPORTED_CLI_TRANSPORTS`、`cli` 别名分派、`tool_schema` 读取 | 修改 |
 | `api/internal/schema/mcp_schema.py` | `_SUPPORTED_TRANSPORTS` 加 `cli`；`tool_schema` 字段 + 校验；`McpProviderResp` 加 `tool_schema`（防序列化丢字段） | 修改 |
