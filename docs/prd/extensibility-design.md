@@ -63,8 +63,31 @@
 | 优先级 | 条件 | 接入方式 | 代码改动 |
 |---|---|---|---|
 | **首选** | 应用暴露 MCP | 现有 MCP 工厂（McpToolFactory） | 零代码，admin 配置即用 |
+| **次选** | 应用发布为本地 CLI | 现有 MCP 工厂的 `transport=cli`（复用 stdio client 的 `protocol=raw`） | 零代码，admin 配置即用（需声明 `tool_schema`） |
 | **次选** | 应用有 REST API | 现有 API Tool 工厂（ApiProviderManager） | 零代码，admin 配置即用 |
 | **兜底** | 应用只有 SDK/库 | 实现 ToolProvider 协议 + 注册 | ~100 行 |
+
+### 3.2.1 CLI 本地进程接入（2026-09-25 落地）
+
+本地 CLI 作为工具接入**只有一条通道**：`McpStdioClient` 的本地进程能力，按协议分两种模式：
+
+| transport | protocol | 工具来源 | 适用 |
+| --- | --- | --- | --- |
+| `stdio` | `mcp`（默认） | CLI 自身实现 MCP `tools/list` 自描述 | 已支持 MCP 的 CLI（如 `qwen-mm-plugins-api`） |
+| `cli` | `raw`（自动） | admin 在 `mcp_provider.tool_schema` 显式声明 | 纯 CLI（无 MCP 协议），按 `args` 模板执行、取 stdout |
+
+两种模式的运行链路：
+
+- `McpToolFactory.get_tools` →（cli 时注入 `protocol="raw"`）→ `McpStdioClient.list_tools_sync` / `call_tool_sync`。
+- `raw` 模式的工具定义不做进程探测，直接读 `mcp_provider.tool_schema`（`{tool_name: {description, parameters}}`）；调用时按 `args` 模板做 `{参数名}` 替换后 `subprocess.run`，取 stdout（非零退出码 → `isError`）。
+
+硬约束：
+
+- **无平行实现**：两种模式共用 `_build_stdio_params` / `_build_subprocess_env` / 超时与进程回收；`cli` 只是 `stdio` 的模式别名，**禁止**新建第二个 CLI client。
+- **`env` 必须留 `{}`**：`decrypt_env` 对非密文抛 `ValueError`，异常会被上层吞掉导致绑定静默失效。CLI 需要密钥时写进容器 env，由子进程 `os.environ` 继承。
+- **`cli` 必须声明 `tool_schema`**：纯 CLI 无自描述能力，不声明即不可用（服务端与前端均校验）。
+- **`args` 模板替换规则**：字符串原样、`None`→空串、非标量按 JSON 序列化；占位符名按长度倒序替换（避免 `{text}` 抢占 `{text_long}`）。
+- **admin 入口**：MCP 编辑弹窗的 transport 下拉选 `cli`，下方 `tool_schema` 文本框填 JSON；运行时读取点为 `McpToolFactory.get_tools → McpStdioClient(protocol=raw)`。
 
 ### 3.3 典型项目集成示例
 
