@@ -626,7 +626,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 | **三级路由** | `render_video._dispatch_render`（本机 → 云端 → 明确报错）；`_local_enabled` / `_cloud_fallback_enabled` 用 `.config.get()` 读取 | ✅ 已落地；区分「通道不可用」（回退）与「业务失败」（报错） |
 | **本机 render worker** | `api/scripts/render_worker.py`（`ThreadingHTTPServer`，`POST /render` + `POST /artifact`，Bearer 鉴权） | ✅ 已落地；产物取走后自动清理临时目录，`/artifact` 有路径穿越防护 |
 | **worker 注册与打包** | `scripts/worker_super.py`（`choices` + `_module_and_entry` + `_SERVICE_SUPPORTS_HOST_PORT` 三处加 `render`）+ `pyinstaller/worker.spec` hiddenimports | ✅ 已落地 |
-| **服务端客户端** | `video_render_tools/local_render_runner.py`（`render_on_local_device` / `fetch_local_artifact`） | ✅ 已落地；**必须**经 `resolve_desktop_bridge` 动态解析（勿读静态 env，勿重蹈 `browser_action` 断链） |
+| **服务端客户端** | `video_render_tools/local_render_runner.py`（`render_on_local_device` / `fetch_local_artifact`） | ✅ 已落地；**必须**经 `resolve_desktop_bridge` 动态解析（勿读静态 env；`browser_action` 曾有此断链，已于 2026-09-25 同样改走 `resolve_desktop_bridge`） |
 | **产物回传入库** | `render_video._ingest_local_artifact` 复用 `KnowledgeBaseService.store_render_output` | ✅ 已落地；落 COS + 建档 + 索引 |
 | **桌面端托管** | `desktop/main.js`（`startWorker('render')` + shim 生成）、`desktop/bridge.js`（`/render` + `/artifact`）、`desktop/render-runtime.js` | ✅ 已落地；Node 用 Electron 内置（`ELECTRON_RUN_AS_NODE=1`），用户无需自装 Node |
 | **运行时随包分发** | `desktop/scripts/stage-render-runtime.js` + `extraResources` + `.gitignore` | ✅ 已落地；**实测踩坑三处见下** |
