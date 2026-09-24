@@ -1570,8 +1570,13 @@ class AssistantAgentService(BaseService):
                     "provider_id": str(provider.id),
                     "name": provider.name,
                     "url": getattr(provider, "url", ""),
+                    "command": getattr(provider, "command", ""),
                     "transport": getattr(provider, "transport", "http"),
                     "tool_names": list(provider.tool_names or []),
+                    "args": list(getattr(provider, "args", None) or []),
+                    "env": dict(getattr(provider, "env", None) or {}),
+                    "tool_schema": dict(getattr(provider, "tool_schema", None) or {}),
+                    "timeout_seconds": int(getattr(provider, "timeout_seconds", None) or 30),
                     "enabled": True,
                 })
             if not mcp_bindings or self.app_config_service is None:
