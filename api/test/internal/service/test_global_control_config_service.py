@@ -159,7 +159,7 @@ def test_model_key_pool_is_registered_as_supported_section():
 def test_update_model_key_pool_rejects_non_positive_threshold():
     import pytest
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="必须大于 0"):
         _service().update_config("model_key_pool", {"failure_threshold": 0})
 
 
