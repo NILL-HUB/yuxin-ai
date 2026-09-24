@@ -1316,9 +1316,12 @@ export interface ModelKeyPoolConfig {
               <a-input-number v-model="form.model_key_pool.cooldown_seconds" :min="1" :step="1" :precision="0" />
             </a-form-item>
           </a-form>
+          <p class="hint-text">{{ t('admin.globalControlConfig.fields.failureThresholdHint') }}</p>
           <p class="hint-text">{{ t('admin.globalControlConfig.fields.cooldownSecondsHint') }}</p>
         </section>
 ```
+
+**两个 hint 都要渲染**：`failureThresholdHint` 与 `cooldownSecondsHint` 都在 i18n 里新增，必须都有引用点；否则 `failureThresholdHint` 会成为死键（i18n parity 测试只校验「引用的键必须存在」，不校验「存在的键必须被引用」，死键不会被测试拦住）。
 
 - [ ] **Step 4: 补 i18n（zh-CN 与 en-US 同步）**
 

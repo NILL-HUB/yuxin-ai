@@ -263,6 +263,7 @@ onMounted(loadConfig)
               <a-input-number v-model="form.model_key_pool.cooldown_seconds" :min="1" :step="1" :precision="0" />
             </a-form-item>
           </a-form>
+          <p class="hint-text">{{ t('admin.globalControlConfig.fields.failureThresholdHint') }}</p>
           <p class="hint-text">{{ t('admin.globalControlConfig.fields.cooldownSecondsHint') }}</p>
         </section>
 
