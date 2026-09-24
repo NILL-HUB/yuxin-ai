@@ -72,14 +72,14 @@ class CreateMcpProviderReq(Form):
         if not normalized:
             return
         if normalized.lower() not in _SUPPORTED_TRANSPORTS:
-            raise ValidationError("transport 仅支持 http、sse、streamable_http 或 stdio")
+            raise ValidationError("transport 仅支持 http、sse、streamable_http、stdio 或 cli")
 
     def validate_command(self, field: StringField) -> None:
-        """stdio 模式下 command 必填。"""
+        """stdio / cli 模式下 command 必填。"""
         transport = str(self.transport.data or "").strip().lower()
         command = str(field.data or "").strip()
-        if transport == "stdio" and not command:
-            raise ValidationError("stdio 模式下 command 不能为空")
+        if transport in {"stdio", "cli"} and not command:
+            raise ValidationError("stdio/cli 模式下 command 不能为空")
 
     def validate_tool_schema(self, field: DictField) -> None:
         """cli（protocol=raw）模式下必须声明工具 schema。"""
