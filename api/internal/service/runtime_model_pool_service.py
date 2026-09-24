@@ -1,5 +1,6 @@
+import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -10,6 +11,8 @@ from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig, Mo
 from internal.model.model_provider_entity import ModelProviderConfig
 from internal.service.admin_model_pool_service import _decrypt_key_value, CONTEXT_LESS_MODEL_TYPES, normalize_provider_base_url
 from pkg.sqlalchemy import SQLAlchemy
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -26,6 +29,24 @@ class RuntimeModelPoolService:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(UTC).replace(tzinfo=None)
+
+    def _key_pool_config(self) -> dict[str, Any]:
+        """读取 Key 池熔断配置（表优先、缺省兜底），失败时返回内置默认值。"""
+        defaults = {"failure_threshold": 3, "cooldown_seconds": 300}
+        try:
+            from internal.service.global_control_config_service import (
+                GlobalControlConfigService,
+            )
+
+            cfg = GlobalControlConfigService(session=self._session()).get_config("model_key_pool")
+            if isinstance(cfg, dict) and cfg:
+                return {
+                    "failure_threshold": int(cfg.get("failure_threshold") or defaults["failure_threshold"]),
+                    "cooldown_seconds": int(cfg.get("cooldown_seconds") or defaults["cooldown_seconds"]),
+                }
+        except Exception:
+            logger.warning("读取 model_key_pool 配置失败，使用内置默认值", exc_info=True)
+        return defaults
 
     def get_active_models(self, tier: str | None = None, model_type: str | None = None) -> list[ModelPoolConfig]:
         query = self._session().query(ModelPoolConfig).filter(ModelPoolConfig.status == "active")
@@ -94,6 +115,7 @@ class RuntimeModelPoolService:
         model = session.query(ModelPoolConfig).filter(ModelPoolConfig.id == model_id).one_or_none()
         if model is None:
             return []
+        self._recover_cooled_down_keys(session)
         now = self._now()
         model_id_text = str(model.id)
         query = session.query(ModelKeyConfig).filter(
@@ -135,12 +157,42 @@ class RuntimeModelPoolService:
             return False
         key.failure_count = int(key.failure_count or 0) + 1
         circuit_opened = False
-        if key.failure_count >= 3:
+        threshold = self._key_pool_config()["failure_threshold"]
+        if key.failure_count >= threshold:
             key.status = "circuit_open"
+            key.circuit_opened_at = self._now()
             circuit_opened = True
         key.updated_at = self._now()
         session.commit()
         return circuit_opened
+
+    def _recover_cooled_down_keys(self, session: Any) -> None:
+        """把冷却期已到的 circuit_open Key 复位为 active（失败计数清零）。"""
+        candidates = (
+            session.query(ModelKeyConfig)
+            .filter(ModelKeyConfig.status == "circuit_open")
+            .all()
+        )
+        if not candidates:
+            return
+        cooldown = self._key_pool_config()["cooldown_seconds"]
+        if cooldown < 0:
+            return
+        deadline = self._now() - timedelta(seconds=cooldown)
+        recovered: list[ModelKeyConfig] = []
+        for key in candidates:
+            opened_at = key.circuit_opened_at
+            if opened_at is not None and opened_at > deadline:
+                continue
+            key.status = "active"
+            key.failure_count = 0
+            key.circuit_opened_at = None
+            key.updated_at = self._now()
+            recovered.append(key)
+        if not recovered:
+            return
+        session.commit()
+        logger.info("Key 池冷却恢复 %d 个 Key", len(recovered))
 
     def build_llm_config(self, model: ModelPoolConfig, key: ModelKeyConfig) -> dict[str, Any]:
         api_key = _decrypt_key_value(key.key_value_encrypted)

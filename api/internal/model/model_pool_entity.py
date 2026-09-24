@@ -124,6 +124,8 @@ class ModelKeyConfig(Base):
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     failure_count = Column(Integer, nullable=False, server_default=text("0"))
     last_used_at = Column(DateTime, nullable=True)
+    # 熔断开启时间；用于冷却后自动恢复（为 NULL 表示未处于熔断态）
+    circuit_opened_at = Column(DateTime, nullable=True)
     effective_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
     used_credits = Column(Numeric(12, 4), nullable=False, server_default=text("0.0000"))

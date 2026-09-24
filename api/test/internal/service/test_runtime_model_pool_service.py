@@ -44,6 +44,7 @@ def _make_key(db, **overrides):
         status=overrides.pop("status", "active"),
         failure_count=overrides.pop("failure_count", 0),
         last_used_at=overrides.pop("last_used_at", None),
+        circuit_opened_at=overrides.pop("circuit_opened_at", None),
         expires_at=overrides.pop("expires_at", None),
         used_credits=overrides.pop("used_credits", Decimal("0.0000")),
         model_id=overrides.pop("model_id", None),
@@ -130,7 +131,7 @@ class TestRuntimeModelPoolService:
         k_bound = _make_key(model_pool_db, key_alias="bound", provider="openai", used_credits=Decimal("10"), model_id=str(model.id))
         k_expired = _make_key(model_pool_db, key_alias="expired", provider="openai", expires_at=past)
         k_exhausted = _make_key(model_pool_db, key_alias="exhausted", provider="openai", tenant_quota=Decimal("10"), used_credits=Decimal("10"))
-        k_circuit = _make_key(model_pool_db, key_alias="circuit", provider="openai", status="circuit_open")
+        k_circuit = _make_key(model_pool_db, key_alias="circuit", provider="openai", status="circuit_open", circuit_opened_at=_now())
         k_other_model = _make_key(model_pool_db, key_alias="other", provider="openai", model_id=str(uuid4()))
 
         service = _service(model_pool_db)
@@ -188,6 +189,66 @@ class TestRuntimeModelPoolService:
         assert refreshed.failure_count == 3
         assert refreshed.status == "circuit_open"
         _ = model
+
+    def test_record_key_failure_should_open_circuit_at_configurable_threshold(self, model_pool_db, monkeypatch):
+        service = _service(model_pool_db)
+        monkeypatch.setattr(
+            service,
+            "_key_pool_config",
+            lambda: {"failure_threshold": 2, "cooldown_seconds": 300},
+        )
+        key = _make_key(model_pool_db, provider="openai", model_id=None)
+
+        assert service.record_key_failure(key.id) is False
+        assert service.record_key_failure(key.id) is True
+        model_pool_db.session.expire_all()
+        reloaded = model_pool_db.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == key.id).one()
+        assert reloaded.status == "circuit_open"
+        assert reloaded.circuit_opened_at is not None
+
+    def test_get_keys_for_model_should_recover_key_after_cooldown(self, model_pool_db, monkeypatch):
+        service = _service(model_pool_db)
+        # cooldown_seconds 必须 > 0（C1 的 int 校验统一拒绝 <= 0），
+        # 因此用「回拨 circuit_opened_at」来模拟冷却已过，而不是把冷却设为 0。
+        monkeypatch.setattr(
+            service,
+            "_key_pool_config",
+            lambda: {"failure_threshold": 1, "cooldown_seconds": 300},
+        )
+        model = _make_model(model_pool_db, provider="openai")
+        key = _make_key(model_pool_db, provider="openai", model_id=None)
+        service.record_key_failure(key.id)
+        model_pool_db.session.expire_all()
+        assert model_pool_db.session.query(ModelKeyConfig).filter(
+            ModelKeyConfig.id == key.id
+        ).one().status == "circuit_open"
+
+        # 把熔断时间回拨到冷却期之前（600s 前 > 300s 冷却），模拟冷却已到
+        stale = model_pool_db.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == key.id).one()
+        stale.circuit_opened_at = service._now() - timedelta(seconds=600)
+        model_pool_db.session.commit()
+
+        keys = service.get_keys_for_model(model.id)
+
+        assert [k.id for k in keys] == [key.id]
+        model_pool_db.session.expire_all()
+        recovered = model_pool_db.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == key.id).one()
+        assert recovered.status == "active"
+        assert recovered.failure_count == 0
+        assert recovered.circuit_opened_at is None
+
+    def test_get_keys_for_model_should_not_recover_before_cooldown(self, model_pool_db, monkeypatch):
+        service = _service(model_pool_db)
+        monkeypatch.setattr(
+            service,
+            "_key_pool_config",
+            lambda: {"failure_threshold": 1, "cooldown_seconds": 3600},
+        )
+        model = _make_model(model_pool_db, provider="openai")
+        key = _make_key(model_pool_db, provider="openai", model_id=None)
+        service.record_key_failure(key.id)
+
+        assert service.get_keys_for_model(model.id) == []
 
     # ---------------- 输出长度上限注入（max_output_tokens → max_tokens 参数） ----------------
 
