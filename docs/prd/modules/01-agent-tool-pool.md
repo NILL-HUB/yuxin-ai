@@ -1114,7 +1114,7 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 
 - `model_key_config.model_id IS NULL` 表示 **provider 级共享 Key**（该 provider 下所有模型可用）；
   非空表示绑定到具体模型。此语义由 `get_keys_for_model` 的过滤条件实现，勿改成「模型专属才可用」。
-- 工具凭证（gaode/newsapi/github/stability/github/xai/baidu/tavily 等 builtin provider）
+- 工具凭证（gaode/newsapi/github/stability/atlascloud/xai/baidu/tavily 等 builtin provider）
   一律走 env + `get_tool_credential()`；**不给工具凭证加熔断/配额**——无轮换需求，加了是过度设计。
 - 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
   **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。
