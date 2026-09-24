@@ -51,6 +51,9 @@ class McpProvider(Base):
     tool_names = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     args = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     env = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # CLI（protocol=raw）工具声明：{tool_name: {"description": str, "parameters": {JSON Schema}}}
+    # MCP 协议走 tools/list 自描述，不需要本列；纯 CLI 无自描述能力，必须显式声明
+    tool_schema = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     task_keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 任务关键词列表，用于 ToolSelector 关键词快速匹配
     timeout_seconds = Column(Integer, nullable=False, server_default=text("30"))
     is_public = Column(Boolean, nullable=False, server_default=text("false"))
