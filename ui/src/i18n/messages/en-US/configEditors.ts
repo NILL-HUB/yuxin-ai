@@ -21,6 +21,7 @@ export default {
   templateDescription: 'Pick a built-in template to prefill command, arguments and tool schema — no manual typing.',
   templatePlaceholder: 'Select a template',
   templateApply: 'Apply template',
+  templateApplied: 'Template applied',
   templateUseLatest: 'Use latest version',
   templateNeedsSecret: 'Requires a secret: {name} (set it in the environment variables below)',
   templateNoSecret: 'No secret required for this template',

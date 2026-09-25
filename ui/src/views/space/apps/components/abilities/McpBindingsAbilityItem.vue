@@ -8,14 +8,14 @@ import type { McpBinding, McpToolSnapshot } from '@/models/app'
 import { useI18n } from 'vue-i18n'
 import McpMarketplacePickerModal from './McpMarketplacePickerModal.vue'
 import { resolveMcpBindingStatus } from './mcp-status'
+import KeyValueEditor from '@/components/config-editors/KeyValueEditor.vue'
+import OrderedArgListEditor from '@/components/config-editors/OrderedArgListEditor.vue'
+import TagListEditor from '@/components/config-editors/TagListEditor.vue'
+import ToolSchemaBuilder from '@/components/config-editors/ToolSchemaBuilder.vue'
+import McpTemplatePicker from '@/components/config-editors/McpTemplatePicker.vue'
+import type { McpCliTemplate } from '@/components/config-editors/types'
 
-type McpBindingForm = McpBinding & {
-  headers_text: string
-  tool_names_text: string
-  args_text: string
-  env_text: string
-  tool_schema_text: string
-}
+type McpBindingForm = McpBinding
 
 const defaultForm = (): McpBindingForm => ({
   name: '',
@@ -29,11 +29,7 @@ const defaultForm = (): McpBindingForm => ({
   timeout_seconds: 30,
   args: [],
   env: {},
-  headers_text: '[]',
-  tool_names_text: '',
-  args_text: '',
-  env_text: '{}',
-  tool_schema_text: '{}',
+  tool_schema: {},
 })
 
 const props = defineProps({
@@ -60,27 +56,34 @@ const bindingForm = ref<McpBindingForm>(defaultForm())
 const showMarketplacePickerModal = ref(false)
 const hasLocalMcpBindingChanges = computed(() => !isEqual(activateMcpBindings.value, originMcpBindings.value))
 
-const stripBindingForm = (binding: McpBindingForm): McpBinding => {
-  const {
-    headers_text: _headers_text,
-    tool_names_text: _tool_names_text,
-    args_text: _args_text,
-    env_text: _env_text,
-    tool_schema_text: _tool_schema_text,
-    ...rest
-  } = binding
-  return rest
-}
+const normalizedTransport = computed(() => String(bindingForm.value.transport || '').trim().toLowerCase())
+const isHttpTransport = computed(() =>
+  ['http', 'sse', 'streamable_http', 'streamable-http'].includes(normalizedTransport.value),
+)
+const isCliTransport = computed(() => normalizedTransport.value === 'cli')
+const hasCommandField = computed(() => ['stdio', 'cli'].includes(normalizedTransport.value))
+
+const bindingToolSchema = computed<Record<string, unknown>>({
+  get: () => bindingForm.value.tool_schema ?? {},
+  set: (value) => {
+    bindingForm.value.tool_schema = value
+  },
+})
+
+const stripBindingForm = (binding: McpBindingForm): McpBinding => binding
 
 const normalizeBindingToForm = (binding: McpBinding): McpBindingForm => {
   return {
     ...defaultForm(),
     ...binding,
-    headers_text: JSON.stringify(binding.headers ?? [], null, 2),
-    tool_names_text: (binding.tool_names ?? []).join(', '),
-    args_text: (binding.args ?? []).join(', '),
-    env_text: JSON.stringify(binding.env ?? {}, null, 2),
-    tool_schema_text: JSON.stringify(binding.tool_schema ?? {}, null, 2),
+    headers: Array.isArray(binding.headers) ? binding.headers : [],
+    tool_names: Array.isArray(binding.tool_names) ? binding.tool_names : [],
+    args: Array.isArray(binding.args) ? binding.args : [],
+    env: binding.env && typeof binding.env === 'object' ? binding.env : {},
+    tool_schema:
+      binding.tool_schema && typeof binding.tool_schema === 'object' && !Array.isArray(binding.tool_schema)
+        ? binding.tool_schema
+        : {},
   }
 }
 
@@ -207,24 +210,16 @@ const handleCancelMcpBindingsModal = () => {
   closeMcpBindingsModal()
 }
 
-const parseJsonArray = (text: string) => {
-  const normalized = String(text || '').trim()
-  if (!normalized) return []
-  const parsed = JSON.parse(normalized)
-  if (!Array.isArray(parsed)) {
-    throw new Error(t('appStudio.abilities.mcp.arrayExpected'))
+const applyCliTemplate = (template: McpCliTemplate) => {
+  bindingForm.value.transport = template.transport
+  bindingForm.value.command = template.command
+  bindingForm.value.args = [...template.args]
+  bindingForm.value.env = { ...template.env }
+  if (template.requiresSecret && template.secretKeyName && !(template.secretKeyName in bindingForm.value.env)) {
+    bindingForm.value.env[template.secretKeyName] = ''
   }
-  return parsed
-}
-
-const parseJsonObject = (text: string) => {
-  const normalized = String(text || '').trim()
-  if (!normalized) return {}
-  const parsed = JSON.parse(normalized)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(t('appStudio.abilities.mcp.objectExpected'))
-  }
-  return parsed as Record<string, string>
+  bindingForm.value.tool_schema = JSON.parse(JSON.stringify(template.toolSchema))
+  Message.success(t('configEditors.templateApplied'))
 }
 
 const handleSubmitBinding = async () => {
@@ -250,22 +245,11 @@ const handleSubmitBinding = async () => {
     return
   }
 
-  let headers: Array<{ key: string; value: string }> = []
-  let env: Record<string, string> = {}
-  let toolSchema: Record<string, unknown> = {}
-  try {
-    headers = parseJsonArray(form.headers_text).map((item) => ({
-      key: String(item?.key || '').trim(),
-      value: String(item?.value || '').trim(),
-    })).filter((item) => item.key)
-    env = parseJsonObject(form.env_text)
-    toolSchema = parseJsonObject(form.tool_schema_text)
-  } catch (error) {
-    Message.warning(
-      t('appStudio.abilities.mcp.advancedJsonError', { message: (error as Error).message }),
-    )
-    return
-  }
+  const headers = (form.headers || [])
+    .map((item) => ({ key: String(item?.key || '').trim(), value: String(item?.value || '') }))
+    .filter((item) => item.key)
+  const env: Record<string, string> = { ...(form.env || {}) }
+  const toolSchema: Record<string, unknown> = { ...(form.tool_schema || {}) }
 
   if (transport === 'cli' && !String(form.command || '').trim()) {
     Message.warning(t('appStudio.abilities.mcp.commandRequired'))
@@ -276,14 +260,8 @@ const handleSubmitBinding = async () => {
     return
   }
 
-  const toolNames = String(form.tool_names_text || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-  const args = String(form.args_text || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
+  const toolNames = (form.tool_names || []).map((item) => String(item).trim()).filter(Boolean)
+  const args = (form.args || []).map((item) => String(item)).filter((item) => item !== '')
 
   const nextBinding: McpBindingForm = {
     ...defaultForm(),
@@ -300,11 +278,6 @@ const handleSubmitBinding = async () => {
     args,
     env,
     tool_schema: toolSchema,
-    headers_text: JSON.stringify(headers, null, 2),
-    tool_names_text: toolNames.join(', '),
-    args_text: args.join(', '),
-    env_text: JSON.stringify(env, null, 2),
-    tool_schema_text: JSON.stringify(toolSchema, null, 2),
   }
 
   const newBindings = [...activateMcpBindings.value]
@@ -505,8 +478,9 @@ watch(
             :placeholder="t('appStudio.abilities.mcp.timeoutPlaceholder')"
           />
         </div>
-        <a-input v-model="bindingForm.url" :placeholder="t('appStudio.abilities.mcp.urlPlaceholder')" />
+        <a-input v-if="isHttpTransport" v-model="bindingForm.url" :placeholder="t('appStudio.abilities.mcp.urlPlaceholder')" />
         <a-input
+          v-if="hasCommandField"
           v-model="bindingForm.command"
           :placeholder="t('appStudio.abilities.mcp.commandPlaceholder')"
         />
@@ -514,29 +488,16 @@ watch(
           <template #checked>{{ t('appStudio.abilities.mcp.enabledChecked') }}</template>
           <template #unchecked>{{ t('appStudio.abilities.mcp.enabledUnchecked') }}</template>
         </a-switch>
-        <a-input
-          v-model="bindingForm.tool_names_text"
+        <mcp-template-picker v-if="isCliTransport" @apply="applyCliTemplate" />
+        <tag-list-editor
+          v-if="isHttpTransport"
+          v-model="bindingForm.tool_names"
           :placeholder="t('appStudio.abilities.mcp.toolNamesPlaceholder')"
         />
-        <a-input
-          v-model="bindingForm.args_text"
-          :placeholder="t('appStudio.abilities.mcp.argsPlaceholder')"
-        />
-        <a-textarea
-          v-model="bindingForm.headers_text"
-          :auto-size="{ minRows: 3, maxRows: 8 }"
-          :placeholder="t('appStudio.abilities.mcp.headersPlaceholder')"
-        />
-        <a-textarea
-          v-model="bindingForm.env_text"
-          :auto-size="{ minRows: 3, maxRows: 8 }"
-          :placeholder="t('appStudio.abilities.mcp.envPlaceholder')"
-        />
-        <a-textarea
-          v-model="bindingForm.tool_schema_text"
-          :auto-size="{ minRows: 3, maxRows: 8 }"
-          :placeholder="t('appStudio.abilities.mcp.toolSchemaPlaceholder')"
-        />
+        <ordered-arg-list-editor v-if="hasCommandField" v-model="bindingForm.args" />
+        <key-value-editor v-if="isHttpTransport" v-model="bindingForm.headers" secret />
+        <key-value-editor v-if="hasCommandField" v-model="bindingForm.env" secret />
+        <tool-schema-builder v-if="isCliTransport" v-model="bindingToolSchema" />
         <div class="flex justify-end gap-2 pt-2">
           <a-button @click="handleCancelMcpBindingsModal">{{ t('common.actions.cancel') }}</a-button>
           <a-button type="primary" @click="handleSubmitBinding">{{ t('common.actions.save') }}</a-button>

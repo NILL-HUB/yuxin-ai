@@ -6,7 +6,7 @@ import type { KeyValueItem } from './types'
 
 const props = withDefaults(
   defineProps<{
-    modelValue: KeyValueItem[]
+    modelValue: KeyValueItem[] | Record<string, string>
     secret?: boolean
     keyPlaceholder?: string
     valuePlaceholder?: string
@@ -21,7 +21,7 @@ const props = withDefaults(
 )
 
 const emits = defineEmits<{
-  (e: 'update:modelValue', value: KeyValueItem[]): void
+  (e: 'update:modelValue', value: KeyValueItem[] | Record<string, string>): void
 }>()
 
 const { t } = useI18n()
@@ -29,10 +29,29 @@ const { t } = useI18n()
 const editingIndex = ref<number>(-1)
 const draft = ref<KeyValueItem>({ key: '', value: '' })
 
-const items = computed<KeyValueItem[]>(() => (Array.isArray(props.modelValue) ? props.modelValue : []))
+const isObjectMode = computed(() => !Array.isArray(props.modelValue))
+
+const items = computed<KeyValueItem[]>(() => {
+  const value = props.modelValue
+  if (Array.isArray(value)) {
+    return value.map((item) => ({ key: String(item?.key ?? ''), value: String(item?.value ?? '') }))
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value).map(([key, itemValue]) => ({ key, value: String(itemValue ?? '') }))
+  }
+  return []
+})
 
 const commit = (next: KeyValueItem[]) => {
-  emits('update:modelValue', next.map((item) => ({ key: item.key, value: item.value })))
+  const normalized = next.map((item) => ({ key: item.key, value: item.value }))
+  if (isObjectMode.value) {
+    emits(
+      'update:modelValue',
+      Object.fromEntries(normalized.map((item) => [item.key, item.value])),
+    )
+    return
+  }
+  emits('update:modelValue', normalized)
 }
 
 const startEdit = (index: number) => {

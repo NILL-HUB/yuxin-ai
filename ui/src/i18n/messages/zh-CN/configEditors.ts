@@ -21,6 +21,7 @@ export default {
   templateDescription: '选择内置模板可自动填好命令、参数与工具声明，无需手写配置。',
   templatePlaceholder: '选择模板',
   templateApply: '填入模板',
+  templateApplied: '已按模板填充配置',
   templateUseLatest: '使用最新版本',
   templateNeedsSecret: '需要配置密钥：{name}（填入下方环境变量）',
   templateNoSecret: '该模板无需密钥，可直接使用',

@@ -10,6 +10,13 @@ import { getMcpCategories, getMcpProvider, createMcpProvider, updateMcpProvider,
 import { getAdminMcp, updateAdminMcp, regenerateAdminMcpIcon, createAdminMcp } from '@/services/admin-mcp'
 import { mcpSchemaAssistantChat } from '@/services/ai'
 import type { McpCategory } from '@/models/mcp'
+import KeyValueEditor from '@/components/config-editors/KeyValueEditor.vue'
+import OrderedArgListEditor from '@/components/config-editors/OrderedArgListEditor.vue'
+import TagListEditor from '@/components/config-editors/TagListEditor.vue'
+import ToolSchemaBuilder from '@/components/config-editors/ToolSchemaBuilder.vue'
+import McpTemplatePicker from '@/components/config-editors/McpTemplatePicker.vue'
+import type { McpCliTemplate } from '@/components/config-editors/types'
+import { resolveBindingCredentials } from '@/components/config-editors/mcp-binding-source'
 
 type HeaderItem = { key: string; value: string }
 
@@ -22,13 +29,13 @@ type McpForm = {
   transport: string
   url: string
   command: string
-  headers_text: string
-  tool_names_text: string
-  args_text: string
-  env_text: string
-  tool_schema_text: string
+  headers: HeaderItem[]
+  tool_names: string[]
+  args: string[]
+  env: Record<string, string>
+  tool_schema: Record<string, unknown>
   timeout_seconds: number
-  task_keywords_text: string
+  task_keywords: string[]
 }
 
 const props = defineProps({
@@ -60,18 +67,24 @@ const defaultForm = (): McpForm => ({
   transport: 'streamable_http',
   url: '',
   command: '',
-  headers_text: '[]',
-  tool_names_text: '',
-  args_text: '',
-  env_text: '{}',
-  tool_schema_text: '{}',
+  headers: [],
+  tool_names: [],
+  args: [],
+  env: {},
+  tool_schema: {},
   timeout_seconds: 30,
-  task_keywords_text: '',
+  task_keywords: [],
 })
 
 const form = ref<McpForm>(defaultForm())
 
 const isEditMode = computed(() => Boolean(props.mcp_provider_id))
+const normalizedTransport = computed(() => String(form.value.transport || '').trim().toLowerCase())
+const isHttpTransport = computed(() =>
+  ['http', 'sse', 'streamable_http', 'streamable-http'].includes(normalizedTransport.value),
+)
+const isCliTransport = computed(() => normalizedTransport.value === 'cli')
+const hasCommandField = computed(() => ['stdio', 'cli'].includes(normalizedTransport.value))
 const getCategoryLabel = (value: string) =>
   getStoreCategoryDisplayName(value, locale.value as 'zh-CN' | 'en-US')
 
@@ -86,26 +99,6 @@ const loadCategories = async () => {
   }
 }
 
-const parseJsonArray = (text: string) => {
-  const normalized = String(text || '').trim()
-  if (!normalized) return []
-  const parsed = JSON.parse(normalized)
-  if (!Array.isArray(parsed)) {
-    throw new Error(t('space.mcp.arrayExpected'))
-  }
-  return parsed
-}
-
-const parseJsonObject = (text: string) => {
-  const normalized = String(text || '').trim()
-  if (!normalized) return {}
-  const parsed = JSON.parse(normalized)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(t('space.mcp.objectExpected'))
-  }
-  return parsed as Record<string, string>
-}
-
 const extractJsonObject = (content: string) => {
   const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const normalized = (fenceMatch?.[1] ?? content).trim()
@@ -118,10 +111,11 @@ const extractJsonObject = (content: string) => {
 }
 
 const applyMcpPayload = (payload: Record<string, unknown>) => {
-  const headers = Array.isArray(payload.headers) ? payload.headers : []
+  const { headers: rawHeaders, env: rawEnv } = resolveBindingCredentials(payload)
+  const headers = Array.isArray(rawHeaders) ? rawHeaders : []
   const toolNames = Array.isArray(payload.tool_names) ? payload.tool_names : []
   const args = Array.isArray(payload.args) ? payload.args : []
-  const env = payload.env && typeof payload.env === 'object' && !Array.isArray(payload.env) ? payload.env : {}
+  const env = rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv) ? (rawEnv as Record<string, unknown>) : {}
   const toolSchema =
     payload.tool_schema && typeof payload.tool_schema === 'object' && !Array.isArray(payload.tool_schema)
       ? payload.tool_schema
@@ -133,18 +127,22 @@ const applyMcpPayload = (payload: Record<string, unknown>) => {
   form.value.transport = String(payload.transport || 'streamable_http').trim() || 'streamable_http'
   form.value.url = String(payload.url || '').trim()
   form.value.command = String(payload.command || '').trim()
-  form.value.headers_text = JSON.stringify(headers, null, 2)
-  form.value.tool_names_text = toolNames.map((item) => String(item).trim()).filter(Boolean).join(', ')
-  form.value.args_text = args.map((item) => String(item).trim()).filter(Boolean).join(', ')
-  form.value.env_text = JSON.stringify(env, null, 2)
-  form.value.tool_schema_text = JSON.stringify(toolSchema, null, 2)
+  form.value.headers = headers.map((item) => ({
+    key: String((item as HeaderItem)?.key || '').trim(),
+    value: String((item as HeaderItem)?.value || ''),
+  }))
+  form.value.tool_names = toolNames.map((item) => String(item).trim()).filter(Boolean)
+  form.value.args = args.map((item) => String(item).trim()).filter(Boolean)
+  form.value.env = Object.fromEntries(
+    Object.entries(env).map(([key, value]) => [key, String(value ?? '')]),
+  )
+  form.value.tool_schema = toolSchema as Record<string, unknown>
   form.value.timeout_seconds = Number(payload.timeout_seconds || 30)
   form.value.icon = String(payload.icon || form.value.icon || '')
   const taskKeywords = Array.isArray(payload.task_keywords) ? payload.task_keywords : []
-  form.value.task_keywords_text = taskKeywords
+  form.value.task_keywords = taskKeywords
     .map((item: unknown) => String(item || '').trim())
     .filter(Boolean)
-    .join(', ')
   if (form.value.icon) {
     form.value.fileList = [{ uid: '1', name: t('space.mcp.iconPlaceholder'), url: form.value.icon }]
   }
@@ -234,38 +232,30 @@ const handleGenerateByAI = async () => {
   }
 }
 
+const applyCliTemplate = (template: McpCliTemplate) => {
+  form.value.transport = template.transport
+  form.value.command = template.command
+  form.value.args = [...template.args]
+  form.value.env = { ...template.env }
+  if (template.requiresSecret && template.secretKeyName && !(template.secretKeyName in form.value.env)) {
+    form.value.env[template.secretKeyName] = ''
+  }
+  form.value.tool_schema = JSON.parse(JSON.stringify(template.toolSchema))
+  Message.success(t('configEditors.templateApplied'))
+}
+
 const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | undefined }) => {
   if (errors) return
 
-  let headers: HeaderItem[] = []
-  let env: Record<string, string> = {}
-  let toolSchema: Record<string, unknown> = {}
-  try {
-    headers = parseJsonArray(form.value.headers_text)
-      .map((item) => ({
-        key: String(item?.key || '').trim(),
-        value: String(item?.value || '').trim(),
-      }))
-      .filter((item) => item.key)
-    env = parseJsonObject(form.value.env_text)
-    toolSchema = parseJsonObject(form.value.tool_schema_text)
-  } catch (error: unknown) {
-    Message.warning(t('space.mcp.jsonError', { message: (error as Error).message }))
-    return
-  }
+  const headers: HeaderItem[] = (form.value.headers || [])
+    .map((item) => ({ key: String(item?.key || '').trim(), value: String(item?.value || '') }))
+    .filter((item) => item.key)
+  const env: Record<string, string> = { ...(form.value.env || {}) }
+  const toolSchema: Record<string, unknown> = { ...(form.value.tool_schema || {}) }
 
-  const toolNames = String(form.value.tool_names_text || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-  const args = String(form.value.args_text || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-  const taskKeywords = String(form.value.task_keywords_text || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
+  const toolNames = (form.value.tool_names || []).map((item) => String(item).trim()).filter(Boolean)
+  const args = (form.value.args || []).map((item) => String(item)).filter((item) => item !== '')
+  const taskKeywords = (form.value.task_keywords || []).map((item) => String(item).trim()).filter(Boolean)
 
   const payload = {
     name: form.value.name.trim(),
@@ -472,48 +462,79 @@ watch(
                 <div>{{ t('space.mcp.advancedHint') }}</div>
               </div>
 
-              <a-form-item field="url" :label="t('space.mcp.urlLabel')" class="lg:col-span-2">
+              <a-form-item
+                v-if="isHttpTransport"
+                field="url"
+                :label="t('space.mcp.urlLabel')"
+                class="lg:col-span-2"
+              >
                 <a-input v-model:model-value="form.url" :placeholder="t('space.mcp.urlPlaceholder')" />
               </a-form-item>
 
-              <a-form-item field="command" :label="t('space.mcp.commandLabel')" class="lg:col-span-2">
+              <a-form-item
+                v-if="hasCommandField"
+                field="command"
+                :label="t('space.mcp.commandLabel')"
+                class="lg:col-span-2"
+              >
                 <a-input v-model:model-value="form.command" :placeholder="t('space.mcp.commandPlaceholder')" />
               </a-form-item>
 
-              <a-form-item field="tool_names_text" :label="t('space.mcp.toolNamesLabel')">
-                <a-input v-model:model-value="form.tool_names_text" :placeholder="t('space.mcp.toolNamesPlaceholder')" />
+              <a-form-item
+                v-if="isCliTransport"
+                class="lg:col-span-2"
+                :label="t('configEditors.templateTitle')"
+              >
+                <mcp-template-picker @apply="applyCliTemplate" />
               </a-form-item>
 
-              <a-form-item field="args_text" :label="t('space.mcp.argsLabel')">
-                <a-input v-model:model-value="form.args_text" :placeholder="t('space.mcp.argsPlaceholder')" />
+              <a-form-item
+                v-if="isHttpTransport"
+                field="headers"
+                :label="t('space.mcp.headersLabel')"
+                class="lg:col-span-2"
+              >
+                <key-value-editor v-model="form.headers" secret />
               </a-form-item>
 
-              <a-form-item field="task_keywords_text" :label="t('space.mcp.taskKeywordsLabel')" class="lg:col-span-2">
-                <a-input v-model:model-value="form.task_keywords_text" :placeholder="t('space.mcp.taskKeywordsPlaceholder')" />
+              <a-form-item
+                v-if="hasCommandField"
+                field="args"
+                :label="t('space.mcp.argsLabel')"
+                class="lg:col-span-2"
+              >
+                <ordered-arg-list-editor v-model="form.args" />
               </a-form-item>
 
-              <a-form-item field="headers_text" :label="t('space.mcp.headersLabel')" class="lg:col-span-2">
-                <a-textarea
-                  v-model:model-value="form.headers_text"
-                  :auto-size="{ minRows: 3, maxRows: 5 }"
-                  :placeholder="t('space.mcp.headersPlaceholder')"
-                />
+              <a-form-item
+                v-if="hasCommandField"
+                field="env"
+                :label="t('space.mcp.envLabel')"
+                class="lg:col-span-2"
+              >
+                <key-value-editor v-model="form.env" secret />
               </a-form-item>
 
-              <a-form-item field="env_text" :label="t('space.mcp.envLabel')" class="lg:col-span-2">
-                <a-textarea
-                  v-model:model-value="form.env_text"
-                  :auto-size="{ minRows: 3, maxRows: 5 }"
-                  :placeholder="t('space.mcp.envPlaceholder')"
-                />
+              <a-form-item
+                v-if="isCliTransport"
+                field="tool_schema"
+                :label="t('space.mcp.toolSchemaLabel')"
+                class="lg:col-span-2"
+              >
+                <tool-schema-builder v-model="form.tool_schema" />
               </a-form-item>
 
-              <a-form-item field="tool_schema_text" :label="t('space.mcp.toolSchemaLabel')" class="lg:col-span-2">
-                <a-textarea
-                  v-model:model-value="form.tool_schema_text"
-                  :auto-size="{ minRows: 4, maxRows: 10 }"
-                  :placeholder="t('space.mcp.toolSchemaPlaceholder')"
-                />
+              <a-form-item
+                v-if="isHttpTransport"
+                field="tool_names"
+                :label="t('space.mcp.toolNamesLabel')"
+                class="lg:col-span-2"
+              >
+                <tag-list-editor v-model="form.tool_names" :placeholder="t('space.mcp.toolNamesPlaceholder')" />
+              </a-form-item>
+
+              <a-form-item field="task_keywords" :label="t('space.mcp.taskKeywordsLabel')" class="lg:col-span-2">
+                <tag-list-editor v-model="form.task_keywords" :placeholder="t('space.mcp.taskKeywordsPlaceholder')" />
               </a-form-item>
             </div>
 
