@@ -43,11 +43,14 @@ class _StubAgentService:
 
 
 class _StubScheduleService:
-    def __init__(self):
+    def __init__(self, create_error=None):
         self.created = []
         self.deleted = []
+        self._create_error = create_error
 
     def create_task(self, account=None, **kwargs):
+        if self._create_error is not None:
+            raise self._create_error
         kwargs = dict(kwargs)
         # 模拟真实 service：绑定管理端 Agent 时强制 task_type=admin_agent_execution
         if kwargs.get("admin_agent_id"):
@@ -103,12 +106,12 @@ class _StubScheduleService:
         )
 
 
-def _wire(monkeypatch, admin_id, permissions, agent_exists=True):
+def _wire(monkeypatch, admin_id, permissions, agent_exists=True, create_error=None):
     monkeypatch.setattr(
         support, "_resolve_admin_permission", _admin_ctx(admin_id, permissions)
     )
     agent_svc = _StubAgentService(exists=agent_exists)
-    sched_svc = _StubScheduleService()
+    sched_svc = _StubScheduleService(create_error=create_error)
     monkeypatch.setattr(
         support,
         "_get_service",
@@ -212,6 +215,33 @@ class TestCreateScheduleEndpoint:
             {"name": "n"},
         )
         assert resp.status_code == 400
+
+    def test_service_fail_exception_returns_400_not_500(self, monkeypatch):
+        """反向验证：service 抛 FailException 时路由必须返回 400。
+
+        回归防护：admin_routes_7 曾漏导入 FailException，导致 except 子句求值
+        该名字时抛 NameError，把本应 400 的校验错误升级为 500。
+        """
+        from internal.exception import FailException
+
+        _wire(
+            monkeypatch,
+            uuid4(),
+            ["agent_pool:manage"],
+            create_error=FailException("定时表达式需要 6 段：秒 分 时 日 月 周"),
+        )
+        resp = _post(
+            f"/admin/agents/{AGENT_ID}/schedules",
+            {
+                "name": "n",
+                "cron_expression": "0 7 * *",
+                "board": "builtin_tool",
+                "action": "list",
+            },
+        )
+        assert resp.status_code == 400, "非法 cron 必须返回 400，而非 500"
+        body = asyncio.run(resp.get_json())
+        assert body["code"] == "validate_error"
 
 
 class TestListScheduleEndpoint:

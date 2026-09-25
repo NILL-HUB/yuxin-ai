@@ -1,4 +1,4 @@
-"""Admin 管理端点 Quart 异步迁移（批次 7）。
+﻿"""Admin 管理端点 Quart 异步迁移（批次 7）。
 
 将 internal/router/router.py 中以下 handler 注册的 Flask 同步端点迁移为
 Quart async 端点（挂载到 asgi_app.quart_app）：
@@ -393,12 +393,18 @@ def register_routes(quart_app):
         )
         from internal.service.admin_agent_service import AdminAgentService
 
+        service = a._get_service(AdminAgentService)
+        admin_permissions = list(admin.get("permissions") or [])
         codes = await a._to_thread(
-            a._get_service(AdminAgentService).list_assignable_permissions,
-            admin_permissions=list(admin.get("permissions") or []),
+            service.list_assignable_permissions,
+            admin_permissions=admin_permissions,
+        )
+        permissions = await a._to_thread(
+            service.list_assignable_permission_details,
+            admin_permissions=admin_permissions,
         )
         resp = AdminAgentAssignablePermissionsResp()
-        return a._ok(resp.dump({"codes": codes}))
+        return a._ok(resp.dump({"codes": codes, "permissions": permissions}))
 
     @quart_app.get("/admin/agents/boards")
     async def admin_agent_boards_list():
@@ -587,7 +593,8 @@ def register_routes(quart_app):
             return err
 
         from uuid import UUID
-
+# 
+        from internal.exception import FailException
         from internal.service.admin_agent_service import AdminAgentService
         from internal.service.schedule_task_service import ScheduleTaskService
 
@@ -672,7 +679,8 @@ def register_routes(quart_app):
             return err
 
         from uuid import UUID
-
+# 
+        from internal.exception import FailException
         from internal.service.schedule_task_service import ScheduleTaskService
 
         admin_user_id = UUID(str(admin.get("id")))
