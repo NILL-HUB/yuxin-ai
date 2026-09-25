@@ -60,6 +60,15 @@ class TestAssignablePermissionsEndpoint:
         # 不含管理员没有的
         assert "user:read" not in codes
         assert "order:view" not in codes
+        # 同时返回同源语义明细（供前端显示中文名，避免另调全量 /admin/permissions）
+        permissions = body["data"]["permissions"]
+        assert [item["code"] for item in permissions] == codes
+        assert all("name" in item and "resource" in item for item in permissions)
+        # 语义名称来自 RBAC 目录（单一事实源）
+        from internal.core.rbac import PERMISSION_BY_CODE
+
+        for item in permissions:
+            assert item["name"] == PERMISSION_BY_CODE[item["code"]].name
 
     def test_excludes_banned_even_if_admin_holds_them(self, monkeypatch):
         admin_id = "22222222-2222-2222-2222-222222222222"

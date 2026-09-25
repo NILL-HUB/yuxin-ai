@@ -18,6 +18,7 @@ from internal.core.admin_agent_authorization import (
     assert_grantable,
     compute_effective_permissions,
 )
+from internal.core.rbac import PERMISSION_BY_CODE
 from internal.entity.admin_agent_entity import AdminAgentPrincipal, AutomationLevel
 from internal.model.admin_agent import AdminAgent
 from pkg.sqlalchemy import SQLAlchemy
@@ -51,6 +52,33 @@ class AdminAgentService:
         管理员看不到自己没有的权限点，无从选择。
         """
         return sorted(frozenset(admin_permissions) & ASSIGNABLE_PERMISSIONS)
+
+    def list_assignable_permission_details(
+        self, *, admin_permissions
+    ) -> list[dict[str, str]]:
+        """返回可下放权限点的**语义化明细**（与 ``list_assignable_permissions`` 同源）。
+
+        单一事实源：名称/资源/动作全部取自 ``internal.core.rbac.PERMISSION_CATALOG``
+        （经 ``PERMISSION_BY_CODE`` 索引），与 RBAC 角色管理页展示的是同一份目录，
+        不另维护一份名称映射。作用是让 Agent 授权选择器能显示中文名并按 resource
+        分组，而无需前端改调全量 ``/admin/permissions``（那会绕过安全交集）。
+        """
+        codes = self.list_assignable_permissions(admin_permissions=admin_permissions)
+        details: list[dict[str, str]] = []
+        for code in codes:
+            spec = PERMISSION_BY_CODE.get(code)
+            if spec is None:
+                continue
+            details.append(
+                {
+                    "code": spec.code,
+                    "name": spec.name,
+                    "resource": spec.resource,
+                    "action": spec.action,
+                    "description": spec.description,
+                }
+            )
+        return details
 
     def get_principal(
         self,

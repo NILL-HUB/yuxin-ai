@@ -3,7 +3,16 @@ from marshmallow import Schema, fields
 
 
 class AdminAgentAssignablePermissionsResp(Schema):
+    """可下放权限点响应。
+
+    - ``codes``：纯权限码列表（保持既有契约，供只取码的调用方使用）。
+    - ``permissions``：与 ``codes`` 同源的语义化明细（code/name/resource/action/
+      description），供前端直接渲染中文名并按 resource 分组——避免前端为拿语义
+      再去调全量 ``/admin/permissions``（那会绕过"展示即受限"的安全交集）。
+    """
+
     codes = fields.List(fields.String(), dump_default=[])
+    permissions = fields.List(fields.Dict(), dump_default=[])
 
 
 class AdminAgentCreateReq(Schema):

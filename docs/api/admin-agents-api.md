@@ -23,8 +23,17 @@
 **响应 `data`**
 
 ```json
-{ "codes": ["model_pool:read", "builtin_tool:read"] }
+{
+  "codes": ["model_pool:read", "builtin_tool:read"],
+  "permissions": [
+    { "code": "model_pool:read", "name": "查看模型池", "resource": "model_pool", "action": "read", "description": "查看模型池" },
+    { "code": "builtin_tool:read", "name": "查看内置工具", "resource": "builtin_tool", "action": "read", "description": "查看内置工具" }
+  ]
+}
 ```
+
+- `codes`：纯权限码列表（保持既有契约，供只取码的调用方使用）。
+- `permissions`：与 `codes` **同源同序**的语义化明细，名称/资源/动作直接取自 RBAC 权限目录 `internal/core/rbac.py` 的 `PERMISSION_CATALOG`（经 `PERMISSION_BY_CODE` 索引）。前端据此显示中文名并按 `resource` 分组，**无需另调全量 `/admin/permissions`**（那会绕过安全交集，把不可下放的权限点暴露到选择器）。与「角色权限」管理页展示的是同一份目录，不存在第二套名称映射。
 
 > 包一层 `codes` 便于日后追加 `total` / 分组字段而不破坏契约。封禁项（身份与权限体系，如 `role:*` / `permission:read` / `admin_user:*`）与未登记 resource 一律不出现在结果中（fail closed，见 `ASSIGNABLE_RESOURCES`）。
 

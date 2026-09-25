@@ -128,6 +128,31 @@ class TestAssignablePermissions:
         )
         assert result == []
 
+    def test_details_are_same_source_as_codes(self):
+        """语义明细必须与 codes 同源、同序，且名称取自 PERMISSION_CATALOG。"""
+        from internal.core.rbac import PERMISSION_BY_CODE
+
+        svc, _ = _service()
+        admin_perms = ["model_pool:read", "agent_pool:manage", "role:read"]
+        codes = svc.list_assignable_permissions(admin_permissions=admin_perms)
+        details = svc.list_assignable_permission_details(admin_permissions=admin_perms)
+
+        # 与 codes 完全同源同序（单一事实源，不产生第二份列表）
+        assert [item["code"] for item in details] == codes
+        # 名称/资源/动作直接来自 RBAC 目录，而非另建的名称映射
+        for item in details:
+            spec = PERMISSION_BY_CODE[item["code"]]
+            assert item["name"] == spec.name
+            assert item["resource"] == spec.resource
+            assert item["action"] == spec.action
+
+    def test_details_exclude_banned(self):
+        svc, _ = _service()
+        details = svc.list_assignable_permission_details(
+            admin_permissions=["role:read", "permission:read", "model_pool:read"]
+        )
+        assert [item["code"] for item in details] == ["model_pool:read"]
+
 
 class TestCreateAgent:
     def test_rejects_granting_beyond_admin(self):
