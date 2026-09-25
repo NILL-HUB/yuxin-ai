@@ -187,6 +187,18 @@ effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMI
 | 权限点（`permission:read`） | 暴露权限体系全貌 |
 | 用户写操作（`user:create/update/disable/delete`） | 影响真实用户；**仅 `user:read` 可下放** |
 
+#### 9.2.1 为什么封禁表「今天冗余」却仍必须保留（防重复推导）
+
+`BANNED_PERMISSION_CODES`（11 条）在当前**完全被 resource 白名单覆盖**——实测这 11 条的 resource（`admin`/`admin_user`/`role`/`permission`）均不在 `ASSIGNABLE_RESOURCES` 内，`is_assignable()` 的 resource 分支已全部拦住，封禁分支今天一条都没多拦。同理，当前 `BOARD_ACTIONS` 只登记了 `builtin_tool` 一个板块，**没有任何身份类板块动作**，所以授予 Agent 身份权限今天也无处可调（惰性死权限）。
+
+这容易让人推出「既然今天没用，不如去掉封禁、把过滤交给前端让管理员自选」——**该结论错误**，理由有三：
+
+1. **冗余是「今天巧合」，不是「永远成立」**。白名单与封禁是**双层防御**：若未来有人为开新板块权限而把 `role` 补进 `ASSIGNABLE_RESOURCES`（这是正常运维动作），仅靠白名单会让 `role:*` 静默变为可下放；封禁表是独立的第二层保险。删除它省 11 行，换来一个静默失效面。
+2. **惰性权限会因「未来激活」而变成真提权**。今天无身份类板块动作 ≠ 永远没有。一旦将来为 `role`/`admin_user` 注册板块动作，**已下放的历史惰性权限立即变成活权限**；而 Agent 是在 `admin_agent_execution` 定时任务里**无人值守自主运行**的，届时可自行改角色/账号 → 安全模型自我解体。fail-closed 的价值正在于「在下放那一刻就挡住」，而不是等执行时才拦。
+3. **前端过滤会新增第二套逻辑，且无法 fail-closed**。要让前端自己剔除，需复刻 45 条规则（11 封禁 + 33 个 resource 白名单 + 1 个 user 只读例外）；更关键的是前端那份白名单副本**不会随新增 resource 自动更新**，与 fail-closed「新增默认不可下放」直接冲突。此外 `viewer` 角色可访问 Agent 页（`agent_pool:read`）却**没有** `permission:read`，无法改调全量 `/admin/permissions`。
+
+**正确形态**：过滤逻辑**只在后端一处**（`is_assignable`），前端**零过滤**——端点除 `codes` 外还返回 `permissions` 语义明细（名称/资源取自 `PERMISSION_CATALOG` 单一事实源），前端仅负责渲染中文名与按 resource 分组，不做任何可下放判断。回归防护见 `test_admin_agent_authorization.py::TestBannedLayerDefense`。
+
 ### 9.3 三层强制（展示 / 保存 / 运行）
 
 UI 过滤只是体验，**不是安全边界**。三层各自独立成立：

@@ -83,6 +83,67 @@ class TestAssignableWhitelist:
         assert authz.is_assignable("future_feature:manage") is False
 
 
+class TestBannedLayerDefense:
+    """锁定「白名单 + 封禁」双层防御，防止未来被误删（见 docs/rbac.md §9.2.1）。
+
+    背景：当前 11 条封禁码的 resource 均不在白名单中，封禁分支今天一条都没多拦，
+    因此**看起来冗余**；但它是独立第二层保险——若有人为开新板块权限而把身份类
+    resource 补进 ASSIGNABLE_RESOURCES（正常运维动作），封禁必须仍能挡住。
+    """
+
+    def test_banned_codes_resources_are_all_unregistered_today(self):
+        """事实核查：今天封禁码确实被 resource 白名单覆盖（冗余的成因）。
+
+        这是「今天看似冗余」这一前提的守卫——一旦有人把身份类 resource
+        登记进白名单，本测试会失败，提醒复核双层防御是否仍然成立。
+        """
+        from internal.core.admin_agent_authorization import ASSIGNABLE_RESOURCES
+        from internal.core.rbac import PERMISSION_BY_CODE
+
+        for code in BANNED_PERMISSION_CODES:
+            spec = PERMISSION_BY_CODE.get(code)
+            if spec is None:
+                continue
+            assert spec.resource not in ASSIGNABLE_RESOURCES, (
+                f"{code} 的 resource={spec.resource} 已被登记进下放白名单；"
+                "此时封禁表成为唯一防线，务必确认这是有意为之"
+            )
+
+    def test_banned_wins_even_if_resource_whitelisted(self, monkeypatch):
+        """反向验证：即便 identity 类 resource 被误加进白名单，封禁仍必须生效。
+
+        模拟「未来为开新板块权限而把 role 补进 ASSIGNABLE_RESOURCES」这一
+        正常运维动作：此时仅靠白名单会让 role:update 静默可下放，必须由
+        BANNED_PERMISSION_CODES 兜住。删掉封禁分支本测试即失败。
+        """
+        import internal.core.admin_agent_authorization as authz
+
+        patched_resources = frozenset(authz.ASSIGNABLE_RESOURCES | {"role"})
+        monkeypatch.setattr(authz, "ASSIGNABLE_RESOURCES", patched_resources)
+
+        assert authz.is_assignable("role:update") is False, (
+            "role 即使被登记进白名单，也必须被封禁表拦住"
+        )
+        assert authz.is_assignable("role:read") is False
+
+    def test_no_identity_board_action_exists_today(self):
+        """事实核查：当前无身份类板块动作，故身份权限是惰性死权限。
+
+        这是「今天赋予也无处可调」前提的守卫。若未来为身份板块注册动作，
+        本测试失败即提示：那些历史惰性授权将变为活权限，须复核下放策略。
+        """
+        from internal.core.admin_agent_boards import BOARD_ACTIONS
+
+        identity_resources = {"role", "admin_user", "permission", "admin"}
+        offending = [
+            a for a in BOARD_ACTIONS if a.permission_code.split(":")[0] in identity_resources
+        ]
+        assert offending == [], (
+            "检测到身份类板块动作被注册；已下放的历史身份权限将变为可执行，"
+            "须确认 Agent 授权策略仍安全"
+        )
+
+
 class TestTripleIntersection:
     def test_effective_is_three_way_intersection(self):
         """effective = admin ∩ granted ∩ assignable，三者缺一不可。"""
