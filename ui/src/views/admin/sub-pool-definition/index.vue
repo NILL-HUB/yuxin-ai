@@ -14,6 +14,7 @@ import {
   type SubPoolType,
 } from '@/services/sub-pool-definition'
 import { getErrorMessage } from '@/utils/error'
+import { getAgentAvatarStyle, getAgentAvatarText } from '@/utils/admin-agent-display'
 
 const { t } = useI18n()
 
@@ -196,67 +197,127 @@ const remove = async (item: SubPoolDefinition) => {
   }
 }
 
+// KPI：基于当前页列表统计（子池总量有限，分页仅用于长列表浏览）。
+// 计数只为概览服务，精确总量以 total 为准，避免与分页口径混淆。
+const kpi = computed(() => ({
+  total: total.value,
+  agent: list.value.filter((item) => item.pool_type === 'agent').length,
+  tool: list.value.filter((item) => item.pool_type === 'tool').length,
+  enabled: list.value.filter((item) => item.enabled).length,
+}))
+
+const columns = computed(() => [
+  { title: t('admin.agentPool.subPoolType'), slotName: 'type', width: 110 },
+  { title: t('admin.agentPool.subPoolName'), slotName: 'name', width: 220 },
+  { title: t('admin.agentPool.subPoolLabel'), slotName: 'label', width: 140 },
+  { title: t('admin.agentPool.subPoolDesc'), slotName: 'desc' },
+  { title: t('admin.agentPool.subPoolVisible'), slotName: 'visible', width: 100 },
+  { title: t('admin.agentPool.subPoolDefaultEnabled'), slotName: 'defaultEnabled', width: 110 },
+  { title: t('admin.agentPool.keywordCount'), slotName: 'keywords', width: 110 },
+  { title: t('admin.agentPool.subPoolSortOrder'), slotName: 'sort', width: 90 },
+  { title: t('admin.agentPool.status'), slotName: 'status', width: 100 },
+  { title: t('admin.agentPool.actions'), slotName: 'actions', width: 220 },
+])
+
 onMounted(loadList)
 </script>
 
 <template>
-  <section class="space-y-6 p-6">
-    <header class="flex items-center justify-between">
+  <section class="space-y-6">
+    <header class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.agentPool.subPoolTitle') }}</h1>
-        <p class="mt-1 text-sm text-gray-500">{{ t('admin.agentPool.subPoolDescription') }}</p>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.agentPool.subPoolTitle') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.agentPool.subPoolDescription') }}</p>
       </div>
-      <a-button type="primary" @click="openCreate">{{ t('admin.agentPool.subPoolCreate') }}</a-button>
+      <a-button type="primary" @click="openCreate">
+        <template #icon><icon-plus /></template>
+        {{ t('admin.agentPool.subPoolCreate') }}
+      </a-button>
     </header>
 
-    <div class="rounded-lg border bg-white p-4">
-      <div class="grid gap-3 md:grid-cols-4">
-        <a-select v-model="filters.pool_type" :options="POOL_TYPE_OPTIONS" />
-        <a-select v-model="filters.enabled" :options="ENABLED_OPTIONS" />
-        <a-input
-          v-model="filters.keyword"
-          :placeholder="t('admin.agentPool.subPoolSearchPlaceholder')"
-          allow-clear
-          @press-enter="handleSearch"
-        />
-        <a-button type="primary" :loading="loading" @click="handleSearch">{{ t('admin.agentPool.search') }}</a-button>
-      </div>
-    </div>
+    <!-- KPI 概览 -->
+    <section class="grid gap-4 md:grid-cols-4">
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm text-slate-500">{{ t('admin.agentPool.statTotal') }}</p>
+        <strong class="mt-2 block text-3xl font-semibold text-slate-900">{{ kpi.total }}</strong>
+      </article>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm text-slate-500">{{ t('admin.agentPool.subPoolTypeLabels.agent') }}</p>
+        <strong class="mt-2 block text-3xl font-semibold text-blue-600">{{ kpi.agent }}</strong>
+      </article>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm text-slate-500">{{ t('admin.agentPool.subPoolTypeLabels.tool') }}</p>
+        <strong class="mt-2 block text-3xl font-semibold text-purple-600">{{ kpi.tool }}</strong>
+      </article>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <p class="text-sm text-slate-500">{{ t('admin.agentPool.subPoolEnabled') }}</p>
+        <strong class="mt-2 block text-3xl font-semibold text-green-600">{{ kpi.enabled }}</strong>
+      </article>
+    </section>
+
+    <!-- 筛选工具栏 -->
+    <section class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4">
+      <a-select v-model="filters.pool_type" :options="POOL_TYPE_OPTIONS" class="w-[160px]" />
+      <a-select v-model="filters.enabled" :options="ENABLED_OPTIONS" class="w-[160px]" />
+      <a-input
+        v-model="filters.keyword"
+        class="min-w-[220px] flex-1"
+        :placeholder="t('admin.agentPool.subPoolSearchPlaceholder')"
+        allow-clear
+        @press-enter="handleSearch"
+      />
+      <a-button type="primary" :loading="loading" @click="handleSearch">
+        {{ t('admin.agentPool.search') }}
+      </a-button>
+      <a-button :loading="loading" @click="loadList">
+        {{ t('common.actions.refresh') }}
+      </a-button>
+    </section>
 
     <a-spin :loading="loading" class="block">
-      <div class="overflow-x-auto rounded-lg border bg-white">
+      <div class="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <table class="w-full text-left text-sm">
-          <thead class="bg-gray-50 text-gray-500">
+          <thead class="bg-slate-50 text-slate-500">
             <tr>
-              <th class="p-3">{{ t('admin.agentPool.subPoolType') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.subPoolName') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.subPoolLabel') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.subPoolDesc') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.subPoolVisible') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.subPoolDefaultEnabled') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.keywordCount') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.subPoolSortOrder') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.status') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.actions') }}</th>
+              <th v-for="col in columns" :key="col.slotName" class="p-3 font-medium" :style="col.width ? { width: `${col.width}px` } : undefined">
+                {{ col.title }}
+              </th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!list.length">
-              <td class="p-6 text-center text-gray-400" colspan="10">{{ t('admin.agentPool.subPoolEmpty') }}</td>
+              <td class="p-6 text-center" colspan="10">
+                <a-empty :description="t('admin.agentPool.subPoolEmpty')" />
+              </td>
             </tr>
-            <tr v-for="item in list" :key="item.id" class="border-t">
+            <tr v-for="item in list" :key="item.id" class="border-t border-slate-100 hover:bg-slate-50/60">
               <td class="p-3">
                 <a-tag :color="item.pool_type === 'agent' ? 'arcoblue' : 'purple'" size="small">
                   {{ item.pool_type === 'agent' ? t('admin.agentPool.subPoolTypeLabels.agent') : t('admin.agentPool.subPoolTypeLabels.tool') }}
                 </a-tag>
               </td>
-              <td class="p-3 font-mono">
-                {{ item.name }}
-                <a-tag v-if="item.is_system" size="small" color="gray">{{ t('admin.agentPool.subPoolIsSystem') }}</a-tag>
+              <td class="p-3">
+                <div class="flex items-center gap-2.5">
+                  <span
+                    class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold tracking-wide text-white"
+                    :style="getAgentAvatarStyle(`${item.id}:${item.name}`)"
+                  >
+                    {{ getAgentAvatarText(item.label || item.name) }}
+                  </span>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <span class="truncate font-mono text-[13px] font-medium text-slate-800">{{ item.name }}</span>
+                      <a-tag v-if="item.is_system" size="small" color="gray">{{ t('admin.agentPool.subPoolIsSystem') }}</a-tag>
+                    </div>
+                  </div>
+                </div>
               </td>
-              <td class="p-3">{{ item.label || '-' }}</td>
-              <td class="p-3 max-w-xs truncate text-gray-500" :title="item.description">
-                {{ item.description || '-' }}
+              <td class="p-3 font-medium text-slate-700">{{ item.label || '-' }}</td>
+              <td class="p-3">
+                <a-tooltip v-if="item.description" :content="item.description" position="tl" mini>
+                  <div class="max-w-xs truncate cursor-help text-slate-500">{{ item.description }}</div>
+                </a-tooltip>
+                <span v-else class="text-slate-300">-</span>
               </td>
               <td class="p-3">
                 <a-tag :color="item.visible_to_user ? 'green' : 'gray'" size="small">
@@ -268,15 +329,15 @@ onMounted(loadList)
                   {{ item.default_enabled ? t('common.yes') : t('common.no') }}
                 </a-tag>
               </td>
-              <td class="p-3">{{ item.task_keywords?.length || 0 }}</td>
-              <td class="p-3">{{ item.sort_order }}</td>
+              <td class="p-3 text-slate-600">{{ item.task_keywords?.length || 0 }}</td>
+              <td class="p-3 text-slate-600">{{ item.sort_order }}</td>
               <td class="p-3">
                 <a-tag :color="item.enabled ? 'green' : 'red'" size="small">
                   {{ item.enabled ? t('admin.agentPool.subPoolEnabled') : t('admin.agentPool.subPoolDisabled') }}
                 </a-tag>
               </td>
               <td class="p-3">
-                <a-space>
+                <a-space :size="4">
                   <a-button size="mini" @click="openEdit(item)">{{ t('admin.agentPool.subPoolEdit') }}</a-button>
                   <a-button
                     v-if="!item.enabled"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
@@ -21,6 +21,7 @@ import {
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
 import { httpCode } from '@/config'
+import { formatAgentTime } from '@/utils/admin-agent-display'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -30,7 +31,6 @@ const adminStore = useAdminStore()
 const agentId = String(route.params.id || '')
 
 const agent = ref<AdminAgent | null>(null)
-const loading = ref(false)
 const conversations = ref<ConversationItem[]>([])
 const currentConversationId = ref<string | null>(null)
 const messages = ref<ChatMessage[]>([])
@@ -233,10 +233,7 @@ const memoryStatItems = computed(() => [
   { label: t('admin.agents.skills'), value: memoryStats.value?.skills ?? '-' },
 ])
 
-const formatTime = (value: number | null | undefined) => {
-  if (!value) return '-'
-  return new Date(value * 1000).toLocaleString('zh-CN', { hour12: false })
-}
+const formatTime = (value: number | null | undefined) => formatAgentTime(value)
 
 onMounted(async () => {
   await Promise.all([loadAgent(), loadConversations(), loadMemory()])
@@ -244,55 +241,85 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="flex h-full min-h-0 flex-col p-6">
-    <header class="mb-4 flex items-center justify-between">
+  <section class="flex h-full min-h-0 flex-col">
+    <header class="mb-4 flex items-center justify-between gap-3">
       <div class="flex items-center gap-3">
-        <a-button size="mini" @click="goBack">{{ t('admin.agents.chatBack') }}</a-button>
+        <a-button size="mini" @click="goBack">
+          <template #icon><icon-left /></template>
+          {{ t('admin.agents.chatBack') }}
+        </a-button>
         <div>
-          <h1 class="text-xl font-semibold text-gray-900">{{ t('admin.agents.chatTitle') }}：{{ agent?.name || '-' }}</h1>
-          <p v-if="agent?.description" class="mt-0.5 text-xs text-gray-400">{{ agent.description }}</p>
+          <h1 class="text-xl font-semibold text-slate-900">{{ t('admin.agents.chatTitle') }}：{{ agent?.name || '-' }}</h1>
+          <p v-if="agent?.description" class="mt-0.5 text-xs text-slate-400">{{ agent.description }}</p>
         </div>
       </div>
-      <a-button size="mini" :disabled="streaming" @click="newConversation">{{ t('admin.agents.newConversation') }}</a-button>
+      <a-button size="mini" type="outline" :disabled="streaming" @click="newConversation">
+        <template #icon><icon-plus /></template>
+        {{ t('admin.agents.newConversation') }}
+      </a-button>
     </header>
 
-    <div class="grid min-h-0 flex-1 gap-4" :class="'grid-cols-[220px_1fr_300px]'">
+    <div class="grid min-h-0 flex-1 gap-4" :class="'grid-cols-[240px_1fr_320px]'">
       <!-- 会话列表 -->
-      <aside class="min-h-0 overflow-y-auto rounded-lg border bg-white p-3">
-        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">{{ t('admin.agents.conversation') }}</p>
-        <a-empty v-if="!conversations.length" :description="t('admin.agents.conversationEmpty')" :image-simple="true" />
-        <div v-else class="space-y-1">
-          <button
-            v-for="item in conversations"
-            :key="item.id"
-            class="block w-full truncate rounded px-2 py-1.5 text-left text-sm transition"
-            :class="item.id === currentConversationId ? 'bg-blue-50 font-medium text-blue-700' : 'text-gray-600 hover:bg-gray-50'"
-            @click="openConversation(item.id)"
-          >
-            {{ item.title }}
-          </button>
+      <aside class="flex min-h-0 flex-col rounded-xl border border-slate-200 bg-white p-3">
+        <div class="mb-2 flex items-center justify-between">
+          <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">{{ t('admin.agents.conversation') }}</p>
+          <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+            {{ conversations.length }}
+          </span>
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <a-empty v-if="!conversations.length" :description="t('admin.agents.conversationEmpty')" :image-simple="true" />
+          <div v-else class="space-y-1">
+            <button
+              v-for="item in conversations"
+              :key="item.id"
+              class="block w-full rounded-lg px-2.5 py-2 text-left transition"
+              :class="item.id === currentConversationId ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'"
+              @click="openConversation(item.id)"
+            >
+              <div class="truncate text-sm" :class="item.id === currentConversationId ? 'font-medium' : ''">{{ item.title }}</div>
+              <div class="mt-0.5 text-[10px] text-slate-400">{{ formatTime(item.updated_at) }}</div>
+            </button>
+          </div>
         </div>
       </aside>
 
       <!-- 对话区 -->
-      <main class="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-white">
+      <main class="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div class="flex-1 space-y-3 overflow-y-auto p-4" :class="messagesLoading || streaming ? 'opacity-70' : ''">
           <a-spin v-if="messagesLoading" style="width: 100%" />
-          <div v-for="message in messages" :key="message.id" class="flex" :class="message.role === 'user' ? 'justify-end' : 'justify-start'">
+          <a-empty
+            v-else-if="!messages.length && !streaming"
+            :description="t('admin.agents.chatEmpty')"
+            class="py-16"
+          />
+          <div
+            v-for="message in messages"
+            :key="message.id"
+            class="flex"
+            :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+          >
             <div
-              class="max-w-[80%] whitespace-pre-wrap rounded-lg px-3 py-2 text-sm"
-              :class="message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-800'"
+              class="max-w-[80%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm shadow-sm"
+              :class="message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-800'"
             >
-              <div v-if="message.role === 'tool'" class="text-xs text-gray-500">
-                <span class="font-medium">{{ renderToolContent(message).name }}</span>
-                <pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-white p-2 text-gray-600">{{ renderToolContent(message).result }}</pre>
+              <div v-if="message.role === 'tool'" class="text-xs">
+                <div class="mb-1 flex items-center gap-1.5 text-slate-500">
+                  <icon-code-square />
+                  <span class="font-medium">{{ renderToolContent(message).name }}</span>
+                </div>
+                <pre class="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-2 text-slate-600">{{ renderToolContent(message).result }}</pre>
               </div>
               <template v-else>{{ message.content || '…' }}</template>
             </div>
           </div>
-          <div v-if="streaming" class="text-sm text-gray-400">{{ t('admin.agents.sending') }}</div>
+          <div v-if="streaming" class="flex items-center gap-2 text-sm text-slate-400">
+            <a-spin :size="14" />
+            {{ t('admin.agents.sending') }}
+          </div>
         </div>
-        <div class="border-t p-3">
+        <div class="border-t border-slate-200 p-3">
           <div class="flex items-end gap-2">
             <a-textarea
               v-model="input"
@@ -301,37 +328,40 @@ onMounted(async () => {
               :disabled="streaming"
               @press-enter="sendMessage"
             />
-            <a-button type="primary" :loading="streaming" @click="sendMessage">{{ t('admin.agents.send') }}</a-button>
+            <a-button type="primary" :loading="streaming" @click="sendMessage">
+              <template #icon><icon-send /></template>
+              {{ t('admin.agents.send') }}
+            </a-button>
           </div>
         </div>
       </main>
 
       <!-- 记忆面板 -->
       <aside class="flex min-h-0 flex-col gap-3 overflow-y-auto">
-        <div class="rounded-lg border bg-white p-3">
+        <div class="rounded-xl border border-slate-200 bg-white p-3">
           <div class="mb-2 flex items-center justify-between">
-            <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">{{ t('admin.agents.memoryStats') }}</p>
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">{{ t('admin.agents.memoryStats') }}</p>
             <a-button size="mini" status="danger" :loading="memoryClearLoading" @click="clearMemory">{{ t('admin.agents.memoryClear') }}</a-button>
           </div>
           <a-spin :loading="memoryLoading" style="width: 100%">
             <div class="grid grid-cols-3 gap-2">
-              <div v-for="item in memoryStatItems" :key="item.label" class="rounded bg-gray-50 p-2 text-center">
-                <div class="text-base font-semibold text-gray-900">{{ item.value }}</div>
-                <div class="text-xs text-gray-400">{{ item.label }}</div>
+              <div v-for="item in memoryStatItems" :key="item.label" class="rounded-lg bg-slate-50 p-2 text-center">
+                <div class="text-lg font-semibold text-slate-900">{{ item.value }}</div>
+                <div class="text-[10px] text-slate-400">{{ item.label }}</div>
               </div>
             </div>
           </a-spin>
         </div>
 
-        <div class="flex min-h-0 flex-col rounded-lg border bg-white p-3">
-          <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">{{ t('admin.agents.memoryList') }}</p>
+        <div class="flex min-h-0 flex-col rounded-xl border border-slate-200 bg-white p-3">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{{ t('admin.agents.memoryList') }}</p>
           <a-spin :loading="memoryLoading" style="width: 100%">
             <a-empty v-if="!memories.length" :description="t('admin.agents.memoryEmpty')" :image-simple="true" />
             <div v-else class="space-y-2">
-              <div v-for="item in memories" :key="item.id" class="rounded bg-gray-50 p-2">
-                <div class="text-sm font-medium text-gray-800">{{ item.title || t('admin.agents.memoryEmpty') }}</div>
-                <div class="mt-0.5 line-clamp-3 text-xs text-gray-500">{{ item.content }}</div>
-                <div class="mt-1 text-[10px] text-gray-400">{{ formatTime(item.updated_at) }}</div>
+              <div v-for="item in memories" :key="item.id" class="rounded-lg bg-slate-50 p-2.5">
+                <div class="text-sm font-medium text-slate-800">{{ item.title || t('admin.agents.memoryEmpty') }}</div>
+                <div class="mt-0.5 line-clamp-3 text-xs text-slate-500">{{ item.content }}</div>
+                <div class="mt-1 text-[10px] text-slate-400">{{ formatTime(item.updated_at) }}</div>
               </div>
             </div>
           </a-spin>

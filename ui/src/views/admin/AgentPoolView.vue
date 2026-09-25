@@ -15,6 +15,7 @@ import { listAdminApps, updateAdminAppMetadata, type AdminAppRecord } from '@/se
 import { getErrorMessage } from '@/utils/error'
 import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
 import { useAdminStore } from '@/stores/admin'
+import { getAgentAvatarStyle, getAgentAvatarText } from '@/utils/admin-agent-display'
 
 const { t } = useI18n()
 const adminStore = useAdminStore()
@@ -361,59 +362,100 @@ onMounted(loadPoolConfigs)
 </script>
 
 <template>
-  <section class="space-y-6 p-6">
-    <header>
-      <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.agentPool.title') }}</h1>
-      <p class="mt-1 text-sm text-gray-500">{{ t('admin.agentPool.description') }}</p>
+  <section class="space-y-6">
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.agentPool.title') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.agentPool.description') }}</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="/admin/tool-governance" class="text-sm font-semibold text-blue-600 hover:underline">
+          {{ t('admin.agentPool.crossNav.viewToolGovernance') }}
+        </a>
+        <a href="/admin/sub-pool-definition" class="text-sm font-semibold text-blue-600 hover:underline">
+          {{ t('admin.agentPool.tabSubPool') }}
+        </a>
+      </div>
     </header>
 
     <!-- 治理模式状态栏 -->
     <GovernanceModeBanner />
 
     <!-- 统计卡片 -->
-    <div class="grid gap-4 md:grid-cols-3">
-      <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">{{ t('admin.agentPool.statTotal') }}</p>
-        <strong class="mt-1 block text-2xl">{{ totalConfigs }}</strong>
+    <section class="grid gap-4 md:grid-cols-3">
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm text-slate-500">{{ t('admin.agentPool.statTotal') }}</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+            <icon-apps />
+          </span>
+        </div>
+        <strong class="mt-2 block text-3xl font-semibold text-slate-900">{{ totalConfigs }}</strong>
       </article>
-      <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">{{ t('admin.agentPool.statEnabled') }}</p>
-        <strong class="mt-1 block text-2xl text-blue-600">{{ enabledConfigs }}</strong>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm text-slate-500">{{ t('admin.agentPool.statEnabled') }}</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+            <icon-poweroff />
+          </span>
+        </div>
+        <strong class="mt-2 block text-3xl font-semibold text-blue-600">{{ enabledConfigs }}</strong>
       </article>
-      <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">{{ t('admin.agentPool.statHealthy') }}</p>
-        <strong class="mt-1 block text-2xl text-green-600">{{ healthyConfigs }}</strong>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm text-slate-500">{{ t('admin.agentPool.statHealthy') }}</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-600">
+            <icon-heart-fill />
+          </span>
+        </div>
+        <strong class="mt-2 block text-3xl font-semibold text-green-600">{{ healthyConfigs }}</strong>
       </article>
-    </div>
+    </section>
 
-    <!-- Agent 池配置列表 -->
-    <div class="mb-3 flex justify-end">
-      <a-button type="primary" :disabled="!canManage" @click="openCreate">{{ t('admin.agentPool.createConfig') }}</a-button>
-    </div>
+    <!-- 工具栏 -->
+    <section class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+      <div class="text-sm text-slate-500">
+        {{ t('admin.agentPool.title') }}
+      </div>
+      <a-button type="primary" :disabled="!canManage" @click="openCreate">
+        <template #icon><icon-plus /></template>
+        {{ t('admin.agentPool.createConfig') }}
+      </a-button>
+    </section>
 
     <a-spin :loading="loading" class="block">
-      <div class="overflow-hidden rounded-lg border bg-white">
+      <div class="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <table class="w-full text-left text-sm">
-          <thead class="bg-gray-50 text-gray-500">
+          <thead class="bg-slate-50 text-slate-500">
             <tr>
-              <th class="p-3">{{ t('admin.agentPool.appId') }}</th>
-              <th class="p-3" style="width: 200px">{{ t('admin.agentPool.presetPromptSummary') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.costLevel') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.capabilities') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.status') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.healthStatus') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.actions') }}</th>
+              <th class="p-3 font-medium">{{ t('admin.agentPool.appId') }}</th>
+              <th class="p-3 font-medium" style="width: 200px">{{ t('admin.agentPool.presetPromptSummary') }}</th>
+              <th class="p-3 font-medium">{{ t('admin.agentPool.costLevel') }}</th>
+              <th class="p-3 font-medium">{{ t('admin.agentPool.capabilities') }}</th>
+              <th class="p-3 font-medium">{{ t('admin.agentPool.status') }}</th>
+              <th class="p-3 font-medium">{{ t('admin.agentPool.healthStatus') }}</th>
+              <th class="p-3 font-medium">{{ t('admin.agentPool.actions') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!configs.length">
-              <td class="p-6 text-center text-gray-400" colspan="7">{{ t('admin.agentPool.empty') }}</td>
+              <td class="p-6 text-center text-slate-400" colspan="7">
+                <a-empty :description="t('admin.agentPool.empty')" />
+              </td>
             </tr>
-            <tr v-for="config in configs" :key="config.id" class="border-t">
+            <tr v-for="config in configs" :key="config.id" class="border-t border-slate-100 hover:bg-slate-50/60">
               <td class="p-3">
-                <a-tooltip :content="config.app_id" position="tl" mini>
-                  <div class="max-w-[180px] truncate cursor-help">{{ getAppLabel(config.app_id) }}</div>
-                </a-tooltip>
+                <div class="flex items-center gap-2.5">
+                  <span
+                    class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-semibold tracking-wide text-white"
+                    :style="getAgentAvatarStyle(`${config.id}:${getAppLabel(config.app_id)}`)"
+                  >
+                    {{ getAgentAvatarText(getAppLabel(config.app_id)) }}
+                  </span>
+                  <a-tooltip :content="config.app_id" position="tl" mini>
+                    <div class="max-w-[180px] truncate cursor-help font-medium text-slate-800">{{ getAppLabel(config.app_id) }}</div>
+                  </a-tooltip>
+                </div>
               </td>
               <td class="p-3">
                 <a-tooltip
@@ -422,9 +464,9 @@ onMounted(loadPoolConfigs)
                   position="tl"
                   mini
                 >
-                  <div class="max-w-[200px] truncate cursor-help">{{ config.preset_prompt_summary }}</div>
+                  <div class="max-w-[200px] truncate cursor-help text-slate-600">{{ config.preset_prompt_summary }}</div>
                 </a-tooltip>
-                <span v-else class="text-gray-400">—</span>
+                <span v-else class="text-slate-300">—</span>
               </td>
               <td class="p-3">
                 <a-tag :color="costColor(getCostLevel(config))" size="small">{{ costLabel(getCostLevel(config)) }}</a-tag>
@@ -432,7 +474,7 @@ onMounted(loadPoolConfigs)
               <td class="p-3">
                 <div class="flex flex-wrap gap-1">
                   <a-tag v-for="cap in getCapabilities(config)" :key="cap" size="small" color="cyan">{{ cap }}</a-tag>
-                  <span v-if="!getCapabilities(config).length" class="text-gray-400">-</span>
+                  <span v-if="!getCapabilities(config).length" class="text-slate-300">-</span>
                 </div>
               </td>
               <td class="p-3">

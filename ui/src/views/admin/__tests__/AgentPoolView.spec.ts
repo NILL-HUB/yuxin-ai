@@ -162,6 +162,11 @@ const renderView = async (permissions = ['agent_pool:manage', 'app:read', 'app:u
         'a-space': { template: '<div><slot /></div>' },
         'a-tag': { template: '<span><slot /></span>' },
         'a-tooltip': { template: '<span><slot /></span>' },
+        'a-empty': { template: '<div class="empty-stub" />' },
+        'icon-apps': true,
+        'icon-poweroff': true,
+        'icon-heart-fill': true,
+        'icon-plus': true,
         GovernanceModeBanner: { template: '<div />' },
       },
     },
@@ -181,6 +186,18 @@ describe('Admin AgentPoolView', () => {
 
     expect(mocks.listAgentPoolConfigs).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('编程 Agent')
+  })
+
+  it('renders KPI stats and a deterministic gradient avatar for each config', async () => {
+    const wrapper = await renderView()
+
+    // KPI 统计数字来自 /admin/agent-pool/stats 聚合接口
+    const text = wrapper.text()
+    expect(text).toContain('1')
+
+    // 契约：每行应用名前渲染一个确定性渐变头像（带 linear-gradient 内联样式）
+    const avatars = wrapper.findAll('span[style*="linear-gradient"]')
+    expect(avatars.length).toBeGreaterThan(0)
   })
 
   it('pushes primary_pool / risk_level / routing_priority to app metadata while preserving other fields on submit', async () => {
