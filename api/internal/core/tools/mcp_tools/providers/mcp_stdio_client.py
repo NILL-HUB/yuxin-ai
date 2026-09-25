@@ -153,6 +153,14 @@ class McpStdioClient:
         `['a', 'b']`），CLI 侧可直接 json.loads 解析；字符串不加多余引号。
         按 key 长度**倒序**替换，避免一个占位符名是另一个的前缀时被提前吃掉
         （如 `{text}` 与 `{text_long}`）。
+
+        缺失占位符的处理（v2，修复静默传字面量 `{name}` 给 CLI）：
+        - 占位符名取 manifest（tool_schema）里声明的参数名，避免把 CLI 自身
+          的花括号字面量（如 `print({'a': 1})`）误判为占位符；
+        - **整 token 即 `{name}`** 且未提供：连同其前一个 token（通常是
+          `--flag`）一起丢弃，让 CLI 走自身默认值——适配可选参数；
+        - **内联出现**（token 里还含其它字符）且未提供：无法安全丢弃，
+          抛 ValueError 由调用方转成结构化错误，绝不静默传字面量。
         """
         raw_args = binding.get("args") or []
         if not isinstance(raw_args, list):
@@ -165,18 +173,57 @@ class McpStdioClient:
                 return value
             return json.dumps(value, ensure_ascii=False)
 
-        placeholders = sorted(
-            ((str(key), _render_value(value)) for key, value in (arguments or {}).items()),
-            key=lambda item: len(item[0]),
-            reverse=True,
-        )
+        declared = self._declared_parameter_names(binding)
+        provided = {str(key): _render_value(value) for key, value in (arguments or {}).items()}
+        placeholders = sorted(provided.items(), key=lambda item: len(item[0]), reverse=True)
+
+        def _placeholder_names(token: str) -> list[str]:
+            names: list[str] = []
+            for name in declared:
+                if "{" + name + "}" in token:
+                    names.append(name)
+            return sorted(names, key=len, reverse=True)
+
         rendered: list[str] = []
         for token in raw_args:
             text = str(token)
-            for key, replacement in placeholders:
-                text = text.replace("{" + key + "}", replacement)
+            names = _placeholder_names(text)
+            if not names:
+                rendered.append(text)
+                continue
+
+            missing = [name for name in names if name not in provided]
+            stripped = text.strip()
+            is_exact = len(names) == 1 and stripped == "{" + names[0] + "}"
+            if missing:
+                if is_exact:
+                    # 可选参数未提供：丢弃该 token 及其前置 flag
+                    if rendered and rendered[-1].startswith("-"):
+                        rendered.pop()
+                    continue
+                raise ValueError(
+                    f"CLI 参数缺失：{', '.join('{' + name + '}' for name in missing)} 未提供，"
+                    "且位于命令内联位置无法自动省略"
+                )
+
+            for name, replacement in placeholders:
+                text = text.replace("{" + name + "}", replacement)
             rendered.append(text)
         return rendered
+
+    def _declared_parameter_names(self, binding: dict[str, Any]) -> list[str]:
+        """收集 tool_schema 中所有工具声明的参数名（去重，供占位符识别）。"""
+        names: set[str] = set()
+        for definition in self._declared_tool_schema(binding).values():
+            if not isinstance(definition, dict):
+                continue
+            parameters = definition.get("parameters")
+            if not isinstance(parameters, dict):
+                continue
+            properties = parameters.get("properties")
+            if isinstance(properties, dict):
+                names.update(str(key) for key in properties.keys())
+        return sorted(names, key=len, reverse=True)
 
     def _call_raw_command(
         self,

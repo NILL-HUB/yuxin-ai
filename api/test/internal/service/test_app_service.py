@@ -3059,30 +3059,40 @@ class TestAppServiceDraftConfigValidation:
 
         validated = service._validate_draft_app_config(payload, SimpleNamespace(id=uuid4()))
 
-        assert validated["mcp_bindings"] == [
-            {
-                "name": "Weather MCP",
-                "description": "ModelScope weather",
-                "transport": "streamable_http",
-                "url": "https://mcp.example.com",
-                "command": "",
-                "enabled": True,
-                "headers": [{"key": "Authorization", "value": "Bearer token"}],
-                "tool_names": ["weather"],
-                "timeout_seconds": 20,
-                "args": ["--flag"],
-                "env": {"API_KEY": "secret"},
-                "tool_schema": {},
-                "protocol": "",
-                "provider_key": "",
-                "source_type": "",
-                "source_key": "",
-                "source_url": "",
-                "label": "",
-                "icon": "",
-                "category": "",
-            }
-        ]
+        binding = validated["mcp_bindings"][0]
+        assert binding["name"] == "Weather MCP"
+        assert binding["description"] == "ModelScope weather"
+        assert binding["transport"] == "streamable_http"
+        assert binding["url"] == "https://mcp.example.com"
+        assert binding["command"] == ""
+        assert binding["enabled"] is True
+        assert binding["tool_names"] == ["weather"]
+        assert binding["timeout_seconds"] == 20
+        assert binding["args"] == ["--flag"]
+        assert binding["tool_schema"] == {}
+        assert binding["protocol"] == ""
+        assert binding["provider_key"] == ""
+        assert binding["source_type"] == ""
+        assert binding["source_key"] == ""
+        assert binding["source_url"] == ""
+        assert binding["label"] == ""
+        assert binding["icon"] == ""
+        assert binding["category"] == ""
+
+        # env/headers 落库必须是密文：运行时 McpStdioClient 走 decrypt_env、
+        # McpToolFactory 走 decrypt_headers，明文会抛 ValueError（迁移
+        # d5e6f7a8b9c2 专门加密过历史 app_config.mcp_bindings 即此契约）。
+        from internal.service.tool_credential_encryptor import (
+            decrypt_env,
+            decrypt_headers,
+            is_encrypted,
+        )
+
+        assert binding["headers"][0]["key"] == "Authorization"
+        assert is_encrypted(binding["headers"][0]["value"])
+        assert decrypt_headers(binding["headers"]) == [{"key": "Authorization", "value": "Bearer token"}]
+        assert is_encrypted(binding["env"]["API_KEY"])
+        assert decrypt_env(binding["env"]) == {"API_KEY": "secret"}
 
     def test_validate_should_accept_provider_binding_roundtrip(self):
         """回归 S1：McpProviderResp 回传的 binding（含 protocol/tool_schema）必须能再次通过校验。
@@ -3112,6 +3122,72 @@ class TestAppServiceDraftConfigValidation:
 
         assert validated["mcp_bindings"][0]["tool_schema"] == {}
         assert "protocol" in validated["mcp_bindings"][0]
+
+    def test_validate_should_encrypt_binding_env_and_headers(self):
+        """回归 P1：应用层绑定的 env/headers 必须在落库前加密。
+
+        运行时 McpStdioClient._build_subprocess_env 会 decrypt_env(binding.env)、
+        McpToolFactory 会 decrypt_headers(binding.headers)，两者对明文都抛
+        ValueError。若应用层（update_draft_app_config）保存的是明文，带密钥的
+        stdio/cli 绑定运行时会报「工具凭证解密失败」，因此这里断言写入值已加密。
+        """
+        from internal.service.tool_credential_encryptor import is_encrypted
+
+        service = _build_validation_service()
+        payload = {
+            "mcp_bindings": [
+                {
+                    "name": "cli-secret",
+                    "description": "CLI with secret",
+                    "transport": "cli",
+                    "command": "npx",
+                    "args": ["-y", "demo"],
+                    "env": {"DASHSCOPE_API_KEY": "sk-plain-secret"},
+                    "headers": [{"key": "Authorization", "value": "Bearer plain"}],
+                    "tool_schema": {
+                        "run": {"description": "run", "parameters": {"type": "object", "properties": {}}}
+                    },
+                    "enabled": True,
+                }
+            ]
+        }
+
+        validated = service._validate_draft_app_config(payload, SimpleNamespace(id=uuid4()))
+        binding = validated["mcp_bindings"][0]
+
+        assert binding["env"]["DASHSCOPE_API_KEY"] != "sk-plain-secret"
+        assert is_encrypted(binding["env"]["DASHSCOPE_API_KEY"])
+        assert binding["headers"][0]["value"] != "Bearer plain"
+        assert is_encrypted(binding["headers"][0]["value"])
+
+    def test_validate_should_keep_encrypted_binding_env_idempotent(self):
+        """回归 P1：已加密的绑定（provider 回传）再次校验时不得二次加密或损坏。"""
+        from internal.service.tool_credential_encryptor import encrypt_env, is_encrypted
+
+        service = _build_validation_service()
+        encrypted_env = encrypt_env({"DASHSCOPE_API_KEY": "sk-plain-secret"})
+        payload = {
+            "mcp_bindings": [
+                {
+                    "name": "cli-secret",
+                    "description": "CLI with secret",
+                    "transport": "cli",
+                    "command": "npx",
+                    "args": ["-y", "demo"],
+                    "env": encrypted_env,
+                    "tool_schema": {
+                        "run": {"description": "run", "parameters": {"type": "object", "properties": {}}}
+                    },
+                    "enabled": True,
+                }
+            ]
+        }
+
+        validated = service._validate_draft_app_config(payload, SimpleNamespace(id=uuid4()))
+        binding = validated["mcp_bindings"][0]
+
+        assert binding["env"]["DASHSCOPE_API_KEY"] == encrypted_env["DASHSCOPE_API_KEY"]
+        assert is_encrypted(binding["env"]["DASHSCOPE_API_KEY"])
 
     def test_validate_should_accept_review_config_when_disabled(self):
         service = _build_validation_service()

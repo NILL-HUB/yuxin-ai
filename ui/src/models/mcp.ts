@@ -33,6 +33,8 @@ export type McpBinding = {
   timeout_seconds: number
   args: string[]
   env: Record<string, string>
+  protocol?: string
+  tool_schema?: Record<string, unknown>
   provider_key?: string
   source_type?: string
   source_key?: string
@@ -58,6 +60,7 @@ export type McpProvider = {
   tool_names: string[]
   args: string[]
   env: Record<string, string>
+  tool_schema: Record<string, unknown>
   timeout_seconds: number
   source_type: string
   source_key: string
@@ -94,6 +97,7 @@ export type CreateMcpProviderRequest = {
   tool_names?: string[]
   args?: string[]
   env?: Record<string, string>
+  tool_schema?: Record<string, unknown>
   timeout_seconds?: number
   task_keywords?: string[]
 }

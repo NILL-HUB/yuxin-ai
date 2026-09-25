@@ -14,6 +14,7 @@ from internal.core.language_model import LanguageModelManager
 from internal.core.tools.api_tools.providers import ApiProviderManager
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from internal.service.system_prompt_library_service import SystemPromptLibraryService
+from internal.service.tool_credential_encryptor import encrypt_env, encrypt_headers
 from internal.entity.app_entity import AppStatus, AppConfigType, DEFAULT_APP_CONFIG
 from internal.entity.agent_entity import normalize_agent_metadata
 from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
@@ -1357,6 +1358,13 @@ class AppService(BaseService):
                     for key, value in env.items()
                     if str(key).strip()
                 }
+
+                # 应用层绑定与 provider 注册同源：env/headers 落库前必须加密。
+                # 运行时 McpStdioClient._build_subprocess_env 走 decrypt_env、
+                # McpToolFactory 走 decrypt_headers，明文会抛 ValueError 导致
+                # 带密钥的 stdio/cli 绑定调用失败。encrypt_* 幂等，已加密值原样保留。
+                normalized_env = encrypt_env(normalized_env)
+                normalized_headers = encrypt_headers(normalized_headers)
 
                 binding_identity = provider_key or f"{transport}:{url or command}:{name}"
                 if binding_identity in seen_binding_targets:

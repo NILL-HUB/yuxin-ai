@@ -84,9 +84,9 @@
 硬约束：
 
 - **无平行实现**：两种模式共用 `_build_stdio_params` / `_build_subprocess_env` / 超时与进程回收；`cli` 只是 `stdio` 的模式别名，**禁止**新建第二个 CLI client。
-- **`env` 必须留 `{}`**：`decrypt_env` 对非密文抛 `ValueError`，异常会被上层吞掉导致绑定静默失效。CLI 需要密钥时写进容器 env，由子进程 `os.environ` 继承。
+- **`env` 走加密链路，不在前端手写明文**：provider 注册与**应用层绑定**（`app_service._validate_draft_app_config`）都会对 `env`/`headers` 调用 `encrypt_env`/`encrypt_headers` 落库（幂等），运行时由 `decrypt_env`/`decrypt_headers` 还原后注入子进程。**明文 `env` 会令 `decrypt_env` 抛 `ValueError`，导致绑定调用失败**——因此密钥写进绑定的 `env`（经弹窗表单填写）即可，由子进程 `os.environ` 继承，无需改容器环境。
 - **`cli` 必须声明 `tool_schema`**：纯 CLI 无自描述能力，不声明即不可用（服务端与前端均校验）。
-- **`args` 模板替换规则**：字符串原样、`None`→空串、非标量按 JSON 序列化；占位符名按长度倒序替换（避免 `{text}` 抢占 `{text_long}`）。
+- **`args` 模板替换规则**：字符串原样、`None`→空串、非标量按 JSON 序列化；占位符名按长度倒序替换（避免 `{text}` 抢占 `{text_long}`）。**缺失占位符不再静默传字面量**：整 token 即 `{name}` 且未提供时，连同其前置 `--flag` 一起丢弃（适配可选参数，让 CLI 走自身默认值）；内联出现且未提供时抛 `ValueError` 转结构化错误。占位符名以 `tool_schema` 声明的参数名为准，避免把 CLI 自身的花括号字面量误判为占位符。
 - **admin 入口**：MCP 编辑弹窗的 transport 下拉选 `cli`，下方 `tool_schema` 文本框填 JSON；运行时读取点为 `McpToolFactory.get_tools → McpStdioClient(protocol=raw)`。
 
 ### 3.3 典型项目集成示例
