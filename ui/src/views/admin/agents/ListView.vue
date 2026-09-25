@@ -15,6 +15,7 @@ import {
   listSchedules,
   updateAgent,
   type AdminAgent,
+  type AssignablePermission,
   type AutomationLevel,
   type BoardAction,
   type BudgetUsage,
@@ -22,6 +23,7 @@ import {
 } from '@/services/admin-agents'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
+import { getAgentAvatarStyle, getAgentAvatarText, formatAgentTime } from '@/utils/admin-agent-display'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -32,14 +34,18 @@ const canManage = computed(() => adminStore.hasPermission('agent_pool:manage'))
 const loading = ref(false)
 const actionLoading = ref(false)
 const agents = ref<AdminAgent[]>([])
-const assignablePermissions = ref<string[]>([])
+const assignablePermissions = ref<AssignablePermission[]>([])
 const boards = ref<string[]>([])
 const boardActions = ref<BoardAction[]>([])
 
-const formatTime = (value: number | null | undefined) => {
-  if (!value) return '-'
-  return new Date(value * 1000).toLocaleString('zh-CN', { hour12: false })
-}
+const formatTime = (value: number | null | undefined) => formatAgentTime(value)
+
+// KPI：由已加载的 Agent 列表统计（列表接口一次返回全量 items，无分页）。
+const kpi = computed(() => ({
+  total: agents.value.length,
+  enabled: agents.value.filter((item) => item.enabled).length,
+  disabled: agents.value.filter((item) => !item.enabled).length,
+}))
 
 const automationLevelOptions = computed(() => [
   { label: t('admin.agents.levelSupervised'), value: 'supervised' },
@@ -47,9 +53,39 @@ const automationLevelOptions = computed(() => [
   { label: t('admin.agents.levelBlocked'), value: 'blocked' },
 ])
 
-const permissionOptions = computed(() =>
-  assignablePermissions.value.map((code) => ({ label: code, value: code })),
-)
+// 权限明细索引：code → 语义对象，供表格展示中文名（与角色权限页同一份目录）。
+const permissionByCode = computed(() => {
+  const map: Record<string, AssignablePermission> = {}
+  assignablePermissions.value.forEach((perm) => {
+    map[perm.code] = perm
+  })
+  return map
+})
+
+// 语义化标签：优先取目录中的中文名；目录缺失时回退裸码（不伪造名称）。
+const permissionLabel = (code: string) => permissionByCode.value[code]?.name || code
+
+// 资源分组名复用 RBAC 角色页的同一套文案（admin.roles.resources.*），不另建字典。
+const resourceLabel = (resource: string) => {
+  const key = `admin.roles.resources.${resource}`
+  const label = t(key)
+  return label === key ? resource : label
+}
+
+// 授权选择器按 resource 分组，与角色管理页的权限选择体验保持一致。
+const permissionGroups = computed(() => {
+  const groups: Record<string, AssignablePermission[]> = {}
+  assignablePermissions.value.forEach((perm) => {
+    const key = perm.resource || 'other'
+    if (!groups[key]) groups[key] = []
+    groups[key].push(perm)
+  })
+  return Object.entries(groups).map(([resource, items]) => ({
+    isGroup: true,
+    label: resource === 'other' ? t('admin.roles.otherPermission') : resourceLabel(resource),
+    options: items.map((item) => ({ value: item.code, label: item.name || item.code })),
+  }))
+})
 
 const budgetFields = [
   { key: 'daily_executions', label: t('admin.agents.dailyExecutions') },
@@ -64,30 +100,6 @@ const formatBudget = (budget: Record<string, number> | undefined) => {
     .map(([key, value]) => `${key}: ${value}`)
     .join(', ')
 }
-
-const formatPolicy = (policy: Record<string, AutomationLevel> | undefined) => {
-  if (!policy || Object.keys(policy).length === 0) return '-'
-  return Object.entries(policy)
-    .map(([board, level]) => {
-      const labelMap: Record<AutomationLevel, string> = {
-        supervised: t('admin.agents.levelSupervised'),
-        autonomous: t('admin.agents.levelAutonomous'),
-        blocked: t('admin.agents.levelBlocked'),
-      }
-      return `${board}: ${labelMap[level] || level}`
-    })
-    .join(', ')
-}
-
-const columns = computed(() => [
-  { title: t('admin.agents.name'), slotName: 'name' },
-  { title: t('admin.agents.permissions'), slotName: 'permissions' },
-  { title: t('admin.agents.automationPolicy'), slotName: 'policy' },
-  { title: t('admin.agents.budget'), slotName: 'budget' },
-  { title: t('admin.agents.enabled'), slotName: 'enabled' },
-  { title: t('admin.agents.createdAt'), slotName: 'created_at' },
-  { title: t('admin.agents.actions'), slotName: 'actions', width: 320 },
-])
 
 const loadAgents = async () => {
   loading.value = true
@@ -393,52 +405,137 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="space-y-6 p-6">
-    <header class="flex items-center justify-between">
+  <section class="space-y-6">
+    <header class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.agents.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500">{{ t('admin.agents.description') }}</p>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.agents.title') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.agents.description') }}</p>
       </div>
-      <a-button v-if="canManage" type="primary" @click="openCreate">{{ t('admin.agents.createAgent') }}</a-button>
+      <a-button v-if="canManage" type="primary" @click="openCreate">
+        <template #icon><icon-plus /></template>
+        {{ t('admin.agents.createAgent') }}
+      </a-button>
     </header>
 
-    <a-table
-      :loading="loading"
-      :data="agents"
-      :columns="columns"
-      :pagination="false"
-      :bordered="{ wrapper: true, cell: true }"
-      row-key="id"
-    >
-      <template #columns>
-        <a-table-column v-for="col of columns" :key="col.slotName" :title="col.title" :width="col.width">
-          <template #cell="{ record }">
-            <template v-if="col.slotName === 'name'">
-              <div class="font-medium text-gray-900">{{ record.name }}</div>
-              <div v-if="record.description" class="mt-0.5 max-w-xs truncate text-xs text-gray-400">
-                {{ record.description }}
+    <!-- KPI 概览 -->
+    <section class="grid gap-4 md:grid-cols-3">
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm text-slate-500">{{ t('admin.agents.kpiTotal') }}</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+            <icon-robot />
+          </span>
+        </div>
+        <strong class="mt-2 block text-3xl font-semibold text-slate-900">{{ kpi.total }}</strong>
+      </article>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm text-slate-500">{{ t('admin.agents.statusEnabled') }}</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-600">
+            <icon-check-circle-fill />
+          </span>
+        </div>
+        <strong class="mt-2 block text-3xl font-semibold text-green-600">{{ kpi.enabled }}</strong>
+      </article>
+      <article class="rounded-xl border border-slate-200 bg-white p-4">
+        <div class="flex items-center justify-between">
+          <p class="text-sm text-slate-500">{{ t('admin.agents.statusDisabled') }}</p>
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+            <icon-pause-circle-fill />
+          </span>
+        </div>
+        <strong class="mt-2 block text-3xl font-semibold text-slate-500">{{ kpi.disabled }}</strong>
+      </article>
+    </section>
+
+    <div class="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-slate-50 text-slate-500">
+          <tr>
+            <th class="p-3 font-medium">{{ t('admin.agents.name') }}</th>
+            <th class="p-3 font-medium">{{ t('admin.agents.permissions') }}</th>
+            <th class="p-3 font-medium">{{ t('admin.agents.automationPolicy') }}</th>
+            <th class="p-3 font-medium">{{ t('admin.agents.budget') }}</th>
+            <th class="p-3 font-medium">{{ t('admin.agents.enabled') }}</th>
+            <th class="p-3 font-medium">{{ t('admin.agents.createdAt') }}</th>
+            <th class="p-3 font-medium" style="width: 320px">{{ t('admin.agents.actions') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-if="loading && !agents.length">
+            <td colspan="7" class="p-6 text-center text-slate-400">…</td>
+          </tr>
+          <tr v-else-if="!agents.length">
+            <td colspan="7" class="p-6 text-center">
+              <a-empty :description="t('admin.agents.empty')" />
+            </td>
+          </tr>
+          <tr v-for="record in agents" :key="record.id" class="border-t border-slate-100 hover:bg-slate-50/60">
+            <td class="p-3">
+              <div class="flex items-center gap-2.5">
+                <span
+                  class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-semibold tracking-wide text-white"
+                  :style="getAgentAvatarStyle(`${record.id}:${record.name}`)"
+                >
+                  {{ getAgentAvatarText(record.name) }}
+                </span>
+                <div class="min-w-0">
+                  <div class="truncate font-medium text-slate-800">{{ record.name }}</div>
+                  <div v-if="record.description" class="mt-0.5 max-w-xs truncate text-xs text-slate-400">
+                    {{ record.description }}
+                  </div>
+                </div>
               </div>
-            </template>
-            <template v-else-if="col.slotName === 'permissions'">
-              <a-tag v-for="code in record.granted_permissions" :key="code" size="small" color="arcoblue">
-                {{ code }}
-              </a-tag>
-              <span v-if="!record.granted_permissions || !record.granted_permissions.length" class="text-gray-400">-</span>
-            </template>
-            <template v-else-if="col.slotName === 'policy'">
-              <span class="text-xs text-gray-600">{{ formatPolicy(record.automation_policy) }}</span>
-            </template>
-            <template v-else-if="col.slotName === 'budget'">
-              <span class="text-xs text-gray-600">{{ formatBudget(record.budget_config) }}</span>
-            </template>
-            <template v-else-if="col.slotName === 'enabled'">
+            </td>
+            <td class="p-3">
+              <a-space v-if="record.granted_permissions && record.granted_permissions.length" :size="4" wrap>
+                <a-tooltip
+                  v-for="code in record.granted_permissions.slice(0, 2)"
+                  :key="code"
+                  :content="code"
+                  position="tl"
+                >
+                  <a-tag size="small" color="arcoblue" class="cursor-help">
+                    {{ permissionLabel(code) }}
+                  </a-tag>
+                </a-tooltip>
+                <a-tooltip
+                  v-if="record.granted_permissions.length > 2"
+                  :content="record.granted_permissions.map((c) => permissionLabel(c)).join('、')"
+                  position="tl"
+                >
+                  <a-tag size="small" color="gray" class="cursor-help">+{{ record.granted_permissions.length - 2 }}</a-tag>
+                </a-tooltip>
+              </a-space>
+              <span v-else class="text-slate-300">-</span>
+            </td>
+            <td class="p-3">
+              <div class="flex flex-wrap gap-1">
+                <a-tag
+                  v-for="(level, board) in record.automation_policy || {}"
+                  :key="board"
+                  size="small"
+                  :color="level === 'autonomous' ? 'green' : level === 'blocked' ? 'red' : 'orange'"
+                >
+                  {{ board }}
+                </a-tag>
+                <span v-if="!Object.keys(record.automation_policy || {}).length" class="text-slate-300">-</span>
+              </div>
+            </td>
+            <td class="p-3">
+              <span class="text-xs text-slate-600">{{ formatBudget(record.budget_config) }}</span>
+            </td>
+            <td class="p-3">
               <a-tag v-if="record.enabled" size="small" color="green">{{ t('admin.agents.statusEnabled') }}</a-tag>
               <a-tag v-else size="small" color="red">{{ t('admin.agents.statusDisabled') }}</a-tag>
-            </template>
-            <template v-else-if="col.slotName === 'created_at'">{{ formatTime(record.created_at) }}</template>
-            <template v-else-if="col.slotName === 'actions'">
-              <a-space>
-                <a-button size="mini" type="primary" @click="openChat(record)">{{ t('admin.agents.chat') }}</a-button>
+            </td>
+            <td class="p-3 text-xs text-slate-500">{{ formatTime(record.created_at) }}</td>
+            <td class="p-3">
+              <a-space :size="4" wrap>
+                <a-button size="mini" type="primary" @click="openChat(record)">
+                  <template #icon><icon-message /></template>
+                  {{ t('admin.agents.chat') }}
+                </a-button>
                 <a-button v-if="canManage" size="mini" @click="openEdit(record)">{{ t('admin.agents.edit') }}</a-button>
                 <a-button v-if="canManage" size="mini" @click="openSchedules(record)">{{ t('admin.agents.schedules') }}</a-button>
                 <a-button size="mini" @click="openUsage(record)">{{ t('admin.agents.usage') }}</a-button>
@@ -449,11 +546,11 @@ onMounted(async () => {
                   @click="handleDelete(record)"
                 >{{ t('admin.agents.deleteTitle') }}</a-button>
               </a-space>
-            </template>
-          </template>
-        </a-table-column>
-      </template>
-    </a-table>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <!-- 新建/编辑 Agent 弹窗 -->
     <a-modal
@@ -476,12 +573,16 @@ onMounted(async () => {
         <a-form-item :label="t('admin.agents.permissions')" field="granted_permissions">
           <a-select
             v-model="form.granted_permissions"
-            :options="permissionOptions"
+            :options="permissionGroups"
             multiple
             allow-search
             :placeholder="assignablePermissions.length ? t('admin.agents.permissionsPlaceholder') : t('admin.agents.noPermission')"
             :disabled="!assignablePermissions.length"
-          />
+          >
+            <template #label="{ data }">
+              {{ permissionLabel(data.value) }}
+            </template>
+          </a-select>
         </a-form-item>
         <a-form-item :label="t('admin.agents.automationLevel')" field="automation_policy">
           <div class="w-full space-y-2">

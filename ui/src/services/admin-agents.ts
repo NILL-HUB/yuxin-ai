@@ -131,9 +131,19 @@ export async function deleteAgent(id: string): Promise<void> {
 
 // ---------- 治理元数据 ----------
 
-export async function listAssignablePermissions(): Promise<string[]> {
-  const res = await get<Envelope<{ codes: string[] }>>('/admin/agents/assignable-permissions')
-  return res.data.codes || []
+export interface AssignablePermission {
+  code: string
+  name: string
+  resource: string
+  action: string
+  description?: string
+}
+
+export async function listAssignablePermissions(): Promise<AssignablePermission[]> {
+  const res = await get<Envelope<{ codes: string[]; permissions: AssignablePermission[] }>>(
+    '/admin/agents/assignable-permissions',
+  )
+  return res.data.permissions || []
 }
 
 export async function listBoards(): Promise<BoardCatalog> {
