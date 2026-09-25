@@ -24,6 +24,7 @@ import policyChange from './policyChange'
 import login from './login'
 import semantic from './semantic'
 import desktopTitleBar from './desktopTitleBar'
+import configEditors from './configEditors'
 
 export default {
   common,
@@ -52,4 +53,5 @@ export default {
   login,
   semantic,
   desktopTitleBar,
+  configEditors,
 }
