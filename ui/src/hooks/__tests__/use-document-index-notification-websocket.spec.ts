@@ -1,4 +1,4 @@
-import { defineComponent, nextTick, reactive } from 'vue'
+import { defineComponent, nextTick, reactive, ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -36,14 +36,14 @@ vi.mock('@/stores/credential', () => ({
   useCredentialStore: () => credentialState,
 }))
 
-const createHarness = async () => {
+const createHarness = async (gate?: Ref<boolean>) => {
   vi.resetModules()
   const { useDocumentIndexNotificationWebSocket } = await import('@/hooks/use-document-index-notification-websocket')
 
   return mount(
     defineComponent({
       setup() {
-        return useDocumentIndexNotificationWebSocket()
+        return useDocumentIndexNotificationWebSocket(gate)
       },
       template: '<div />',
     }),
@@ -208,6 +208,38 @@ describe('useDocumentIndexNotificationWebSocket', () => {
 
     expect(wrapper.vm.isEnabled).toBe(false)
     expect(socketInstance.disconnect).toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  it('does not create a socket while the realm gate is closed (admin context)', async () => {
+    const wrapper = await createHarness(ref(false))
+
+    expect(wrapper.vm.isEnabled).toBe(false)
+    expect(ioMock).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+    expect(socketInstance.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('tears down the socket when the realm gate closes, and reconnects when it reopens', async () => {
+    const gate = ref(true)
+    const wrapper = await createHarness(gate)
+
+    socketInstance.connect()
+    await nextTick()
+    expect(wrapper.vm.isConnected).toBe(true)
+
+    gate.value = false
+    await nextTick()
+    expect(wrapper.vm.isEnabled).toBe(false)
+    expect(socketInstance.disconnect).toHaveBeenCalled()
+
+    gate.value = true
+    await nextTick()
+    expect(wrapper.vm.isEnabled).toBe(true)
+    // 门控重新打开时会重新建立连接（disconnect 已置空 socket，故走 initializeSocket 重建）
+    expect(ioMock).toHaveBeenCalledTimes(2)
 
     wrapper.unmount()
   })

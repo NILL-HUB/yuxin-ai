@@ -18,6 +18,7 @@ import { useI18n } from 'vue-i18n'
 import arcoEnUS from '@arco-design/web-vue/es/locale/lang/en-us'
 import arcoZhCN from '@arco-design/web-vue/es/locale/lang/zh-cn'
 import { useTheme } from '@/theme'
+import { useRealm } from '@/hooks/use-realm'
 
 // 初始化主题系统（响应式应用 data-theme / arco-theme）
 useTheme()
@@ -37,11 +38,16 @@ const { locale } = useI18n()
 const arcoLocale = computed(() => (locale.value === 'en-US' ? arcoEnUS : arcoZhCN))
 
 // 初始化文档索引通知 WebSocket 监听
+// 通知通道（文档索引 / Agent 构建 / 成品就绪）是用户域能力，admin 上下文下
+// 既无展示位、又会拿用户域 token 去握手，故按 realm 门控，仅在非 admin 时启用。
+const { isAdmin } = useRealm()
+const notificationGateOpen = computed(() => !isAdmin.value)
+
 const {
   subscribeToNotifications,
   isEnabled: isDocumentNotificationEnabled,
   isReady: isDocumentNotificationReady,
-} = useDocumentIndexNotificationWebSocket()
+} = useDocumentIndexNotificationWebSocket(notificationGateOpen)
 
 // 初始化文档索引通知轮询备选方案
 const { startPolling, stopPolling } = useDocumentIndexNotificationPolling()
@@ -51,12 +57,13 @@ const {
   subscribeToNotifications: subscribeToAgentNotifications,
   isEnabled: isAgentNotificationEnabled,
   isReady: isAgentNotificationReady,
-} = useAgentNotificationWebSocket()
+} = useAgentNotificationWebSocket(notificationGateOpen)
 
 // 初始化「成品就绪」回填监听：异步渲染/剪辑完成后把播放器插回原消息。
 // 无需轮询兜底——产物已持久化到消息（刷新后由历史接口带回），本通道只负责即时补挂。
+// 同属用户域通道，admin 上下文下按 realm 门控不建立连接。
 const { subscribeToNotifications: subscribeToArtifactNotifications } =
-  useArtifactNotificationWebSocket()
+  useArtifactNotificationWebSocket(notificationGateOpen)
 const artifactBackfillStore = useArtifactBackfillStore()
 
 // 初始化 Agent 通知轮询备选方案

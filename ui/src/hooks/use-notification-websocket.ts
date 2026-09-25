@@ -1,4 +1,4 @@
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch, type Ref } from 'vue'
 import { socketConnectionUrl, socketPath } from '@/config'
 import { useCredentialStore } from '@/stores/credential'
 import { getCredentialAccessToken } from '@/utils/auth'
@@ -26,14 +26,17 @@ const SUBSCRIBE_ACK_TIMEOUT_MS = 5000
 export const createNotificationWebSocket = <TNotification>(
   options: NotificationSocketOptions,
 ) => {
-  return () => {
+  return (enabled?: Ref<boolean>) => {
     const credentialStore = useCredentialStore()
     const socket = ref<Socket | null>(null)
     const isConnected = ref(false)
     const subscribedChannel = ref('')
     const notificationHandler = ref<NotificationHandler<TNotification> | null>(null)
     const accessToken = computed(() => getCredentialAccessToken(credentialStore.credential))
-    const isEnabled = computed(() => Boolean(accessToken.value))
+    // 门控：通知通道是用户域能力，admin 上下文下不应建立连接（缺少消费者，且
+    // 会拿用户域 token 去握手，撞上已吊销会话时污染控制台）。默认无门控=始终允许。
+    const isGateOpen = computed(() => (enabled ? enabled.value : true))
+    const isEnabled = computed(() => Boolean(accessToken.value) && isGateOpen.value)
 
     const removeNotificationListener = () => {
       if (!socket.value || !notificationHandler.value) {
@@ -161,9 +164,12 @@ export const createNotificationWebSocket = <TNotification>(
     }
 
     watch(
-      accessToken,
-      (nextToken, previousToken) => {
-        if (!nextToken) {
+      [isEnabled, accessToken],
+      ([enabled, nextToken], oldValue) => {
+        const previousToken = oldValue?.[1]
+
+        // 门控关闭（如进入 admin 上下文）或令牌失效：断开并停止一切订阅。
+        if (!enabled || !nextToken) {
           disconnect()
           return
         }
