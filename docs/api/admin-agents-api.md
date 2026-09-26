@@ -80,7 +80,7 @@ Agent 响应体（`AgentResp`）字段：
 | `prompt_key` | string \| null | 绑定的提示词 key（`prompt_template.key`），为空时用内置默认 |
 | `granted_permissions` | string[] | 显式下放给该 Agent 的权限子集 |
 | `automation_policy` | object | 板块 → `supervised` / `autonomous` / `blocked` |
-| `budget_config` | object | 预算档位：`{daily_executions?, monthly_executions?, daily_tokens?, monthly_tokens?}`，空/缺省 = 不限制 |
+| `budget_config` | object | 预算档位：`{daily_executions?, monthly_executions?, daily_tokens?, monthly_tokens?, per_run_tokens?}`，空/缺省 = 不限制。前四者为日/月**周期**额度（入口一次性校验）；`per_run_tokens` 为**单次唤醒** token 硬顶（工具循环内逐轮校验，超顶即中断） |
 | `enabled` | bool | 是否启用 |
 | `created_at` / `updated_at` | int | 秒级时间戳 |
 
@@ -103,7 +103,7 @@ Agent 响应体（`AgentResp`）字段：
 | `prompt_key` | 否 | 提示词 key |
 | `granted_permissions` | 否 | 权限子集，默认 `[]` |
 | `automation_policy` | 否 | 板块自动化级别，默认 `{}` |
-| `budget_config` | 否 | 预算档位（见 §3），默认 `{}`（不限制）；仅 `daily_*` / `monthly_*` 四个键被接受，值为非负整数，空键不落库 |
+| `budget_config` | 否 | 预算档位（见 §3），默认 `{}`（不限制）；接受 `daily_executions` / `monthly_executions` / `daily_tokens` / `monthly_tokens` / `per_run_tokens` 五个键，值为非负整数，空键不落库 |
 
 **响应 `data`**：`AgentResp`
 
@@ -295,6 +295,15 @@ feature 未启用 / 会话不属于该 Agent（续聊传了别个 Agent 的 `con
 **施加点（三入口）**：`POST /admin/agents/<id>/invoke`、`POST /admin/agents/<id>/chat`
 （`AdminAgentChatService.chat` 入口）、admin 定时任务执行（`schedule_execution_service`
 admin 分支）。`budget_config` 未配置（空 dict）→ 恒放行。
+
+**单次唤醒 token 硬顶（`per_run_tokens`）**：语义不同于日/月周期额度——周期额度在
+入口 `check_and_record` **一次性**校验，`per_run_tokens` 则在对话工具循环**内逐轮**
+累计校验（`AdminAgentChatService._run_tool_loop` 每轮累计 `usage_state["tokens"]`
+后比对），达到/超过即抛 `FailException`（"本次唤醒已达单次 token 上限（X/Y），已中断"）
+并以 error 帧结束，避免空烧跑满轮次上限。未配置（缺省 0）= 不限制，行为与现状一致。
+配套地，`chat` 构建 system prompt 时以 `per_run_tokens` 作为"本次唤醒剩余额度"注入
+（提示词构建早于 `usage_state` 创建，故取全额额度而非实时累计值），引导 Agent 在
+额度即将耗尽时主动安排下次唤醒。
 
 ---
 

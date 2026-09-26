@@ -107,13 +107,21 @@ class AdminAgentChatService:
             )
 
             agent = self._load_agent(principal.agent_id, admin_user_id)
+            budget_config = getattr(agent, "budget_config", None) or {}
             # 预算闸门（ADMIN-P4 T2）：对话是"让 Agent 动手"的一类入口，进入
             # 模型/工具循环前先校验并累计周期用量。超限抛
             # `AdminAgentBudgetExceeded`，由下方 except 分支转 error 帧。
             self._budget_gate().check_and_record(
                 str(principal.agent_id),
-                getattr(agent, "budget_config", None) or {},
+                budget_config,
             )
+            # 单次唤醒 token 硬顶（ADMIN-P4 T6）：`per_run_tokens` 是**本次唤醒**
+            # 的硬上限，语义不同于日/月周期额度——周期额度在入口一次性校验，
+            # 单次额度在工具循环内逐轮校验并即时中断。解析失败回落 0（= 不限制）。
+            try:
+                per_run_limit = int(budget_config.get("per_run_tokens") or 0)
+            except (TypeError, ValueError, AttributeError):
+                per_run_limit = 0
             tools = self._build_tools(principal)
             # 记忆读回（ADMIN-P3c-2）：admin/Agent 主体召回，fail-open。
             # 召回复用 P3b 已主体化的读路径（retriever/digest），此处只构造 admin
@@ -130,7 +138,10 @@ class AdminAgentChatService:
                 logger.warning("管理端 Agent 记忆召回失败，静默降级", exc_info=True)
                 memory_text = ""
             system_prompt = self._build_system_prompt(
-                principal, getattr(agent, "prompt_key", None), memory_text=memory_text
+                principal,
+                getattr(agent, "prompt_key", None),
+                memory_text=memory_text,
+                remaining_run_tokens=per_run_limit,
             )
             llm = self._build_model()
             # 迭代工具循环生成器：每拿到一个 ("tool", event) 就立刻落库并推 TOOL
@@ -149,6 +160,7 @@ class AdminAgentChatService:
                     history=self._history_for(conversation.id),
                     tools=tools,
                     usage_state=usage_state,
+                    per_run_limit=per_run_limit,
                     on_tool=lambda event: self.append_message(
                         conversation_id=conversation.id,
                         role=AdminAgentMessageRole.TOOL.value,
@@ -220,7 +232,15 @@ class AdminAgentChatService:
     # ------------------------------------------------------------------
 
     def _run_tool_loop(
-        self, *, llm, system_prompt: str, history, tools, on_tool, usage_state: dict
+        self,
+        *,
+        llm,
+        system_prompt: str,
+        history,
+        tools,
+        on_tool,
+        usage_state: dict,
+        per_run_limit: int = 0,
     ) -> Generator[tuple[str, Any], None, None]:
         """驱动「LLM ⇄ 板块工具」循环（**生成器**）。
 
@@ -229,7 +249,11 @@ class AdminAgentChatService:
 
         每轮 LLM 响应的 token 用量累计到**调用局部**的 ``usage_state["tokens"]``
         （不挂 self：本服务是 injector 单例，并发对话会互相覆盖），
-        供 ``chat`` 写回预算闸门；未来若实现单次预算中断，也读同一计数器。
+        供 ``chat`` 写回预算闸门。
+
+        ``per_run_limit``（ADMIN-P4 T6）：本次唤醒的单次 token 硬顶，>0 时每轮
+        累计后即校验，达到/超过即抛 ``FailException`` 中断循环——区别于入口
+        一次性校验的日/月周期额度，这是**循环内**的即时止损。
         """
         from langchain_core.messages import SystemMessage, ToolMessage
         from pydantic import ValidationError
@@ -246,6 +270,11 @@ class AdminAgentChatService:
             usage = extract_token_usage(ai)
             if usage:
                 usage_state["tokens"] += int(usage.get("total_tokens") or 0)
+            if per_run_limit and usage_state["tokens"] >= per_run_limit:
+                raise FailException(
+                    "本次唤醒已达单次 token 上限"
+                    f"（{usage_state['tokens']}/{per_run_limit}），已中断"
+                )
             messages.append(ai)
             calls = list(getattr(ai, "tool_calls", None) or [])
             if not calls:
@@ -366,7 +395,12 @@ class AdminAgentChatService:
         return AuditLogService(session=self.db.session)
 
     def _build_system_prompt(
-        self, principal: AdminAgentPrincipal, prompt_key, *, memory_text: str = ""
+        self,
+        principal: AdminAgentPrincipal,
+        prompt_key,
+        *,
+        memory_text: str = "",
+        remaining_run_tokens: int = 0,
     ) -> str:
         from internal.service.admin_agent_prompt_service import AdminAgentPromptService
 
@@ -376,6 +410,15 @@ class AdminAgentChatService:
         # 记忆注入（ADMIN-P3c-2）：命中时才附加，避免空段污染提示词。
         if memory_text:
             prompt = f"{prompt}\n\n## 你记得的相关信息\n{memory_text}"
+        # 单次唤醒剩余额度注入（ADMIN-P4 T7）：>0 时告知本次额度，让 Agent 在
+        # 即将耗尽时主动安排下次唤醒，而不是被硬顶无声打断。此处取的是**本次
+        # 唤醒额度**（prompt 构建早于 `usage_state` 创建，不得读该容器）。
+        if remaining_run_tokens and remaining_run_tokens > 0:
+            prompt = (
+                f"{prompt}\n\n## 本次唤醒剩余 token 额度\n{int(remaining_run_tokens)}。"
+                "若判断即将耗尽，请主动调用定时任务工具安排下次唤醒，"
+                "把剩余工作留到下次执行，避免被硬顶中断。"
+            )
         return prompt
 
     def _recall_memory(

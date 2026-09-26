@@ -93,7 +93,9 @@ def _service(principal, llm, tools):
     service.get_principal = lambda **kwargs: principal
     service._build_model = lambda: llm
     service._build_tools = lambda p: tools
-    service._build_system_prompt = lambda p, prompt_key, *, memory_text="": "系统提示词"
+    service._build_system_prompt = (
+        lambda p, prompt_key, *, memory_text="", remaining_run_tokens=0: "系统提示词"
+    )
     service._recall_memory = lambda **kw: ""
     service._write_memory = lambda **kw: None
     service._persist = []
@@ -419,7 +421,9 @@ def test_resume_rejects_conversation_of_another_agent():
         service.get_principal = lambda **kwargs: _principal()
         service._build_model = lambda: llm
         service._build_tools = lambda p: []
-        service._build_system_prompt = lambda p, prompt_key, *, memory_text="": "系统提示词"
+        service._build_system_prompt = (
+            lambda p, prompt_key, *, memory_text="", remaining_run_tokens=0: "系统提示词"
+        )
         service._recall_memory = lambda **kw: ""
         service._write_memory = lambda **kw: None
         service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(prompt_key=None)
@@ -448,7 +452,7 @@ def test_chat_injects_admin_memory_into_system_prompt(monkeypatch):
     service = _service(_principal(), llm, [])
     captured = {}
 
-    def _fake_build_prompt(p, prompt_key, *, memory_text=""):
+    def _fake_build_prompt(p, prompt_key, *, memory_text="", remaining_run_tokens=0):
         captured["memory_text"] = memory_text
         return "系统提示词"
 
@@ -789,3 +793,93 @@ def test_token_usage_recorded_when_tool_loop_interrupted():
         f"中断前已累计 120 token 必须记账，实际 {recorded.get('tokens')}"
     )
     assert recorded.get("executions_delta") == 0, "补记 token 时不得重复计执行"
+
+
+def test_per_run_tokens_exceeded_interrupts_loop():
+    """ADMIN-P4 T6：单次唤醒 token 硬顶——循环内累计超过 per_run_tokens 即中断。
+
+    ``budget_config.per_run_tokens`` 是**单次唤醒**的硬上限（区别于日/月周期额度）：
+    每轮累计后若 ``usage_state["tokens"] >= per_run_limit``，立即抛
+    ``FailException`` 中断循环，最终以 error 帧透出"上限"文案。
+    """
+    class _HeavyLLM:
+        def __init__(self):
+            self.rounds = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            self.rounds += 1
+            return SimpleNamespace(
+                content="",
+                tool_calls=[
+                    {"name": "admin_builtin_tool", "args": {"action": "list"}, "id": f"c{self.rounds}"}
+                ],
+                usage_metadata={"input_tokens": 500, "output_tokens": 100, "total_tokens": 600},
+            )
+
+    llm = _HeavyLLM()
+    service = _service(_principal(), llm, [_FakeTool("admin_builtin_tool")])
+    service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(
+        prompt_key=None, budget_config={"per_run_tokens": 1000}
+    )
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="无限调工具",
+        )
+    )
+
+    body = "".join(frames)
+    assert "event: error" in body
+    assert "上限" in body
+    assert llm.rounds <= 3, f"超单次上限应立即中断，实际轮数 {llm.rounds}"
+
+
+def test_system_prompt_includes_remaining_per_run_budget(monkeypatch):
+    """ADMIN-P4 T7：单次唤醒剩余额度须注入系统提示词。
+
+    提示词构建早于 ``usage_state`` 创建，因此剩余额度只能取
+    ``budget_config.per_run_tokens``（本次唤醒额度）而非实时累计值。
+    """
+    import internal.service.admin_agent_prompt_service as prompt_module
+
+    class _StubPromptService:
+        def build_system_prompt(self, principal, *, prompt_key=None):
+            return "基础提示词"
+
+    monkeypatch.setattr(prompt_module, "AdminAgentPromptService", _StubPromptService)
+
+    llm = _FakeLLM([SimpleNamespace(content="好的", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+    # 替身把 `_build_system_prompt` 换成了常量，这里恢复真实实现以验证文案与接线。
+    service._build_system_prompt = (
+        lambda p, pk, *, memory_text="", remaining_run_tokens=0: AdminAgentChatService._build_system_prompt(
+            service,
+            p,
+            pk,
+            memory_text=memory_text,
+            remaining_run_tokens=remaining_run_tokens,
+        )
+    )
+    service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(
+        prompt_key=None, budget_config={"per_run_tokens": 4000}
+    )
+
+    list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="你好",
+        )
+    )
+
+    assert llm.invocations, "模型必须被调用"
+    system_prompt = llm.invocations[0][0].content
+    assert "4000" in system_prompt, f"剩余额度须注入提示词，实际：{system_prompt}"
+    assert "下次唤醒" in system_prompt, f"须提示可安排下次唤醒，实际：{system_prompt}"

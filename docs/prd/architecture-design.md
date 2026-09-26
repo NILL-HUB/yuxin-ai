@@ -398,7 +398,7 @@
 | RoutingObservabilityService | 记录调度决策、模型成本、Agent/工具选择、失败原因 | Phase 7 |
 | AdminAgentService（管理端 Agent 授权内核） | 管理端 Agent 的定义 CRUD、可下放权限白名单与三重交集授权、失权自动回收、身份对象 `AdminAgentPrincipal` | Phase 7（v7.1 新增，P1a） |
 | AdminAgentExecutionService + BoardToolExecutor（管理端 Agent 执行链路） | 板块动作注册表（未登记即拒绝）+ 按 `automation_policy` 分流（`supervised` → 变更草稿 / `autonomous` → 直接执行 / `blocked` → 熔断）+ 审计 `actor_type=agent` | Phase 7（v7.2 新增，P1b） |
-| AdminAgentBudgetGate（管理端 Agent 预算闸门） | Redis 周期键计数的执行/对话预算闸门（`daily/monthly_executions` + `daily/monthly_tokens`），超限拒绝 + 审计 `BUDGET_REJECTED`，Redis 不可用 fail-open | Phase 7（v7.3 新增，P4） |
+| AdminAgentBudgetGate（管理端 Agent 预算闸门） | Redis 周期键计数的执行/对话预算闸门（`daily/monthly_executions` + `daily/monthly_tokens`），超限拒绝 + 审计 `BUDGET_REJECTED`，Redis 不可用 fail-open；另有 `per_run_tokens` **单次唤醒** token 硬顶（不走周期键，在 `AdminAgentChatService._run_tool_loop` 内逐轮累计校验，超顶抛 `FailException` 中断），并把剩余额度注入 system prompt | Phase 7（v7.3 新增，P4；`per_run_tokens` 后续补充，见 [定时任务统一设计](../superpowers/specs/2026-09-26-admin-agent-schedule-unification-design.md)） |
 | AdminMemoryReadService（管理端记忆只读视图） | 按 `MemoryOwnerKey.for_admin` 主体查询 Neo4j：规模统计 + 最近片段 + 分页 Episode；只读 + fail-open | Phase 7（v7.3 新增，P4） |
 
 > **v7.1 管理端 Agent 治理（P1a 授权内核）**：管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。授权模型为三重交集 `effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`，白名单采用**显式登记制（fail closed）**——新增权限点默认不可下放。机制细节（三层强制、权限回收、身份对象、自动化级别、表与路由）见 [RBAC 权限模型 §9](../rbac.md)。
