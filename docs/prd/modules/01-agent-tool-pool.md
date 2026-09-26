@@ -493,6 +493,12 @@ internal_admin 子池默认只对管理员和系统内部流程开放，不参�
 > `RecycleBinService`（可恢复）；"改任务"以"删旧的 + 建新的"表达（两步均在回收站覆盖内）；
 > 成本由 `AdminAgentBudgetGate` 兜底。
 >
+> **前提（重要）**：该自治闭环需把 `schedule_task` 板块的 `automation_policy` 配为
+> `autonomous`。`supervised` 档下 `create` / `delete` 会转成变更草稿（`AdminChangeDraftService`），
+> 但**通用草稿目前只有服务层 `apply_draft`、无 admin 路由调用方**（admin 端现有 apply 路由是
+> 路由板专用的 `RoutingPolicyChangeService`），草稿无法人工落地——这是既有架构缺口，
+> `builtin_tool` 板块同样受影响，非本次引入。`list`（只读）不受档位限制，任何档位均可直接执行。
+>
 > **预算闸门（`admin_agent.budget_config`）**：`daily_executions` / `monthly_executions` /
 > `daily_tokens` / `monthly_tokens` 为日/月周期额度（入口 `check_and_record` 一次性校验）；
 > `per_run_tokens` 为**单次唤醒** token 硬顶，在 `AdminAgentChatService._run_tool_loop` 内
