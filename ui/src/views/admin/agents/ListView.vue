@@ -92,6 +92,7 @@ const budgetFields = [
   { key: 'monthly_executions', label: t('admin.agents.monthlyExecutions') },
   { key: 'daily_tokens', label: t('admin.agents.dailyTokens') },
   { key: 'monthly_tokens', label: t('admin.agents.monthlyTokens') },
+  { key: 'per_run_tokens', label: t('admin.agents.perRunTokens') },
 ] as const
 
 const formatBudget = (budget: Record<string, number> | undefined) => {

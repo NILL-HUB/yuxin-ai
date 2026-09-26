@@ -30,6 +30,7 @@ export default {
   monthlyExecutions: '每月执行次数',
   dailyTokens: '每日 Token',
   monthlyTokens: '每月 Token',
+  perRunTokens: '单次唤醒 Token 上限',
   enabled: '启用',
   statusEnabled: '已启用',
   statusDisabled: '已停用',

@@ -30,6 +30,7 @@ export default {
   monthlyExecutions: 'Monthly executions',
   dailyTokens: 'Daily tokens',
   monthlyTokens: 'Monthly tokens',
+  perRunTokens: 'Per-run token limit',
   enabled: 'Enabled',
   statusEnabled: 'Enabled',
   statusDisabled: 'Disabled',
