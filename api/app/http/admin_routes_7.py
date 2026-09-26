@@ -586,7 +586,12 @@ def register_routes(quart_app):
         body: ``{name, prompt?, cron_expression, board, action, payload?}``。
         board/action/payload 写入 ``input_params``，执行时由
         ``ScheduleExecutionService`` 按 `admin_agent_execution` 分支调
-        ``AdminAgentExecutionService.run``。
+        ``AdminAgentExecutionService.run``。显式传 ``admin_agent_chat=False``
+        保持单动作语义（该路由只给精确 board/action，不含对话式任务）。
+
+        PATCH(schedule): 兼容别名——能力已统一到平台级 /admin/schedule-tasks
+        （前端已跳转该页）。本路由保留供旧客户端过渡，内部仍调同一
+        ScheduleTaskService；收编计划：待旧客户端下线后移除。
         """
         from app.http import asgi_app as a
 
@@ -595,7 +600,7 @@ def register_routes(quart_app):
             return err
 
         from uuid import UUID
-# 
+
         from internal.exception import FailException
         from internal.service.admin_agent_service import AdminAgentService
         from internal.service.schedule_task_service import ScheduleTaskService
@@ -651,7 +656,12 @@ def register_routes(quart_app):
 
     @quart_app.get("/admin/agents/<uuid:agent_id>/schedules")
     async def admin_agent_schedule_list(agent_id):
-        """列出某管理端 Agent 的周期执行任务（ADMIN-P4 T3）。"""
+        """列出某管理端 Agent 的周期执行任务（ADMIN-P4 T3）。
+
+        PATCH(schedule): 兼容别名——能力已统一到平台级 /admin/schedule-tasks
+        （前端已跳转该页）。本路由保留供旧客户端过渡，内部仍调同一
+        ScheduleTaskService；收编计划：待旧客户端下线后移除。
+        """
         from app.http import asgi_app as a
 
         admin, err = await a._resolve_admin_permission("agent_pool:read")
@@ -678,6 +688,10 @@ def register_routes(quart_app):
         """删除某管理端 Agent 的周期执行任务（ADMIN-P4 T3）。
 
         先确认任务确实绑定本 Agent，再进入平台回收站。
+
+        PATCH(schedule): 兼容别名——能力已统一到平台级 /admin/schedule-tasks
+        （前端已跳转该页）。本路由保留供旧客户端过渡，内部仍调同一
+        ScheduleTaskService；收编计划：待旧客户端下线后移除。
         """
         from app.http import asgi_app as a
 
@@ -686,7 +700,7 @@ def register_routes(quart_app):
             return err
 
         from uuid import UUID
-# 
+
         from internal.exception import FailException
         from internal.service.schedule_task_service import ScheduleTaskService
 
