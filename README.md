@@ -1,6 +1,6 @@
 # 钰见我（Yujianwo）
 
-钰见我（钰见我）是一个「设备级 Agent + 合伙人共创生态」平台：基于 **Quart + LangChain / LangGraph** 的后端，搭配 **Vue 3** 工作台，提供可视化工作流编排、设备工具、技能（Skills）、数字分身与 OpenAPI 交付能力。
+钰见我（Yujianwo）是一个「设备级 Agent + 合伙人共创生态」平台：基于 **Quart + LangChain / LangGraph** 的后端，搭配 **Vue 3** 工作台，提供可视化工作流编排、设备工具、技能（Skills）、数字分身与 OpenAPI 交付能力。
 
 [访问官网](https://openllm.cloud) · [API 文档](https://s.apifox.cn/c76bd530-fd50-429c-94cc-f0e41c2675d1/api-305434417) · [GitHub](https://github.com/NILL-HUB/yujianwo) · [深入问答（DeepWiki）](https://deepwiki.com/NILL-HUB/yujianwo)
 
