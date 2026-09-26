@@ -79,6 +79,17 @@ BOARD_ACTIONS: tuple[BoardAction, ...] = (
         "builtin_tool:update",
         "更新内置工具的标签/描述/关键词",
     ),
+    # -------- 定时任务（L4：Agent 自治调度，实现无人值守自拉起）--------
+    _a("schedule_task", "list", "read", "schedule_task:read", "列出平台级定时任务"),
+    _a("schedule_task", "create", "write", "schedule_task:create", "创建定时任务"),
+    # delete 走回收站（可恢复），故按 kind=delete 由既有分流处理
+    _a(
+        "schedule_task",
+        "delete",
+        "delete",
+        "schedule_task:delete",
+        "删除定时任务（进回收站可恢复）",
+    ),
 )
 
 BOARD_IDS: tuple[str, ...] = tuple(sorted({a.board for a in BOARD_ACTIONS}))

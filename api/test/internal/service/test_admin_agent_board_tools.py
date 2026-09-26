@@ -286,3 +286,189 @@ class TestAvailableBoards:
         from internal.service.admin_agent_board_tools import available_boards
 
         assert set(available_boards()) == set(BOARD_IDS)
+
+
+def test_schedule_task_board_actions_are_registered():
+    """L4：schedule_task 板块登记 list/create/delete，且不开 update。"""
+    from internal.core.admin_agent_boards import board_ids_of, resolve_action
+
+    assert set(board_ids_of("schedule_task")) == {"list", "create", "delete"}
+    assert (
+        resolve_action("schedule_task", "list").permission_code
+        == "schedule_task:read"
+    )
+    assert (
+        resolve_action("schedule_task", "create").permission_code
+        == "schedule_task:create"
+    )
+    assert (
+        resolve_action("schedule_task", "delete").permission_code
+        == "schedule_task:delete"
+    )
+    assert resolve_action("schedule_task", "list").kind == "read"
+    assert resolve_action("schedule_task", "create").kind == "write"
+    assert resolve_action("schedule_task", "delete").kind == "delete"
+
+
+def _schedule_principal():
+    return AdminAgentPrincipal(
+        admin_user_id=uuid4(),
+        agent_id=uuid4(),
+        agent_name="运维 Agent",
+        effective_permissions=frozenset(
+            {
+                "schedule_task:read",
+                "schedule_task:create",
+                "schedule_task:delete",
+            }
+        ),
+        automation_policy={"schedule_task": AutomationLevel.AUTONOMOUS},
+    )
+
+
+class _FakeScheduleTaskService:
+    """替身：只记录调用，不触库（真实增删由 ScheduleTaskService 自测覆盖）。"""
+
+    def __init__(self):
+        self.calls = []
+        self._tasks = [
+            SimpleNamespace(
+                id=uuid4(),
+                name="每日巡检",
+                cron_expression="0 9 * * *",
+                enabled=True,
+                task_type="admin_agent_chat",
+            )
+        ]
+
+    def list_tasks(self, account, page, page_size, owner_type="user", agent_id=None):
+        self.calls.append(("list", account, page, page_size, owner_type, agent_id))
+        return self._tasks, len(self._tasks)
+
+    def create_task(self, account, name, prompt, cron_expression, **kwargs):
+        self.calls.append(("create", account, name, prompt, cron_expression, kwargs))
+        return SimpleNamespace(id=uuid4(), name=name)
+
+    def delete_task(self, task_id, account, owner_type="user", **kwargs):
+        self.calls.append(("delete", task_id, account, owner_type, kwargs))
+
+
+def _schedule_executor(monkeypatch, service):
+    from internal.service.admin_agent_board_tools import BoardToolExecutor
+
+    executor = BoardToolExecutor()
+    monkeypatch.setattr(executor, "_schedule_task_service", lambda: service)
+    return executor
+
+
+class TestScheduleTaskActions:
+    def test_list_uses_platform_admin_scope(self, monkeypatch):
+        from internal.service.admin_agent_board_tools import BoardToolExecutor
+
+        service = _FakeScheduleTaskService()
+        executor = _schedule_executor(monkeypatch, service)
+        assert isinstance(executor, BoardToolExecutor)
+
+        result = executor.execute(
+            _schedule_principal(),
+            board="schedule_task",
+            action="list",
+            payload={},
+        )
+
+        assert service.calls == [("list", None, 1, 50, "admin", None)]
+        assert result["action"] == "list"
+        assert result["total"] == 1
+        assert result["items"][0]["name"] == "每日巡检"
+
+    def test_create_binds_agent_and_leaves_chat_chain_default(self, monkeypatch):
+        """create 必须带 owner_type=admin + Agent 归属，且**不传** admin_agent_chat。
+
+        不传即默认 True → 走带记忆的 admin_agent_chat 链，符合 Agent 自治意图。
+        """
+        principal = _schedule_principal()
+        service = _FakeScheduleTaskService()
+        executor = _schedule_executor(monkeypatch, service)
+
+        result = executor.execute(
+            principal,
+            board="schedule_task",
+            action="create",
+            payload={
+                "name": "巡检",
+                "prompt": "盘点平台现状",
+                "cron_expression": "0 9 * * *",
+            },
+        )
+
+        assert result["action"] == "create"
+        _, account, name, prompt, cron, kwargs = service.calls[0]
+        assert (account, name, prompt, cron) == (
+            None,
+            "巡检",
+            "盘点平台现状",
+            "0 9 * * *",
+        )
+        assert kwargs["owner_type"] == "admin"
+        assert kwargs["admin_agent_id"] == principal.agent_id
+        assert kwargs["admin_user_id"] == principal.admin_user_id
+        assert "admin_agent_chat" not in kwargs
+
+    def test_create_requires_name_prompt_and_cron(self, monkeypatch):
+        service = _FakeScheduleTaskService()
+        executor = _schedule_executor(monkeypatch, service)
+        principal = _schedule_principal()
+
+        for payload in (
+            {"prompt": "p", "cron_expression": "0 9 * * *"},
+            {"name": "n", "cron_expression": "0 9 * * *"},
+            {"name": "n", "prompt": "p"},
+        ):
+            with pytest.raises(FailException):
+                executor.execute(
+                    principal,
+                    board="schedule_task",
+                    action="create",
+                    payload=payload,
+                )
+        assert service.calls == [], "入参非法时不得触碰 service"
+
+    def test_delete_uses_platform_admin_scope(self, monkeypatch):
+        task_id = uuid4()
+        service = _FakeScheduleTaskService()
+        executor = _schedule_executor(monkeypatch, service)
+
+        result = executor.execute(
+            _schedule_principal(),
+            board="schedule_task",
+            action="delete",
+            payload={"task_id": str(task_id)},
+        )
+
+        assert result["action"] == "delete"
+        kind, called_id, account, owner_type, _ = service.calls[0]
+        assert kind == "delete"
+        assert str(called_id) == str(task_id)
+        assert account is None
+        assert owner_type == "admin"
+
+    def test_delete_requires_task_id(self, monkeypatch):
+        service = _FakeScheduleTaskService()
+        executor = _schedule_executor(monkeypatch, service)
+        with pytest.raises(FailException, match="task_id"):
+            executor.execute(
+                _schedule_principal(),
+                board="schedule_task",
+                action="delete",
+                payload={},
+            )
+        assert service.calls == []
+
+    def test_unknown_action_is_rejected(self, monkeypatch):
+        """已登记板块内的未实现 action 必须抛 FailException（而非静默放行）。"""
+        service = _FakeScheduleTaskService()
+        executor = _schedule_executor(monkeypatch, service)
+        with pytest.raises(FailException):
+            executor._do_schedule_task(
+                _schedule_principal(), action="update", payload={}
+            )

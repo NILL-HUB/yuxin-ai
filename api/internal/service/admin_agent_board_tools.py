@@ -191,6 +191,86 @@ class BoardToolExecutor:
 
         return a._get_service(BuiltinToolService)
 
+    # ------------------------------------------------------------------
+    # schedule_task（L4：Agent 自治调度）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _schedule_task_service():
+        """取 ScheduleTaskService（复用 injector 单例）。"""
+        from app.http import asgi_app as a
+        from internal.service.schedule_task_service import ScheduleTaskService
+
+        return a._get_service(ScheduleTaskService)
+
+    def _do_schedule_task(
+        self, principal: AdminAgentPrincipal, *, action: str, payload: dict
+    ) -> dict:
+        """定时任务板块：复用 ``ScheduleTaskService``，不重写增删逻辑。
+
+        仅开放 list/create/delete——不开 update：回收站只快照「删除那一刻」，
+        改错无回滚路径，「改任务」以 删旧的 + 建新的 表达，两步都在回收站
+        覆盖内，安全模型自洽（设计 §7）。
+
+        create 不传 ``admin_agent_chat``：保持默认 ``True``，使平台级任务走
+        带记忆的 ``admin_agent_chat`` 链，符合 Agent 自治意图。
+        """
+        service = self._schedule_task_service()
+
+        if action == "list":
+            tasks, total = service.list_tasks(None, 1, 50, owner_type="admin")
+            return {
+                "board": "schedule_task",
+                "action": "list",
+                "total": total,
+                "items": [
+                    {
+                        "id": str(t.id),
+                        "name": t.name,
+                        "cron_expression": t.cron_expression,
+                        "enabled": t.enabled,
+                        "task_type": t.task_type,
+                    }
+                    for t in tasks
+                ],
+            }
+
+        if action == "create":
+            name = str(payload.get("name") or "").strip()
+            prompt = str(payload.get("prompt") or "").strip()
+            cron_expression = str(payload.get("cron_expression") or "").strip()
+            # 入参校验必须**先于**任何有副作用的调用
+            if not name or not prompt or not cron_expression:
+                raise FailException("create 需要 name / prompt / cron_expression")
+            task = service.create_task(
+                None,
+                name,
+                prompt,
+                cron_expression,
+                owner_type="admin",
+                admin_agent_id=principal.agent_id,
+                admin_user_id=principal.admin_user_id,
+            )
+            return {
+                "board": "schedule_task",
+                "action": "create",
+                "id": str(task.id),
+                "name": task.name,
+            }
+
+        if action == "delete":
+            task_id = payload.get("task_id")
+            if not task_id:
+                raise FailException("delete 需要 task_id")
+            service.delete_task(task_id, None, owner_type="admin")
+            return {
+                "board": "schedule_task",
+                "action": "delete",
+                "task_id": str(task_id),
+            }
+
+        raise FailException(f"schedule_task 未实现 action: {action}")
+
 
 def available_boards() -> tuple[str, ...]:
     """对 LLM 暴露的板块清单（工具 schema 用）。"""
