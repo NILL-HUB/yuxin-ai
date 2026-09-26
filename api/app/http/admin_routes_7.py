@@ -1,4 +1,4 @@
-﻿"""Admin 管理端点 Quart 异步迁移（批次 7）。
+"""Admin 管理端点 Quart 异步迁移（批次 7）。
 
 将 internal/router/router.py 中以下 handler 注册的 Flask 同步端点迁移为
 Quart async 端点（挂载到 asgi_app.quart_app）：
@@ -473,6 +473,8 @@ def register_routes(quart_app):
             )
             if agent is None:
                 return None
+            # tokens=0 是正确语义：invoke 执行单个板块动作、不调 LLM，无 token
+            # 消耗；带 LLM 的对话链路（AdminAgentChatService.chat）自行记账 token。
             _build_budget_gate().check_and_record(
                 str(agent.id), getattr(agent, "budget_config", None) or {}
             )

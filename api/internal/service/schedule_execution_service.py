@@ -236,6 +236,8 @@ end
             raise FailException("定时任务缺少 board/action 参数")
         payload = params.get("payload") or {}
 
+        # tokens=0 是正确语义：本分支为单动作执行、不调 LLM，无 token 消耗；
+        # 带 LLM 的对话链路（AdminAgentChatService.chat）自行记账 token。
         _build_budget_gate().check_and_record(
             str(agent.id), getattr(agent, "budget_config", None) or {}
         )
