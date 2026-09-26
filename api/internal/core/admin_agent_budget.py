@@ -107,15 +107,25 @@ class AdminAgentBudgetGate:
                     f"预算闸门: {limit_key} 周期额度已用完（{used}/{limit}）"
                 )
 
-    def record_usage(self, agent_id, budget_config, *, tokens: int = 0) -> None:
-        """累计执行次数与 token 消耗（不校验）。Redis 不可用 / 异常吞掉。"""
+    def record_usage(
+        self, agent_id, budget_config, *, tokens: int = 0, executions_delta: int = 1
+    ) -> None:
+        """累计执行次数与 token 消耗（不校验）。Redis 不可用 / 异常吞掉。
+
+        ``executions_delta`` 控制本次是否计一次执行：默认 1（独立的用量记账）；
+        调用方若已通过 ``check_and_record`` 计入本次执行、此处只想补记 token
+        （如对话流程的 finally 中断兜底），应传 ``executions_delta=0``，
+        否则执行次数会被重复累计。
+        """
         try:
             redis = self._redis_client()
             if redis is None:
                 return
+            delta = int(executions_delta or 0)
             pipe = redis.pipeline()
-            pipe.incr(self._key(agent_id, "executions", "daily"), 1)
-            pipe.incr(self._key(agent_id, "executions", "monthly"), 1)
+            if delta:
+                pipe.incr(self._key(agent_id, "executions", "daily"), delta)
+                pipe.incr(self._key(agent_id, "executions", "monthly"), delta)
             if tokens and tokens > 0:
                 pipe.incr(self._key(agent_id, "tokens", "daily"), int(tokens))
                 pipe.incr(self._key(agent_id, "tokens", "monthly"), int(tokens))

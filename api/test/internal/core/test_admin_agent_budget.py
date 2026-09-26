@@ -120,3 +120,22 @@ class TestUsage:
         assert usage["monthly_executions"] == 1
         assert usage["daily_tokens"] == 100
         assert usage["monthly_tokens"] == 100
+
+    def test_record_usage_zero_executions_delta_only_records_tokens(self):
+        """中断路径记账：``executions_delta=0`` 只补记 token，不重复计执行次数。
+
+        背景：对话入口 ``check_and_record`` 已记一次执行，聊天流程的 finally
+        再调 ``record_usage`` 补记 token——若 ``record_usage`` 无条件 incr
+        executions，执行次数会被翻倍。
+        """
+        fake = _FakeRedis()
+        gate = AdminAgentBudgetGate(redis_client=fake)
+        gate.check_and_record(AGENT_ID, {"daily_executions": 5, "daily_tokens": 1000})
+        gate.record_usage(
+            AGENT_ID, {"daily_executions": 5}, tokens=120, executions_delta=0
+        )
+        usage = gate.usage(AGENT_ID, {})
+        assert usage["daily_executions"] == 1, "executions_delta=0 不得再计执行"
+        assert usage["monthly_executions"] == 1
+        assert usage["daily_tokens"] == 120
+        assert usage["monthly_tokens"] == 120

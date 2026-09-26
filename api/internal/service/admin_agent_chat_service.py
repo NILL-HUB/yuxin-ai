@@ -136,23 +136,38 @@ class AdminAgentChatService:
             # 迭代工具循环生成器：每拿到一个 ("tool", event) 就立刻落库并推 TOOL
             # 帧（"边跑边推"），最后一帧 ("answer", text) 作为最终答复。循环最长
             # 6 轮，若等循环结束再一次性补帧，客户端在此期间只见 keep-alive。
-            for kind, payload in self._run_tool_loop(
-                llm=llm,
-                system_prompt=system_prompt,
-                history=self._history_for(conversation.id),
-                tools=tools,
-                on_tool=lambda event: self.append_message(
-                    conversation_id=conversation.id,
-                    role=AdminAgentMessageRole.TOOL.value,
-                    content=json.dumps(event, ensure_ascii=False),
-                    tool_calls=[event],
-                ),
-            ):
-                if kind == "tool":
-                    tool_events.append(payload)
-                    yield self._frame(AdminAgentChatEvent.TOOL, payload)
-                else:
-                    answer = str(payload or "")
+            # L1：token 累计容器按调用创建（本服务是 injector 单例，不可挂 self）
+            usage_state: dict = {"tokens": 0}
+            # L1：把本轮累计 token 写回预算闸门——放 finally，保证工具循环因
+            # 超轮次上限或未来单次预算中断（提前退出循环）时已消耗的 token
+            # 仍被记账，否则成本统计会漏掉中断那一段。执行次数已在入口
+            # `check_and_record` 记过，此处传 `executions_delta=0` 避免翻倍。
+            try:
+                for kind, payload in self._run_tool_loop(
+                    llm=llm,
+                    system_prompt=system_prompt,
+                    history=self._history_for(conversation.id),
+                    tools=tools,
+                    usage_state=usage_state,
+                    on_tool=lambda event: self.append_message(
+                        conversation_id=conversation.id,
+                        role=AdminAgentMessageRole.TOOL.value,
+                        content=json.dumps(event, ensure_ascii=False),
+                        tool_calls=[event],
+                    ),
+                ):
+                    if kind == "tool":
+                        tool_events.append(payload)
+                        yield self._frame(AdminAgentChatEvent.TOOL, payload)
+                    else:
+                        answer = str(payload or "")
+            finally:
+                self._budget_gate().record_usage(
+                    str(principal.agent_id),
+                    getattr(agent, "budget_config", None) or {},
+                    tokens=int(usage_state.get("tokens") or 0),
+                    executions_delta=0,
+                )
         except FailException as exc:
             # 业务结论（含工具循环超轮次不收敛）：统一以 error 帧结束，不上抛
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
@@ -205,22 +220,32 @@ class AdminAgentChatService:
     # ------------------------------------------------------------------
 
     def _run_tool_loop(
-        self, *, llm, system_prompt: str, history, tools, on_tool
+        self, *, llm, system_prompt: str, history, tools, on_tool, usage_state: dict
     ) -> Generator[tuple[str, Any], None, None]:
         """驱动「LLM ⇄ 板块工具」循环（**生成器**）。
 
         逐次产出 ``("tool", event)``（每完成一次工具调用即产出），使调用方
         得以在循环进行中即时推帧；收敛后产出 ``("answer", text)`` 收尾。
+
+        每轮 LLM 响应的 token 用量累计到**调用局部**的 ``usage_state["tokens"]``
+        （不挂 self：本服务是 injector 单例，并发对话会互相覆盖），
+        供 ``chat`` 写回预算闸门；未来若实现单次预算中断，也读同一计数器。
         """
         from langchain_core.messages import SystemMessage, ToolMessage
         from pydantic import ValidationError
 
+        from internal.core.agent.usage_utils import extract_token_usage
+
+        usage_state["tokens"] = 0
         messages: list[Any] = [SystemMessage(content=system_prompt), *history]
         tools_by_name = {tool.name: tool for tool in tools}
         bound = llm.bind_tools(tools) if tools else llm
 
         for _ in range(MAX_TOOL_ITERATIONS):
             ai = bound.invoke(messages)
+            usage = extract_token_usage(ai)
+            if usage:
+                usage_state["tokens"] += int(usage.get("total_tokens") or 0)
             messages.append(ai)
             calls = list(getattr(ai, "tool_calls", None) or [])
             if not calls:

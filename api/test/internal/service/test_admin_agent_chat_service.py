@@ -102,6 +102,12 @@ def _service(principal, llm, tools):
     service._resolve_conversation = lambda **kwargs: SimpleNamespace(id=uuid4())
     # 必须一并替换 `_load_agent`：真实实现会经 AdminAgentService 触库
     service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(prompt_key=None)
+    # L1：chat 的 finally 会调 record_usage；未替换会落到真实 AdminAgentBudgetGate
+    # 触 current_app.extensions["redis"]（测试环境不应依赖）
+    service._budget_gate = lambda: SimpleNamespace(
+        check_and_record=lambda *a, **k: None,
+        record_usage=lambda *a, **k: None,
+    )
     return service
 
 
@@ -634,3 +640,152 @@ def test_build_tools_without_mcp_config_keeps_board_tools_only(monkeypatch):
     names = [getattr(t, "name", "") for t in tools]
     assert names, "板块工具必须装配"
     assert all(not n.startswith("mcp__") for n in names)
+
+
+def test_tool_loop_records_accumulated_tokens_after_convergence():
+    """L1：工具循环收敛后，本轮累计 token 必须写回预算闸门。
+
+    断链背景：`record_usage` 的 token 项此前无调用方传 tokens，
+    导致 daily_tokens/monthly_tokens 配置永不生效。
+    """
+    class _UsageLLM:
+        def __init__(self):
+            self._scripted = [
+                SimpleNamespace(
+                    content="",
+                    tool_calls=[{"name": "admin_builtin_tool", "args": {"action": "list"}, "id": "c1"}],
+                    usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                ),
+                SimpleNamespace(
+                    content="完成",
+                    tool_calls=[],
+                    usage_metadata={"input_tokens": 200, "output_tokens": 30, "total_tokens": 230},
+                ),
+            ]
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            return self._scripted.pop(0)
+
+    recorded = {}
+
+    class _RecordingGate:
+        def check_and_record(self, *args, **kwargs):
+            return None
+
+        def record_usage(self, agent_id, budget_config, *, tokens=0, executions_delta=1):
+            recorded["agent_id"] = agent_id
+            recorded["tokens"] = tokens
+
+    llm = _UsageLLM()
+    tool = _FakeTool("admin_builtin_tool")
+    service = _service(_principal(), llm, [tool])
+    service._budget_gate = lambda: _RecordingGate()
+    service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(
+        prompt_key=None, budget_config={"daily_tokens": 100000}
+    )
+
+    list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="盘点工具",
+        )
+    )
+
+    assert recorded.get("tokens") == 350, f"应累计 120+230=350，实际 {recorded.get('tokens')}"
+
+
+def test_chat_records_execution_exactly_once():
+    """执行次数只记一次：入口 ``check_and_record`` 记一次，finally 不得翻倍。
+
+    历史缺陷：入口 ``check_and_record``（内档 executions=1）已记一次执行，
+    chat 的 finally 又调 ``record_usage`` 补记 token，而 ``record_usage``
+    无条件 incr executions，导致每次对话执行数被记两次。
+    """
+    recorded = {"check": 0, "executions_delta": []}
+
+    class _RecordingGate:
+        def check_and_record(self, *args, **kwargs):
+            recorded["check"] += 1
+
+        def record_usage(self, agent_id, budget_config, *, tokens=0, executions_delta=1):
+            recorded["executions_delta"].append(executions_delta)
+
+    llm = _FakeLLM([SimpleNamespace(content="你好", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+    service._budget_gate = lambda: _RecordingGate()
+
+    list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="你好",
+        )
+    )
+
+    assert recorded["check"] == 1, "入口应校验并记一次执行"
+    assert recorded["executions_delta"] == [0], (
+        "finally 补记 token 时必须传 executions_delta=0，避免执行次数翻倍"
+    )
+
+
+def test_token_usage_recorded_when_tool_loop_interrupted():
+    """L1 中断路径：工具循环抛异常提前退出时，已累计 token 仍按当前值记账。
+
+    工具循环第 N 轮成功产出的 token 必须写回预算闸门——即便后续轮次抛
+    `FailException`（超轮次）或其它异常中断，finally 也须把 ``usage_state``
+    已累计值交给 ``record_usage``，否则成本统计会漏掉中断那一段。
+    """
+    class _InterruptingLLM:
+        def __init__(self):
+            self._round = 0
+
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages):
+            self._round += 1
+            if self._round > 1:
+                raise RuntimeError("模型中断")
+            return SimpleNamespace(
+                content="",
+                tool_calls=[{"name": "admin_builtin_tool", "args": {"action": "list"}, "id": "c1"}],
+                usage_metadata={"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+            )
+
+    recorded = {}
+
+    class _RecordingGate:
+        def check_and_record(self, *args, **kwargs):
+            return None
+
+        def record_usage(self, agent_id, budget_config, *, tokens=0, executions_delta=1):
+            recorded["tokens"] = tokens
+            recorded["executions_delta"] = executions_delta
+
+    llm = _InterruptingLLM()
+    tool = _FakeTool("admin_builtin_tool")
+    service = _service(_principal(), llm, [tool])
+    service._budget_gate = lambda: _RecordingGate()
+    service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(
+        prompt_key=None, budget_config={"daily_tokens": 100000}
+    )
+
+    list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="盘点工具",
+        )
+    )
+
+    assert recorded.get("tokens") == 120, (
+        f"中断前已累计 120 token 必须记账，实际 {recorded.get('tokens')}"
+    )
+    assert recorded.get("executions_delta") == 0, "补记 token 时不得重复计执行"
