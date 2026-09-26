@@ -9,12 +9,18 @@ vi.mock('@/services/schedule-task', () => ({
   rejectScheduleSuggestion: vi.fn(),
 }))
 
+vi.mock('@/services/admin-agents', () => ({
+  listAgents: vi.fn().mockResolvedValue([]),
+}))
+
 vi.mock('@/services/app', () => ({
   getAppsWithPage: vi.fn().mockResolvedValue({ data: { list: [] } }),
 }))
 
+const routeState = vi.hoisted(() => ({ path: '/', meta: {} as Record<string, unknown> }))
+
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ path: '/', meta: {} }),
+  useRoute: () => routeState,
 }))
 
 vi.mock('@arco-design/web-vue', () => ({
@@ -28,12 +34,15 @@ vi.mock('@arco-design/web-vue', () => ({
 import { nextTick } from 'vue'
 
 import CreateScheduleWizard from '../CreateScheduleWizard.vue'
+import { updateScheduleTask } from '@/services/schedule-task'
+import { listAgents } from '@/services/admin-agents'
 
 const intervalTask = {
   id: 'task-interval-1',
   name: '间隔测试',
   prompt: '测试',
   app_id: null,
+  admin_agent_id: null,
   task_type: 'assistant_chat' as const,
   input_params: {},
   trigger_type: 'interval' as const,
@@ -160,5 +169,49 @@ describe('CreateScheduleWizard 单次任务', () => {
     expect(wrapper.text()).toContain('仅执行一次：')
     // 单次任务不展示 cron 公式编辑区
     expect(wrapper.text()).not.toContain('快捷预设')
+  })
+})
+
+describe('CreateScheduleWizard 管理端 Agent 绑定', () => {
+  it('admin 上下文展示绑定 Agent 下拉，选中后提交 admin_agent_id 与 chat 类型', async () => {
+    routeState.path = '/admin/schedules'
+    vi.mocked(listAgents).mockResolvedValue([
+      { id: 'agent-1', name: '巡检助手' },
+    ] as never)
+
+    const wrapper = shallowMount(CreateScheduleWizard, {
+      props: { visible: false, task: cronTask },
+    })
+    await nextTick()
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('绑定管理端 Agent')
+
+    const agentSelect = wrapper
+      .findAll('select')
+      .find((node) => node.text().includes('巡检助手'))
+    expect(agentSelect).toBeTruthy()
+
+    await agentSelect!.setValue('agent-1')
+
+    const saveButton = wrapper
+      .findAll('button')
+      .find((btn) => btn.text().includes('保存修改'))
+    expect(saveButton).toBeTruthy()
+    await saveButton!.trigger('click')
+    await flushPromises()
+
+    expect(updateScheduleTask).toHaveBeenCalledWith(
+      'task-cron-1',
+      expect.objectContaining({
+        admin_agent_id: 'agent-1',
+        app_id: null,
+        task_type: 'admin_agent_chat',
+      }),
+      true,
+    )
+
+    routeState.path = '/'
   })
 })

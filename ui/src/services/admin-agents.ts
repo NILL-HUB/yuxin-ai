@@ -56,19 +56,6 @@ export interface BudgetUsage {
   }
 }
 
-export interface ScheduleTask {
-  id: string
-  name: string
-  cron_expression: string
-  prompt: string
-  task_type: string
-  owner_type: string
-  status: string
-  input_params?: Record<string, unknown>
-  next_run_at?: number
-  last_run_at?: number
-}
-
 export interface ConversationItem {
   id: string
   admin_agent_id: string
@@ -156,25 +143,6 @@ export async function listBoards(): Promise<BoardCatalog> {
 export async function getBudgetUsage(id: string): Promise<BudgetUsage> {
   const res = await get<Envelope<BudgetUsage>>(`/admin/agents/${id}/budget/usage`)
   return res.data
-}
-
-// ---------- 定时任务 ----------
-
-export async function listSchedules(id: string, params?: Record<string, unknown>): Promise<{ items: ScheduleTask[]; total: number }> {
-  const res = await get<Envelope<{ items: ScheduleTask[]; total: number }>>(`/admin/agents/${id}/schedules`, { params })
-  return res.data
-}
-
-export async function createSchedule(
-  id: string,
-  payload: { name: string; prompt?: string; cron_expression: string; board: string; action: string; payload?: Record<string, unknown> },
-): Promise<ScheduleTask> {
-  const res = await post<Envelope<ScheduleTask>>(`/admin/agents/${id}/schedules`, { body: payload })
-  return res.data
-}
-
-export async function deleteSchedule(id: string, taskId: string): Promise<void> {
-  await del(`/admin/agents/${id}/schedules/${taskId}`)
 }
 
 // ---------- 对话（SSE） ----------

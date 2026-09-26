@@ -24,6 +24,9 @@ const router = useRouter()
 // admin 上下文检测：admin 路由带 realm: 'admin' 且路径以 /admin/ 开头
 const isAdminContext = computed(() => route.path.startsWith('/admin') || route.meta.realm === 'admin')
 
+// 从管理端 Agent 页跳转而来时按 agent_id 过滤（Agent 页的「定时任务」入口）
+const agentFilter = computed(() => String(route.query.agent_id || ''))
+
 const loading = ref(false)
 const tasks = ref<ScheduleTaskItem[]>([])
 const total = ref(0)
@@ -33,7 +36,7 @@ const pageSize = ref(20)
 const loadTasks = async () => {
   loading.value = true
   try {
-    const res = await listScheduleTasks(page.value, pageSize.value, isAdminContext.value)
+    const res = await listScheduleTasks(page.value, pageSize.value, isAdminContext.value, agentFilter.value)
     tasks.value = res.data.items || []
     total.value = res.data.total || 0
   } catch (error: unknown) {

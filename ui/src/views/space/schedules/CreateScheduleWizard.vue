@@ -23,6 +23,7 @@ import {
   type ScheduleTriggerType,
 } from '@/services/schedule-task'
 import { getAppsWithPage } from '@/services/app'
+import { listAgents, type AdminAgent } from '@/services/admin-agents'
 
 type HistoryTurn = { user: string; assistant: string }
 
@@ -83,6 +84,8 @@ const taskName = ref('')
 const refinedPrompt = ref('')
 const boundAppId = ref<string>('')
 const userApps = ref<Array<{ id: string; name: string; icon: string }>>([])
+const boundAgentId = ref<string>('')
+const adminAgents = ref<AdminAgent[]>([])
 const cronParts = ref<string[]>(['*', '*', '*', '*', '*', '*'])
 const cronHumanized = ref('')
 
@@ -102,6 +105,27 @@ const loadUserApps = async () => {
   } catch {
     userApps.value = []
   }
+}
+
+// 管理端上下文才加载可绑定 Agent（用户端任务不能绑定管理端 Agent）
+const loadAdminAgents = async () => {
+  if (!isAdminContext.value) return
+  try {
+    adminAgents.value = await listAgents()
+  } catch {
+    adminAgents.value = []
+  }
+}
+
+// 绑定应用与管理端 Agent 互斥（后端 create_task 亦强制二选一）
+const onAppChange = (value: string) => {
+  boundAppId.value = value
+  if (value) boundAgentId.value = ''
+}
+
+const onAgentChange = (value: string) => {
+  boundAgentId.value = value
+  if (value) boundAppId.value = ''
 }
 
 // 触发类型：cron（定时表达式）/ interval（间隔触发）/ once（单次任务）
@@ -310,6 +334,7 @@ const resetAll = () => {
   refinedPrompt.value = ''
   boundAppId.value = ''
   userApps.value = []
+  boundAgentId.value = ''
   triggerType.value = 'cron'
   intervalUnit.value = 'hour'
   intervalEvery.value = 1
@@ -356,6 +381,7 @@ const fillFromTask = () => {
   taskName.value = task.name || ''
   refinedPrompt.value = task.prompt || ''
   boundAppId.value = task.app_id || ''
+  boundAgentId.value = task.admin_agent_id || ''
   triggerType.value = task.trigger_type === 'once' ? 'once' : task.trigger_type === 'interval' ? 'interval' : 'cron'
   if (task.trigger_type === 'once') {
     if (task.run_at) onceRunAt.value = dayjs.unix(task.run_at)
@@ -495,7 +521,12 @@ const handleCreate = async () => {
       interval_config: isInterval ? buildIntervalConfig() : {},
       run_at: isOnce && onceRunAt.value ? onceRunAt.value.unix() : null,
       app_id: boundAppId.value || null,
-      task_type: boundAppId.value ? ('app_execution' as const) : ('assistant_chat' as const),
+      admin_agent_id: boundAgentId.value || null,
+      task_type: boundAgentId.value
+        ? ('admin_agent_chat' as const)
+        : boundAppId.value
+          ? ('app_execution' as const)
+          : ('assistant_chat' as const),
       input_params: {},
     }
     if (isEditing.value && props.task) {
@@ -529,6 +560,7 @@ watch(
         fillFromTask()
       }
       void loadUserApps()
+      void loadAdminAgents()
     }
   },
 )
@@ -1122,7 +1154,7 @@ watch(
         </details>
       </div>
 
-      <!-- 选择要执行的应用：绑定应用=按应用执行；不绑定=通用助手执行 -->
+      <!-- 选择要执行的应用 / 管理端 Agent：绑定应用=按应用执行；绑定 Agent=按 Agent 执行；都不绑=通用助手 -->
       <div class="csw-card">
         <div class="csw-card-head">
           <span class="csw-card-head-ico"><icon-apps /></span>
@@ -1136,7 +1168,8 @@ watch(
           <select
             :value="boundAppId"
             class="csw-select csw-select-lg"
-            @change="boundAppId = ($event.target as HTMLSelectElement).value"
+            :disabled="!!boundAgentId"
+            @change="onAppChange(($event.target as HTMLSelectElement).value)"
           >
             <option value="">{{ t('space.schedules.appPlaceholder') }}</option>
             <option v-for="app in userApps" :key="app.id" :value="app.id">{{ app.name }}</option>
@@ -1147,6 +1180,27 @@ watch(
           <icon-robot v-else />
           {{ boundAppId ? t('space.schedules.appBoundHint') : t('space.schedules.appUnboundHint') }}
         </div>
+
+        <!-- 管理端上下文：绑定管理端 Agent（与绑定应用互斥） -->
+        <template v-if="isAdminContext">
+          <div class="csw-select-box csw-agent-select-box">
+            <icon-robot class="csw-select-ico" />
+            <select
+              :value="boundAgentId"
+              class="csw-select csw-select-lg"
+              :disabled="!!boundAppId"
+              @change="onAgentChange(($event.target as HTMLSelectElement).value)"
+            >
+              <option value="">{{ t('space.schedules.agentPlaceholder') }}</option>
+              <option v-for="agent in adminAgents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
+            </select>
+          </div>
+          <div class="csw-hint csw-app-state" :class="{ 'is-bound': boundAgentId }">
+            <icon-check-circle v-if="boundAgentId" />
+            <icon-robot v-else />
+            {{ boundAgentId ? t('space.schedules.agentBoundHint') : t('space.schedules.agentUnboundHint') }}
+          </div>
+        </template>
       </div>
 
       <!-- 精化需求 + 名称 -->
@@ -2073,6 +2127,9 @@ watch(
 }
 .csw-app-state {
   margin-top: 10px;
+}
+.csw-agent-select-box {
+  margin-top: 14px;
 }
 .csw-app-state svg,
 .csw-app-state :deep(svg) {

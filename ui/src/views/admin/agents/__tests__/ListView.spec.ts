@@ -11,9 +11,6 @@ const mocks = vi.hoisted(() => ({
   createAgent: vi.fn(),
   updateAgent: vi.fn(),
   deleteAgent: vi.fn(),
-  listSchedules: vi.fn(),
-  createSchedule: vi.fn(),
-  deleteSchedule: vi.fn(),
   getBudgetUsage: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
@@ -27,9 +24,6 @@ vi.mock('@/services/admin-agents', () => ({
   createAgent: mocks.createAgent,
   updateAgent: mocks.updateAgent,
   deleteAgent: mocks.deleteAgent,
-  listSchedules: mocks.listSchedules,
-  createSchedule: mocks.createSchedule,
-  deleteSchedule: mocks.deleteSchedule,
   getBudgetUsage: mocks.getBudgetUsage,
 }))
 
@@ -167,5 +161,21 @@ describe('Admin agents ListView', () => {
 
     // 3 个权限 → 前 2 个展示 + 「+1」
     expect(wrapper.text()).toContain('+1')
+  })
+
+  it('jumps to the platform schedules page with agent_id when clicking 定时任务', async () => {
+    const wrapper = await renderView()
+
+    const scheduleButton = wrapper
+      .findAll('button')
+      .find((btn) => btn.text().includes('定时任务'))
+    expect(scheduleButton).toBeTruthy()
+
+    await scheduleButton!.trigger('click')
+
+    expect(routerPush).toHaveBeenCalledWith({
+      name: 'admin-schedules',
+      query: { agent_id: 'agent-1' },
+    })
   })
 })

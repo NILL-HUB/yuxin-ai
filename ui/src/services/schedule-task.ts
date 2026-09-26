@@ -17,7 +17,8 @@ export type ScheduleTaskItem = {
   name: string
   prompt: string
   app_id: string | null
-  task_type: 'app_execution' | 'assistant_chat'
+  admin_agent_id: string | null
+  task_type: 'app_execution' | 'assistant_chat' | 'admin_agent_chat' | 'admin_agent_execution'
   input_params: Record<string, unknown>
   trigger_type: ScheduleTriggerType
   cron_expression: string
@@ -61,9 +62,13 @@ export type ScheduleParseResult = {
 
 const scheduleTaskBasePath = (admin: boolean) => (admin ? '/admin/schedule-tasks' : '/schedule-tasks')
 
-export const listScheduleTasks = (page = 1, pageSize = 20, admin = false) =>
+export const listScheduleTasks = (page = 1, pageSize = 20, admin = false, agentId?: string) =>
   get<BaseResponse<{ items: ScheduleTaskItem[]; total: number }>>(scheduleTaskBasePath(admin), {
-    params: { page, page_size: pageSize },
+    params: {
+      page,
+      page_size: pageSize,
+      ...(agentId ? { agent_id: agentId } : {}),
+    },
   })
 
 export const createScheduleTask = (
@@ -77,7 +82,8 @@ export const createScheduleTask = (
     interval_config?: IntervalConfig | Record<string, never>
     run_at?: number | null
     app_id?: string | null
-    task_type?: 'app_execution' | 'assistant_chat'
+    admin_agent_id?: string | null
+    task_type?: 'app_execution' | 'assistant_chat' | 'admin_agent_chat' | 'admin_agent_execution'
     input_params?: Record<string, unknown>
   },
   admin = false,
@@ -85,7 +91,7 @@ export const createScheduleTask = (
 
 export const updateScheduleTask = (
   id: string,
-  body: Partial<{ name: string; prompt: string; cron_expression: string; cron_humanized: string; description: string; enabled: boolean; trigger_type: ScheduleTriggerType; interval_config: IntervalConfig | Record<string, never>; run_at: number | null; app_id: string | null; task_type: 'app_execution' | 'assistant_chat'; input_params: Record<string, unknown> }>,
+  body: Partial<{ name: string; prompt: string; cron_expression: string; cron_humanized: string; description: string; enabled: boolean; trigger_type: ScheduleTriggerType; interval_config: IntervalConfig | Record<string, never>; run_at: number | null; app_id: string | null; admin_agent_id: string | null; task_type: 'app_execution' | 'assistant_chat' | 'admin_agent_chat' | 'admin_agent_execution'; input_params: Record<string, unknown> }>,
   admin = false,
 ) => put<BaseResponse<ScheduleTaskItem>>(`${scheduleTaskBasePath(admin)}/${id}`, { body })
 

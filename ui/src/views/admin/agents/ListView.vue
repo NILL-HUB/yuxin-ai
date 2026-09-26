@@ -6,20 +6,15 @@ import { useI18n } from 'vue-i18n'
 import {
   createAgent,
   deleteAgent,
-  deleteSchedule,
-  createSchedule,
   getBudgetUsage,
   listAgents,
   listAssignablePermissions,
   listBoards,
-  listSchedules,
   updateAgent,
   type AdminAgent,
   type AssignablePermission,
   type AutomationLevel,
-  type BoardAction,
   type BudgetUsage,
-  type ScheduleTask,
 } from '@/services/admin-agents'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
@@ -36,7 +31,6 @@ const actionLoading = ref(false)
 const agents = ref<AdminAgent[]>([])
 const assignablePermissions = ref<AssignablePermission[]>([])
 const boards = ref<string[]>([])
-const boardActions = ref<BoardAction[]>([])
 
 const formatTime = (value: number | null | undefined) => formatAgentTime(value)
 
@@ -118,7 +112,6 @@ const loadMeta = async () => {
     const [permissions, catalog] = await Promise.all([listAssignablePermissions(), listBoards()])
     assignablePermissions.value = permissions
     boards.value = catalog.boards || []
-    boardActions.value = catalog.actions || []
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.agents.loadFailed')))
   }
@@ -153,11 +146,6 @@ const boardLevels = computed(() =>
     level: form.value.automation_policy[board] || 'supervised',
   })),
 )
-
-const actionsForBoard = (board: string) =>
-  boardActions.value
-    .filter((action) => action.board === board)
-    .map((action) => ({ label: `${action.action}（${action.kind}）`, value: action.action }))
 
 const openCreate = () => {
   editMode.value = false
@@ -269,98 +257,8 @@ const openChat = (agent: AdminAgent) => {
 
 // ---------- 定时任务 ----------
 
-const scheduleModalVisible = ref(false)
-const scheduleAgentId = ref('')
-const scheduleLoading = ref(false)
-const schedules = ref<ScheduleTask[]>([])
-const scheduleForm = ref({
-  name: '',
-  cron_expression: '',
-  board: '',
-  action: '',
-  payload: '',
-})
-
-const openSchedules = async (agent: AdminAgent) => {
-  scheduleAgentId.value = agent.id
-  scheduleForm.value = { name: '', cron_expression: '', board: '', action: '', payload: '' }
-  scheduleModalVisible.value = true
-  await loadSchedules()
-}
-
-const loadSchedules = async () => {
-  if (!scheduleAgentId.value) return
-  scheduleLoading.value = true
-  try {
-    const res = await listSchedules(scheduleAgentId.value)
-    schedules.value = res.items || []
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.agents.scheduleLoadFailed')))
-  } finally {
-    scheduleLoading.value = false
-  }
-}
-
-const scheduleBoardOptions = computed(() =>
-  boards.value.map((board) => ({ label: board, value: board })),
-)
-
-const scheduleActionOptions = computed(() => actionsForBoard(scheduleForm.value.board))
-
-const submitSchedule = async () => {
-  const formData = scheduleForm.value
-  if (!formData.name.trim() || !formData.cron_expression.trim() || !formData.board || !formData.action) {
-    Message.warning(t('admin.agents.scheduleSaveFailed'))
-    return
-  }
-  let payload: Record<string, unknown> = {}
-  if (formData.payload.trim()) {
-    try {
-      payload = JSON.parse(formData.payload.trim())
-    } catch {
-      Message.warning(t('admin.agents.schedulePayloadPlaceholder'))
-      return
-    }
-  }
-  actionLoading.value = true
-  try {
-    await createSchedule(scheduleAgentId.value, {
-      name: formData.name.trim(),
-      cron_expression: formData.cron_expression.trim(),
-      board: formData.board,
-      action: formData.action,
-      prompt: formData.name.trim(),
-      payload,
-    })
-    Message.success(t('admin.agents.scheduleCreateSuccess'))
-    scheduleForm.value = { name: '', cron_expression: '', board: '', action: '', payload: '' }
-    await loadSchedules()
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.agents.scheduleSaveFailed')))
-  } finally {
-    actionLoading.value = false
-  }
-}
-
-const handleDeleteSchedule = (task: ScheduleTask) => {
-  Modal.confirm({
-    title: t('admin.agents.scheduleDeleteTitle'),
-    content: () => h('p', t('admin.agents.scheduleDeleteDesc', { name: task.name })),
-    okText: t('common.actions.confirm'),
-    okButtonProps: { status: 'danger' },
-    cancelText: t('common.actions.cancel'),
-    onBeforeOk: async () => {
-      try {
-        await deleteSchedule(scheduleAgentId.value, task.id)
-        Message.success(t('admin.agents.scheduleDeleteSuccess'))
-        await loadSchedules()
-        return true
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.agents.scheduleLoadFailed')))
-        return false
-      }
-    },
-  })
+const openSchedules = (agent: AdminAgent) => {
+  router.push({ name: 'admin-schedules', query: { agent_id: agent.id } })
 }
 
 // ---------- 用量 ----------
@@ -618,54 +516,6 @@ onMounted(async () => {
           <a-switch v-model="form.enabled" />
         </a-form-item>
       </a-form>
-    </a-modal>
-
-    <!-- 定时任务弹窗 -->
-    <a-modal
-      v-model:visible="scheduleModalVisible"
-      :title="t('admin.agents.scheduleTitle')"
-      :footer="false"
-      :mask-closable="false"
-    >
-      <div class="mb-4 rounded border bg-gray-50 p-3">
-        <p class="mb-2 text-sm font-medium text-gray-700">{{ t('admin.agents.scheduleCreate') }}</p>
-        <a-form :model="scheduleForm" layout="vertical">
-          <a-form-item :label="t('admin.agents.scheduleName')" field="name">
-            <a-input v-model="scheduleForm.name" :placeholder="t('admin.agents.scheduleNamePlaceholder')" />
-          </a-form-item>
-          <a-form-item :label="t('admin.agents.scheduleCron')" field="cron_expression">
-            <a-input v-model="scheduleForm.cron_expression" :placeholder="t('admin.agents.scheduleCronPlaceholder')" />
-          </a-form-item>
-          <a-form-item :label="t('admin.agents.scheduleBoard')" field="board">
-            <a-select v-model="scheduleForm.board" :options="scheduleBoardOptions" :placeholder="t('admin.agents.scheduleBoard')" />
-          </a-form-item>
-          <a-form-item :label="t('admin.agents.scheduleAction')" field="action">
-            <a-select
-              v-model="scheduleForm.action"
-              :options="scheduleActionOptions"
-              :placeholder="t('admin.agents.scheduleAction')"
-              :disabled="!scheduleForm.board"
-            />
-          </a-form-item>
-          <a-form-item :label="t('admin.agents.schedulePayload')" field="payload">
-            <a-textarea v-model="scheduleForm.payload" :placeholder="t('admin.agents.schedulePayloadPlaceholder')" :auto-size="{ minRows: 2 }" />
-          </a-form-item>
-          <a-button type="primary" :loading="actionLoading" @click="submitSchedule">{{ t('admin.agents.scheduleCreate') }}</a-button>
-        </a-form>
-      </div>
-      <a-spin :loading="scheduleLoading">
-        <a-empty v-if="!schedules.length" :description="t('admin.agents.scheduleListEmpty')" />
-        <a-table v-else :data="schedules" :pagination="false" :bordered="{ wrapper: true, cell: true }" row-key="id">
-          <a-table-column title="name" data-index="name" />
-          <a-table-column title="cron" data-index="cron_expression" />
-          <a-table-column title="status" data-index="status" />
-          <a-table-column :title="t('admin.agents.actions')">
-            <template #cell="{ record }">
-              <a-button size="mini" status="danger" @click="handleDeleteSchedule(record)">{{ t('admin.agents.deleteTitle') }}</a-button>
-            </template>
-          </a-table-column>
-        </a-table>
-      </a-spin>
     </a-modal>
 
     <!-- 用量弹窗 -->
