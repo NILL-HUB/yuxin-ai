@@ -152,6 +152,103 @@ class TestRunAdminAgent:
             svc._run_admin_agent(_task(agent.id))
 
 
+class TestRunAdminAgentChat:
+    def test_dispatches_admin_agent_chat_to_chat_chain(self, monkeypatch):
+        """L2：task_type=admin_agent_chat 时调用 AdminAgentChatService.chat 并取答案。
+
+        重要：本方法**不得**再调 `check_and_record`——`AdminAgentChatService.chat`
+        内部 L113 已调用它做周期额度预检与 executions 计数，重复调用会让
+        executions 翻倍（与已修复的 token 记账断链同类缺陷）。
+        """
+        svc = _svc()
+        agent = _agent()
+        task = _task(agent.id)
+        task.task_type = "admin_agent_chat"
+        task.input_params = {}
+        task.prompt = "每天盘点工具并汇报"
+
+        def fake_query(model):
+            return MagicMock(filter=MagicMock(
+                return_value=MagicMock(one_or_none=MagicMock(return_value=agent))
+            ))
+
+        monkeypatch.setattr(svc.db.session, "query", fake_query)
+        principal = SimpleNamespace(
+            admin_user_id=uuid4(),
+            agent_id=agent.id,
+            effective_permissions=frozenset({"builtin_tool:read"}),
+        )
+        monkeypatch.setattr(
+            module, "_build_admin_agent_principal", lambda a: principal
+        )
+        gate = MagicMock()
+        monkeypatch.setattr(module, "_build_budget_gate", lambda: gate)
+
+        captured = {}
+
+        class _FakeChat:
+            def chat(self, **kwargs):
+                captured.update(kwargs)
+                yield 'event: answer\ndata:{"answer": "巡检完成"}\n\n'
+                yield "event: end\ndata:{}\n\n"
+
+        monkeypatch.setattr(
+            module, "_build_admin_agent_chat", lambda: _FakeChat()
+        )
+
+        summary = svc._run_admin_agent_chat(task)
+
+        assert captured["query"] == "每天盘点工具并汇报"
+        assert captured["agent_id"] == agent.id
+        assert captured["admin_user_id"] == principal.admin_user_id
+        assert "巡检完成" in summary
+        # 预检已由 chat 内部完成，本方法不得重复调用（否则 executions 翻倍）
+        gate.check_and_record.assert_not_called()
+
+    def test_precheck_not_duplicated_with_chat_internal(self, monkeypatch):
+        """L2 回归防护：预检只在 chat 内发生一次，本方法零调用。
+
+        若后人误在本方法补 `check_and_record`，executions 会翻倍，
+        该用例即失败，钉死「记账唯一入口是 chat」这一契约。
+        """
+        svc = _svc()
+        agent = _agent()
+        task = _task(agent.id)
+        task.task_type = "admin_agent_chat"
+        task.input_params = {}
+        task.prompt = "巡检"
+
+        monkeypatch.setattr(
+            svc.db.session, "query", lambda model: MagicMock(
+                filter=MagicMock(return_value=MagicMock(one_or_none=MagicMock(return_value=agent)))
+            )
+        )
+        principal = SimpleNamespace(
+            admin_user_id=uuid4(),
+            agent_id=agent.id,
+            effective_permissions=frozenset(),
+        )
+        monkeypatch.setattr(module, "_build_admin_agent_principal", lambda a: principal)
+        gate = MagicMock()
+        monkeypatch.setattr(module, "_build_budget_gate", lambda: gate)
+
+        calls = []
+
+        class _FakeChat:
+            def chat(self, **kwargs):
+                calls.append(kwargs)
+                yield 'event: answer\ndata:{"answer": "ok"}\n\n'
+                yield "event: end\ndata:{}\n\n"
+
+        monkeypatch.setattr(module, "_build_admin_agent_chat", lambda: _FakeChat())
+
+        svc._run_admin_agent_chat(task)
+
+        assert len(calls) == 1
+        assert gate.check_and_record.call_count == 0
+        assert gate.record_usage.call_count == 0
+
+
 class TestExecuteTaskDispatch:
     def test_admin_agent_task_routes_to_admin_branch(self, monkeypatch):
         svc = _svc()

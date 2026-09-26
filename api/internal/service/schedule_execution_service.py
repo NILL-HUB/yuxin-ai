@@ -86,6 +86,17 @@ def _build_budget_gate():
     return AdminAgentBudgetGate()
 
 
+def _build_admin_agent_chat():
+    """构造管理端 Agent 对话链（L2，测试接缝）。
+
+    与 `_build_admin_agent_execution` 的区别：这是带记忆/工具循环的多步骤
+    对话链，预算预检与 token 记账都在 `AdminAgentChatService.chat` 内部完成。
+    """
+    from internal.service.admin_agent_chat_service import AdminAgentChatService
+
+    return current_app.injector.get(AdminAgentChatService)
+
+
 @inject
 @dataclass
 class ScheduleExecutionService(BaseService):
@@ -142,6 +153,11 @@ class ScheduleExecutionService(BaseService):
             run = self._create_run(schedule_task)
             try:
                 if (
+                    schedule_task.task_type == "admin_agent_chat"
+                    and schedule_task.admin_agent_id
+                ):
+                    answer = self._run_admin_agent_chat(schedule_task)
+                elif (
                     schedule_task.task_type == "admin_agent_execution"
                     and schedule_task.admin_agent_id
                 ):
@@ -249,6 +265,58 @@ end
         execution = _build_admin_agent_execution()
         result = execution.run(principal, board=board, action=action, payload=payload)
         return json.dumps(result, ensure_ascii=False)
+
+    def _run_admin_agent_chat(self, schedule_task: ScheduleTask) -> str:
+        """以管理端 Agent 身份跑一次带记忆的多步骤对话（L2）。
+
+        与 ``_run_admin_agent`` 的区别：走 ``AdminAgentChatService.chat``，
+        具备记忆召回 / 记忆写入 / 工具循环，能推进多步骤任务；记忆主体键为
+        ``MemoryOwnerKey.for_admin(admin_user_id, agent_id=...)``，与管理员
+        自身记忆隔离（每 Agent 一份）。
+
+        **预算预检（executions 计数 + 周期额度）不在本方法做**：``chat``
+        内部已调用 ``_budget_gate().check_and_record``。本方法若再调一次，
+        executions 会翻倍（与已修复的 token 记账断链同类缺陷），故此处只
+        负责身份重算与结果提取，记账唯一入口是 ``chat``。
+        """
+        import json
+
+        from internal.model import AdminAgent
+
+        agent = (
+            self.db.session.query(AdminAgent)
+            .filter(AdminAgent.id == schedule_task.admin_agent_id)
+            .one_or_none()
+        )
+        if agent is None:
+            raise NotFoundException("管理端 Agent 不存在")
+        if not bool(getattr(agent, "enabled", True)):
+            raise NotFoundException("管理端 Agent 已停用")
+
+        principal = _build_admin_agent_principal(agent)
+        if principal is None:
+            raise NotFoundException("管理端 Agent 不可用")
+
+        service = _build_admin_agent_chat()
+        answer = ""
+        # 传 admin_permissions 用 principal.effective_permissions：它是
+        # `compute_effective_permissions(admin_permissions, granted_permissions)`
+        # 已算好的三重交集，chat 内部对同一输入再算一次交集是**幂等**的
+        # （交集运算满足幂等律 A∩B∩B = A∩B），不会二次收窄权限。
+        for frame in service.chat(
+            agent_id=agent.id,
+            admin_user_id=principal.admin_user_id,
+            admin_permissions=list(principal.effective_permissions or []),
+            query=schedule_task.prompt or "",
+            conversation_id=None,
+        ):
+            if "event: answer" in frame:
+                data_part = frame.split("data:", 1)[1] if "data:" in frame else ""
+                try:
+                    answer = str(json.loads(data_part).get("answer") or "")
+                except Exception:
+                    continue
+        return answer
 
     def _run_bound_app(self, schedule_task: ScheduleTask) -> str:
         """以任务归属用户身份按绑定应用执行，返回最终回答文本。"""
