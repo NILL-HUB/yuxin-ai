@@ -294,6 +294,7 @@ class AdminAgentService:
             "monthly_executions",
             "daily_tokens",
             "monthly_tokens",
+            "per_run_tokens",
         ):
             raw = cfg.get(key)
             if raw in (None, ""):

@@ -349,3 +349,15 @@ class TestPermissionRevocation:
 
         assert removed == 1
         assert a1.granted_permissions == []
+
+
+class TestValidateBudgetConfig:
+    def test_accepts_per_run_tokens(self):
+        result = AdminAgentService._validate_budget_config(
+            {"daily_tokens": 1000, "per_run_tokens": 500}
+        )
+        assert result == {"daily_tokens": 1000, "per_run_tokens": 500}
+
+    def test_rejects_negative_per_run_tokens(self):
+        with pytest.raises(ValueError):
+            AdminAgentService._validate_budget_config({"per_run_tokens": -1})
