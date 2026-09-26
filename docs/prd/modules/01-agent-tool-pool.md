@@ -478,6 +478,28 @@ internal_admin 子池默认只对管理员和系统内部流程开放，不参�
 > 挂在 `admin_agent` 表；塞进池只能伪造 `app` 行，正好落进用户端候选域。故预置落
 > `admin_agent`（`builtin_key` 幂等键），池继续只做用户端 App 的候选/可见性路由。
 
+> **定时唤醒与自治调度（2026-09-26 已接线）**：管理端 Agent 的**周期执行**经由统一的
+> `schedule_task` 表与 `ScheduleTaskService`（与用户端定时任务同一张表、同一 service，
+> 非平行实现）。绑定 `admin_agent_id` 的任务按 `task_type` 分两条通道：
+>
+> - `admin_agent_chat`（默认）：执行走 `AdminAgentChatService.chat`，具备记忆召回/写入与
+>   板块工具循环，能推进多步骤任务；记忆主体键为 `MemoryOwnerKey.for_admin(admin_user_id, agent_id=...)`（每 Agent 一份，与管理员自身记忆隔离）。
+> - `admin_agent_execution`（显式 `admin_agent_chat=False`）：按 `input_params` 的
+>   `{board, action, payload}` 执行单个板块动作。
+>
+> **Agent 自治能力**：`BOARD_ACTIONS` 登记了 `schedule_task` 板块（`list` / `create` / `delete`，
+> 不开 `update`），经 `build_board_tools` 为 Agent 生成 `admin_schedule_task` 工具，使其可在
+> 对话内自建/删除定时任务，构成"无人值守自拉起"闭环。安全依赖既有机制：删除走
+> `RecycleBinService`（可恢复）；"改任务"以"删旧的 + 建新的"表达（两步均在回收站覆盖内）；
+> 成本由 `AdminAgentBudgetGate` 兜底。
+>
+> **预算闸门（`admin_agent.budget_config`）**：`daily_executions` / `monthly_executions` /
+> `daily_tokens` / `monthly_tokens` 为日/月周期额度（入口 `check_and_record` 一次性校验）；
+> `per_run_tokens` 为**单次唤醒** token 硬顶，在 `AdminAgentChatService._run_tool_loop` 内
+> **逐轮累计、超顶即中断**（抛 `FailException`），并把剩余额度注入 system prompt 引导 Agent
+> 主动安排下次唤醒，避免空烧。token 用量经 `usage_state`（调用局部，不挂单例 self）累计后
+> 由 `record_usage` 记账（`executions_delta=0`，不与入口的 executions 计数重复）。
+
 ### 9.3 Agent 来源
 
 Agent 池第一阶段复用现有 App：

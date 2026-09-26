@@ -327,6 +327,8 @@ admin 分支）。`budget_config` 未配置（空 dict）→ 恒放行。
 
 ### `POST /admin/agents/<agent_id>/schedules`
 
+> 兼容别名：能力已统一到 `POST /admin/schedule-tasks`（支持 `admin_agent_id`，前端 Agent 页已跳转该页）。本端点保留供旧客户端过渡，内部仍调同一 `ScheduleTaskService`；收编计划：待旧客户端下线后移除。
+
 权限：`agent_pool:manage`
 
 **请求体**
@@ -347,9 +349,13 @@ admin 分支）。`budget_config` 未配置（空 dict）→ 恒放行。
 
 ### `GET /admin/agents/<agent_id>/schedules`
 
+> 兼容别名：能力已统一到 `GET /admin/schedule-tasks?agent_id=`（支持按 Agent 过滤）。本端点保留供旧客户端过渡。
+
 权限：`agent_pool:read` — **响应 `data`**：`{ "items": [...], "total": int }`。
 
 ### `DELETE /admin/agents/<agent_id>/schedules/<task_id>`
+
+> 兼容别名：能力已统一到 `DELETE /admin/schedule-tasks/<task_id>`。本端点保留供旧客户端过渡。
 
 权限：`agent_pool:manage` — 删除定时任务。
 
