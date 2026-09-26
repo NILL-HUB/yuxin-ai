@@ -150,7 +150,7 @@ if schedule_task.task_type == "admin_agent_chat" and schedule_task.admin_agent_i
      迭代其 SSE 生成器至自然结束，取最终 `answer` 帧（或按 `_run_assistant_chat` L327-334 的方式从会话最新消息读取）；
    - **记忆隔离**：`chat` 内部经 `MemoryOwnerKey.for_admin(admin_user_id, agent_id=...)` 构造主体键
      （`admin_memory_recall.py` L57），为「每 Agent 一份记忆」，**不与管理员自身记忆混用**；
-   - 会话归属：复用 `_resolve_conversation`（chat 内部自动建/取），同 Agent 的多次唤醒共享同一会话，形成连续上下文。
+   - 会话归属：`_run_admin_agent_chat` 传 `conversation_id=None`，`chat` 内部 `_resolve_conversation` 为**每次唤醒新建一个会话**（不跨唤醒共享）。连续性由**记忆召回/写入**承担：每次唤醒经 `MemoryOwnerKey.for_admin(admin_user_id, agent_id=...)` 召回该 Agent 的历史记忆，执行后再写入新记忆。**不共享会话是刻意的实现取舍**——同一长生命周期会话会被多次唤醒的历史不断撑大，最终超上下文窗口；每次新建会话 + 记忆延续，既保持连续认知又避免上下文膨胀。
 
 **验收**：新建 `admin_agent_chat` 任务并 run-now，确认 ① 执行后 `admin_agent_conversation` 有消息落库；
 ② 第二次唤醒能召回第一次写入的记忆（`recall_admin_agent_memory_for_chat` 返回非空）；

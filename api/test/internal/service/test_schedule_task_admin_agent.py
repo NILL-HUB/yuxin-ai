@@ -157,6 +157,59 @@ class TestListTasksAgentFilter:
         assert "admin_agent_id" in targets
 
 
+class TestUpdateAdminAgentTask:
+    def test_update_rejects_app_and_agent_together(self):
+        """update_task 必须与 create_task 对称：不允许同时绑定应用与管理员 Agent。"""
+        svc = ScheduleTaskService.__new__(ScheduleTaskService)
+        task = SimpleNamespace(
+            id=uuid4(),
+            account_id=uuid4(),
+            owner_type="admin",
+            trigger_type="cron",
+            cron_expression="0 8 * * *",
+        )
+        svc.get_task = lambda task_id, account, owner_type="user": task
+        svc._validate_bound_app = lambda app_id, account_id, owner_type: app_id
+        svc._validate_admin_agent_binding = lambda agent_id, admin_user_id: agent_id
+
+        with pytest.raises(FailException, match="不能同时绑定应用"):
+            svc.update_task(
+                task.id,
+                None,
+                owner_type="admin",
+                app_id=uuid4(),
+                admin_agent_id=uuid4(),
+                admin_user_id=uuid4(),
+            )
+
+    def test_update_agent_only_sets_chat_type(self):
+        """仅传 admin_agent_id 时置 admin_agent_chat 并写绑定。"""
+        svc = ScheduleTaskService.__new__(ScheduleTaskService)
+        task = SimpleNamespace(
+            id=uuid4(),
+            account_id=uuid4(),
+            owner_type="admin",
+            trigger_type="cron",
+            cron_expression="0 8 * * *",
+        )
+        captured = {}
+        svc.get_task = lambda task_id, account, owner_type="user": task
+        svc._validate_admin_agent_binding = lambda agent_id, admin_user_id: agent_id
+        svc.update = lambda t, **kwargs: captured.update(kwargs)
+
+        agent_id = uuid4()
+        svc.update_task(
+            task.id,
+            None,
+            owner_type="admin",
+            admin_agent_id=agent_id,
+            admin_user_id=uuid4(),
+        )
+
+        assert captured["admin_agent_id"] == agent_id
+        assert captured["task_type"] == "admin_agent_chat"
+
+
 def test_create_task_with_admin_agent_defaults_to_chat_type():
     """L2：绑定 admin agent 的新任务默认 admin_agent_chat（带记忆多步骤）。"""
     from internal.service.schedule_task_service import (

@@ -447,6 +447,11 @@ class ScheduleTaskService(BaseService):
             updates["prompt"] = prompt
         if description is not None:
             updates["description"] = description
+        if app_id is not None and admin_agent_id is not None:
+            # 与 create_task 对称：绑定应用与绑定管理端 Agent 互斥。
+            # 若缺此校验，两个分支会相继命中，最终落出「同时绑定 app 与
+            # admin_agent」的非法组合（task_type 被后者覆盖），破坏数据不变式。
+            raise FailException("绑定管理端 Agent 的任务不能同时绑定应用")
         if app_id is not None:
             updates["app_id"] = self._validate_bound_app(app_id, task.account_id, owner_type)
             updates["task_type"] = TASK_TYPE_APP_EXECUTION
@@ -454,6 +459,8 @@ class ScheduleTaskService(BaseService):
             updates["admin_agent_id"] = self._validate_admin_agent_binding(
                 admin_agent_id, admin_user_id
             )
+            # 绑定 Agent 时清空 app 绑定，保持与 create_task 同一不变式
+            updates["app_id"] = None
             updates["task_type"] = TASK_TYPE_ADMIN_AGENT_CHAT
         if task_type is not None and task_type in TASK_TYPES:
             updates["task_type"] = task_type
