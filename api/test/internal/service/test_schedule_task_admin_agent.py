@@ -50,6 +50,7 @@ class TestCreateAdminAgentTask:
             owner_type="admin",
             admin_agent_id=agent_id,
             admin_user_id=admin_user_id,
+            admin_agent_chat=False,
             input_params={"board": "builtin_tool", "action": "list", "payload": {}},
         )
         assert created["owner_type"] == "admin"
@@ -154,3 +155,40 @@ class TestListTasksAgentFilter:
         ]
         assert "owner_type" in targets
         assert "admin_agent_id" in targets
+
+
+def test_create_task_with_admin_agent_defaults_to_chat_type():
+    """L2：绑定 admin agent 的新任务默认 admin_agent_chat（带记忆多步骤）。"""
+    from internal.service.schedule_task_service import (
+        TASK_TYPE_ADMIN_AGENT_CHAT,
+        ScheduleTaskService,
+    )
+
+    svc = ScheduleTaskService.__new__(ScheduleTaskService)
+    captured = {}
+
+    def _create(model, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(id=uuid4(), **kwargs)
+
+    svc.create = _create
+    svc.validate_cron = lambda expr: None
+    svc._guess_humanized = lambda expr: expr
+    svc.compute_task_next_run = lambda *a, **k: None
+    svc._validate_admin_agent_binding = lambda agent_id, admin_user_id: agent_id
+    svc._get_platform_account = lambda: SimpleNamespace(id=uuid4())
+
+    agent_id = uuid4()
+    svc.create_task(
+        account=None,
+        name="巡检",
+        prompt="每天盘点",
+        cron_expression="0 9 * * *",
+        owner_type="admin",
+        admin_agent_id=agent_id,
+        admin_user_id=uuid4(),
+        admin_agent_chat=True,
+    )
+
+    assert captured["task_type"] == TASK_TYPE_ADMIN_AGENT_CHAT
+    assert captured["admin_agent_id"] == agent_id

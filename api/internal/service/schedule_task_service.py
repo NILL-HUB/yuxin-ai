@@ -41,7 +41,14 @@ ONCE_TRIGGER_PAST_TOLERANCE_SECONDS = 60
 TASK_TYPE_APP_EXECUTION = "app_execution"
 TASK_TYPE_ASSISTANT_CHAT = "assistant_chat"
 TASK_TYPE_ADMIN_AGENT_EXECUTION = "admin_agent_execution"
-TASK_TYPES = (TASK_TYPE_APP_EXECUTION, TASK_TYPE_ASSISTANT_CHAT, TASK_TYPE_ADMIN_AGENT_EXECUTION)
+# L2：绑定 admin agent 时的带记忆多步骤对话类型（走 AdminAgentChatService.chat）
+TASK_TYPE_ADMIN_AGENT_CHAT = "admin_agent_chat"
+TASK_TYPES = (
+    TASK_TYPE_APP_EXECUTION,
+    TASK_TYPE_ASSISTANT_CHAT,
+    TASK_TYPE_ADMIN_AGENT_EXECUTION,
+    TASK_TYPE_ADMIN_AGENT_CHAT,
+)
 
 # 间隔单位
 INTERVAL_UNIT_MONTH = "month"
@@ -336,6 +343,7 @@ class ScheduleTaskService(BaseService):
         run_at=None,
         admin_agent_id=None,
         admin_user_id=None,
+        admin_agent_chat: bool = True,
     ) -> ScheduleTask:
         trigger_type = trigger_type or TRIGGER_TYPE_CRON
         if trigger_type not in TRIGGER_TYPES:
@@ -370,7 +378,13 @@ class ScheduleTaskService(BaseService):
             normalized_admin_agent_id = self._validate_admin_agent_binding(
                 admin_agent_id, admin_user_id
             )
-            normalized_task_type = TASK_TYPE_ADMIN_AGENT_EXECUTION
+            # L2：默认走带记忆的 chat 链；显式 admin_agent_chat=False 时保留
+            # 既有单动作语义（存量任务与需要精确指定 board/action 的场景）。
+            normalized_task_type = (
+                TASK_TYPE_ADMIN_AGENT_CHAT
+                if admin_agent_chat
+                else TASK_TYPE_ADMIN_AGENT_EXECUTION
+            )
         elif app_id:
             normalized_app_id = self._validate_bound_app(app_id, account_id, owner_type)
             normalized_task_type = task_type or TASK_TYPE_APP_EXECUTION
