@@ -56,16 +56,16 @@ class _FakeScheduleTaskService:
             next_run_at=None,
         )
 
-    def list_tasks(self, account, page, page_size, owner_type="user"):
-        self.calls.append(("list", page))
+    def list_tasks(self, account, page, page_size, owner_type="user", agent_id=None):
+        self.calls.append(("list", page, owner_type, agent_id))
         return [self._task()], 1
 
     def create_task(self, account, name, prompt, cron_expression, **kwargs):
-        self.calls.append(("create", name))
+        self.calls.append(("create", name, kwargs))
         return self._task()
 
     def update_task(self, task_id, account, **kwargs):
-        self.calls.append(("update", task_id))
+        self.calls.append(("update", task_id, kwargs))
         return self._task(task_id)
 
     def delete_task(self, task_id, account, owner_type="user", **kwargs):
@@ -148,7 +148,23 @@ class TestAdminScheduleTask:
         assert resp.status_code == 200
         assert payload["code"] == "success"
         assert payload["data"]["total"] == 1
-        assert task_service.calls[0] == ("list", 2)
+        assert task_service.calls[0] == ("list", 2, "admin", None)
+
+    def test_list_tasks_filters_by_agent_id(self, monkeypatch):
+        """L5：平台级 list 支持 agent_id 过滤（Agent 页跳转按 Agent 维度看任务）。"""
+        task_service, _ = self._setup(monkeypatch)
+        agent_id = str(uuid4())
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(
+                    f"/admin/schedule-tasks?agent_id={agent_id}"
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert task_service.calls[0] == ("list", 1, "admin", agent_id)
 
     def test_create_task(self, monkeypatch):
         task_service, _ = self._setup(monkeypatch)
@@ -167,8 +183,54 @@ class TestAdminScheduleTask:
 
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
-        assert task_service.calls[0] == ("create", "任务A")
+        assert task_service.calls[0][:2] == ("create", "任务A")
         assert payload["data"]["name"] == "定时任务"
+
+    def test_create_task_passes_admin_agent_id(self, monkeypatch):
+        """L5：平台级 create 透传 admin_agent_id（统一入口的关键）。"""
+        task_service, _ = self._setup(monkeypatch)
+        agent_id = str(uuid4())
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/schedule-tasks",
+                    json={
+                        "name": "Agent 巡检",
+                        "prompt": "每天盘点",
+                        "cron_expression": "0 9 * * *",
+                        "admin_agent_id": agent_id,
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        _, _, kwargs = task_service.calls[0]
+        assert str(kwargs["admin_agent_id"]) == agent_id
+        assert kwargs["admin_user_id"] is not None
+
+    def test_create_task_without_admin_agent_id_passes_none(self, monkeypatch):
+        """未绑定 Agent 时不解析管理员身份，admin_user_id 为 None。"""
+        task_service, _ = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/schedule-tasks",
+                    json={
+                        "name": "任务A",
+                        "prompt": "需求",
+                        "cron_expression": "0 8 * * *",
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        _, _, kwargs = task_service.calls[0]
+        assert kwargs["admin_agent_id"] is None
+        assert kwargs["admin_user_id"] is None
 
     def test_create_task_requires_name(self, monkeypatch):
         self._setup(monkeypatch)
@@ -277,7 +339,27 @@ class TestAdminScheduleTask:
 
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
-        assert task_service.calls[0] == ("update", task_id)
+        assert task_service.calls[0][:2] == ("update", task_id)
+
+    def test_update_task_passes_admin_agent_id(self, monkeypatch):
+        """L5：平台级 update 透传 admin_agent_id（把存量任务改绑到 Agent）。"""
+        task_service, _ = self._setup(monkeypatch)
+        task_id = uuid4()
+        agent_id = str(uuid4())
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/schedule-tasks/{task_id}",
+                    json={"admin_agent_id": agent_id},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        _, _, kwargs = task_service.calls[0]
+        assert str(kwargs["admin_agent_id"]) == agent_id
+        assert kwargs["admin_user_id"] is not None
 
     def test_delete_task(self, monkeypatch):
         task_service, _ = self._setup(monkeypatch)

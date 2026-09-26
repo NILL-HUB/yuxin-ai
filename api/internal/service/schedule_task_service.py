@@ -436,6 +436,8 @@ class ScheduleTaskService(BaseService):
         task_type=None,
         input_params=None,
         run_at=None,
+        admin_agent_id=None,
+        admin_user_id=None,
     ) -> ScheduleTask:
         task = self.get_task(task_id, account, owner_type=owner_type)
         updates = {}
@@ -448,6 +450,11 @@ class ScheduleTaskService(BaseService):
         if app_id is not None:
             updates["app_id"] = self._validate_bound_app(app_id, task.account_id, owner_type)
             updates["task_type"] = TASK_TYPE_APP_EXECUTION
+        if admin_agent_id is not None:
+            updates["admin_agent_id"] = self._validate_admin_agent_binding(
+                admin_agent_id, admin_user_id
+            )
+            updates["task_type"] = TASK_TYPE_ADMIN_AGENT_CHAT
         if task_type is not None and task_type in TASK_TYPES:
             updates["task_type"] = task_type
         if input_params is not None:

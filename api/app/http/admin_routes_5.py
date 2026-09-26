@@ -47,12 +47,14 @@ def register_routes(quart_app):
 
         page = int(request.args.get("page", 1))
         page_size = int(request.args.get("page_size", 20))
+        agent_id = request.args.get("agent_id") or None
         tasks, total = await a._to_thread(
             a._get_service(ScheduleTaskService).list_tasks,
             None,
             page,
             page_size,
             owner_type="admin",
+            agent_id=agent_id,
         )
         from internal.schema.schedule_task_schema import ScheduleTaskResp
 
@@ -90,6 +92,13 @@ def register_routes(quart_app):
                 code="validate_error", message="定时表达式不能为空",
                 data={"cron_expression": ["定时表达式不能为空"]}, status=400,
             )
+        admin_agent_id = body.get("admin_agent_id") or None
+        admin_user_id = None
+        if admin_agent_id:
+            admin, err = await a._resolve_admin_operator()
+            if err is not None:
+                return err
+            admin_user_id = admin.id
         try:
             task = await a._to_thread(
                 a._get_service(ScheduleTaskService).create_task,
@@ -106,6 +115,8 @@ def register_routes(quart_app):
                 app_id=body.get("app_id") or None,
                 task_type=body.get("task_type") or None,
                 input_params=body.get("input_params") or None,
+                admin_agent_id=admin_agent_id,
+                admin_user_id=admin_user_id,
             )
         except Exception as exc:
             return a._json_resp(
@@ -231,6 +242,13 @@ def register_routes(quart_app):
         from app.http import asgi_app as a
 
         body = await request.get_json(force=True, silent=True) or {}
+        admin_agent_id = body.get("admin_agent_id") or None
+        admin_user_id = None
+        if admin_agent_id:
+            admin, err = await a._resolve_admin_operator()
+            if err is not None:
+                return err
+            admin_user_id = admin.id
         try:
             await a._to_thread(
                 a._get_service(ScheduleTaskService).update_task,
@@ -249,6 +267,8 @@ def register_routes(quart_app):
                 app_id=body.get("app_id"),
                 task_type=body.get("task_type"),
                 input_params=body.get("input_params"),
+                admin_agent_id=admin_agent_id,
+                admin_user_id=admin_user_id,
             )
         except Exception as exc:
             return a._json_resp(
