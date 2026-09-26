@@ -301,9 +301,20 @@ admin 分支）。`budget_config` 未配置（空 dict）→ 恒放行。
 ## 8. 定时任务（admin_agent 通道）
 
 管理端 Agent 的周期性自主执行：任务绑定 `admin_agent_id`（`ScheduleTask.admin_agent_id`，
-`owner_type='admin'`），执行时按 `input_params` 的 `{board, action, payload}` 调
-`AdminAgentExecutionService.run`（自动按 `automation_policy` 分流），结果落
-`schedule_task_run`，审计沿用 `actor_type=agent` 链路。
+`owner_type='admin'`），结果落 `schedule_task_run`，审计沿用 `actor_type=agent` 链路。
+存在两条执行通道，由 `task_type` 区分：
+
+- **`admin_agent_chat`（默认，L2 对话链）**：`create_task` 在仅绑定 `admin_agent_id`
+  且未显式 `admin_agent_chat=False` 时生成的默认类型。执行时走
+  `AdminAgentChatService.chat`（带记忆召回/写入、板块工具循环），失败一律以
+  `event: error` 帧结束；`_run_admin_agent_chat` 解析到 error 帧即抛 `FailException`，
+  `execute_task` 据此记 `success=False`（不会静默成成功空结果）。此通道忽略
+  `input_params` 的 `board`/`action`。
+- **`admin_agent_execution`（显式单动作）**：由 `admin_agent_chat=False` 显式指定，
+  执行时按 `input_params` 的 `{board, action, payload}` 调
+  `AdminAgentExecutionService.run`（自动按 `automation_policy` 分流）。B 通道的
+  `POST /admin/agents/<agent_id>/schedules` 即固定走此语义（路由内显式传
+  `admin_agent_chat=False`）。
 
 ### `POST /admin/agents/<agent_id>/schedules`
 

@@ -197,6 +197,30 @@ class TestCreateScheduleEndpoint:
             "payload": {"scope": "prod"},
         }
 
+    def test_create_forces_single_action_semantics(self, monkeypatch):
+        """B 通道（单动作编排）必须显式传 admin_agent_chat=False。
+
+        `ScheduleTaskService.create_task` 的 `admin_agent_chat` 默认值为 True
+        （L2 对话链）。B 通道的语义是「按精确 board/action 单动作执行」，若
+        沿用默认值 True，会被改写成 admin_agent_chat 类型并**忽略**
+        board/action，请求体里的 board/action 形同虚设。回归防护：本路由必须
+        显式传 admin_agent_chat=False，保持 task_type=admin_agent_execution。
+        """
+        _, sched_svc = _wire(monkeypatch, uuid4(), ["agent_pool:manage"])
+        resp = _post(
+            f"/admin/agents/{AGENT_ID}/schedules",
+            {
+                "name": "每日巡检",
+                "cron_expression": "0 0 7 * * *",
+                "board": "builtin_tool",
+                "action": "list",
+            },
+        )
+        assert resp.status_code == 200
+        created = sched_svc.created[0]
+        assert created["admin_agent_chat"] is False
+        assert created["task_type"] == "admin_agent_execution"
+
     def test_unknown_agent_returns_404(self, monkeypatch):
         _, sched_svc = _wire(
             monkeypatch, uuid4(), ["agent_pool:manage"], agent_exists=False

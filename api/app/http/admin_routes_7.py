@@ -627,6 +627,11 @@ def register_routes(quart_app):
                 owner_type="admin",
                 admin_agent_id=agent_id,
                 admin_user_id=admin_user_id,
+                # B 通道语义是「按精确 board/action 单动作执行」：`create_task`
+                # 的 `admin_agent_chat` 默认值为 True（L2 对话链），若沿用默认值，
+                # 任务会被改写成 admin_agent_chat 类型并忽略 board/action，请求体
+                # 里的 board/action 形同虚设。显式关闭以保持单动作语义。
+                admin_agent_chat=False,
                 input_params={
                     "board": board,
                     "action": action,

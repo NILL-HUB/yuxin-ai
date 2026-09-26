@@ -248,6 +248,86 @@ class TestRunAdminAgentChat:
         assert gate.check_and_record.call_count == 0
         assert gate.record_usage.call_count == 0
 
+    def test_error_frame_raises_fail_exception(self, monkeypatch):
+        """L2 缺陷1：chat 以 error 帧结束（预算超限/对话失败）时必须上抛异常。
+
+        `AdminAgentChatService.chat` 的契约是「所有可预期失败都以
+        `event: error` 帧结束且不上抛」（见 admin_agent_chat_service.chat
+        的 except 分支：FailException / CustomException / PermissionError /
+        AdminAgentBudgetExceeded / Exception 一律转 error 帧后 return）。
+        本方法若只提取 answer 帧，会把失败静默转成 answer=""，使
+        `execute_task` 记为 success=True 的空结果。回归防护：出现 error 帧
+        必须 raise FailException，并携带帧内 error 文本。
+        """
+        svc = _svc()
+        agent = _agent()
+        task = _task(agent.id)
+        task.task_type = "admin_agent_chat"
+        task.input_params = {}
+        task.prompt = "每天盘点工具并汇报"
+
+        monkeypatch.setattr(
+            svc.db.session,
+            "query",
+            lambda model: MagicMock(
+                filter=MagicMock(return_value=MagicMock(one_or_none=MagicMock(return_value=agent)))
+            ),
+        )
+        principal = SimpleNamespace(
+            admin_user_id=uuid4(),
+            agent_id=agent.id,
+            effective_permissions=frozenset(),
+        )
+        monkeypatch.setattr(module, "_build_admin_agent_principal", lambda a: principal)
+
+        class _FakeChat:
+            def chat(self, **kwargs):
+                yield (
+                    'event: error\ndata:{"error": "预算闸门: daily_executions 周期额度已用完"}\n\n'
+                )
+
+        monkeypatch.setattr(module, "_build_admin_agent_chat", lambda: _FakeChat())
+
+        with pytest.raises(FailException, match="预算闸门"):
+            svc._run_admin_agent_chat(task)
+
+    def test_error_frame_not_swallowed_as_empty_answer(self, monkeypatch):
+        """L2 缺陷1 回归：error 帧绝不能被降级为 answer=""（成功空结果）。
+
+        直接断言「未抛异常」与「返回空串」这一旧行为已不存在——否则
+        `execute_task` 会记 success=True。此用例与上一个互补：上一个验证
+        抛错类型与文本，此处钉死「不得静默返回」。
+        """
+        svc = _svc()
+        agent = _agent()
+        task = _task(agent.id)
+        task.task_type = "admin_agent_chat"
+        task.input_params = {}
+        task.prompt = "巡检"
+
+        monkeypatch.setattr(
+            svc.db.session,
+            "query",
+            lambda model: MagicMock(
+                filter=MagicMock(return_value=MagicMock(one_or_none=MagicMock(return_value=agent)))
+            ),
+        )
+        principal = SimpleNamespace(
+            admin_user_id=uuid4(),
+            agent_id=agent.id,
+            effective_permissions=frozenset(),
+        )
+        monkeypatch.setattr(module, "_build_admin_agent_principal", lambda a: principal)
+
+        class _FakeChat:
+            def chat(self, **kwargs):
+                yield 'event: error\ndata:{"error": "对话失败：模型不可用"}\n\n'
+
+        monkeypatch.setattr(module, "_build_admin_agent_chat", lambda: _FakeChat())
+
+        with pytest.raises(FailException):
+            svc._run_admin_agent_chat(task)
+
 
 class TestExecuteTaskDispatch:
     def test_admin_agent_task_routes_to_admin_branch(self, monkeypatch):

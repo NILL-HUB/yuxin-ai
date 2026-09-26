@@ -278,6 +278,13 @@ end
         内部已调用 ``_budget_gate().check_and_record``。本方法若再调一次，
         executions 会翻倍（与已修复的 token 记账断链同类缺陷），故此处只
         负责身份重算与结果提取，记账唯一入口是 ``chat``。
+
+        **失败必须转异常**：``chat`` 的契约是「所有可预期失败（预算超限
+        ``AdminAgentBudgetExceeded``、身份/会话错误、工具循环不收敛、模型
+        调用失败等）都以 ``event: error`` 帧结束且不上抛」。本方法若不解析
+        error 帧，失败会被静默转成 ``answer=""``，``execute_task`` 随即记为
+        ``success=True`` 的空结果，管理员无从得知 Agent 从未真正干活。故出现
+        error 帧时抛 ``FailException``，由 ``execute_task`` 记为失败。
         """
         import json
 
@@ -299,6 +306,7 @@ end
 
         service = _build_admin_agent_chat()
         answer = ""
+        error_text = ""
         # 传 admin_permissions 用 principal.effective_permissions：它是
         # `compute_effective_permissions(admin_permissions, granted_permissions)`
         # 已算好的三重交集，chat 内部对同一输入再算一次交集是**幂等**的
@@ -316,6 +324,14 @@ end
                     answer = str(json.loads(data_part).get("answer") or "")
                 except Exception:
                     continue
+            elif "event: error" in frame:
+                data_part = frame.split("data:", 1)[1] if "data:" in frame else ""
+                try:
+                    error_text = str(json.loads(data_part).get("error") or "")
+                except Exception:
+                    error_text = data_part.strip()
+        if error_text:
+            raise FailException(error_text)
         return answer
 
     def _run_bound_app(self, schedule_task: ScheduleTask) -> str:
