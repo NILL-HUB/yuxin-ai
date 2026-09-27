@@ -176,6 +176,7 @@ export default  {
           all: '全部',
           routing: '任务路由',
           agent: 'Agent 身份',
+          admin_agent: '管理端 Agent',
           assistant: '首页助手',
           memory: '记忆与摘要',
           general: '通用',

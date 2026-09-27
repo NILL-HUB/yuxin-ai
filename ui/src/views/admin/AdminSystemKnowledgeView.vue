@@ -659,6 +659,7 @@ const promptCategoryOptions = computed(() => [
   { value: '', label: t('admin.systemKnowledge.prompt.categories.all') },
   { value: 'routing', label: t('admin.systemKnowledge.prompt.categories.routing') },
   { value: 'agent', label: t('admin.systemKnowledge.prompt.categories.agent') },
+  { value: 'admin_agent', label: t('admin.systemKnowledge.prompt.categories.admin_agent') },
   { value: 'assistant', label: t('admin.systemKnowledge.prompt.categories.assistant') },
   { value: 'memory', label: t('admin.systemKnowledge.prompt.categories.memory') },
   { value: 'general', label: t('admin.systemKnowledge.prompt.categories.general') },

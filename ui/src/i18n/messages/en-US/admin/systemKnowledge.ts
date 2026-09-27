@@ -181,6 +181,7 @@ export default  {
           all: 'All',
           routing: 'Task Routing',
           agent: 'Agent Identity',
+          admin_agent: 'Admin Agent',
           assistant: 'Assistant',
           memory: 'Memory & Summary',
           general: 'General',
