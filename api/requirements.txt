@@ -229,6 +229,6 @@ pandas
 python-docx
 python-pptx
 networkx
-mcp>=2.0.0
+mcp>=2.0.0,<3
 croniter>=2.0.0
 yt-dlp==2026.8.19
