@@ -1,6 +1,6 @@
 # Scrapling 集成设计（网页抓取能力接入）
 
-> 状态：待评审
+> 状态：已落地（2026-09-27 实现并归档；本文档为历史设计快照）
 > 背景：GitHub 项目 [D4Vinci/Scrapling](https://github.com/D4Vinci/Scrapling)（83k star，自适应 Web 抓取框架）需接入本平台。它不是框架级改造项，而是一类可被 Agent 调用的**抓取能力**。
 
 ## 1. 结论先行
