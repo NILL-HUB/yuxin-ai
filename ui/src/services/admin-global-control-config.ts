@@ -41,6 +41,12 @@ export interface ModelKeyPoolConfig {
   cooldown_seconds: number
 }
 
+/** 路由决策置信度门控配置（0.0 表示不门控） */
+export interface RoutingConfidenceConfig {
+  task_classification_min_confidence: number
+  intent_recognition_min_confidence: number
+}
+
 export interface GlobalControlConfigs {
   runtime_fallback: RuntimeFallbackConfig
   media_fetch: MediaFetchConfig
@@ -49,6 +55,7 @@ export interface GlobalControlConfigs {
   image_request_policy: ImageRequestPolicyConfig
   vision_fallback: VisionFallbackConfig
   model_key_pool: ModelKeyPoolConfig
+  routing_confidence: RoutingConfidenceConfig
 }
 
 export const getGlobalControlConfigs = async (): Promise<GlobalControlConfigs> => {

@@ -8,6 +8,7 @@ admin「系统配置 → 全局控制配置」页面的数据源，承载系统�
 - ``image_request_policy``：图片请求策略（strict / auto_upgrade）
 - ``vision_fallback``：视觉兜底模型（provider / model）
 - ``model_key_pool``：模型 Key 池熔断阈值（failure_threshold）与冷却恢复秒数（cooldown_seconds）
+- ``routing_confidence``：路由决策置信度门控阈值（阈值 ≤ 0 表示不门控）
 
 与 desktop_client_config（桌面客户端连接）同款单行模式；字段白名单校验，
 未在默认配置中登记的 key 不入库。
@@ -30,6 +31,12 @@ DEFAULT_CONFIGS: dict[str, dict] = {
     "image_request_policy": {"policy": "strict"},
     "vision_fallback": {"provider": "", "model": ""},
     "model_key_pool": {"failure_threshold": 3, "cooldown_seconds": 300},
+    # 路由决策置信度门控：LLM 路由/分类结果置信度低于阈值时回退保守路径。
+    # 默认 0.0 表示不门控（保持既有行为），由管理员按模型置信度分布调高后生效。
+    "routing_confidence": {
+        "task_classification_min_confidence": 0.0,
+        "intent_recognition_min_confidence": 0.0,
+    },
 }
 
 # 各 section 字段类型约束（admin 更新时校验）
@@ -41,6 +48,18 @@ _SECTION_FIELD_TYPES: dict[str, dict[str, type]] = {
     "image_request_policy": {"policy": str},
     "vision_fallback": {"provider": str, "model": str},
     "model_key_pool": {"failure_threshold": int, "cooldown_seconds": int},
+    "routing_confidence": {
+        "task_classification_min_confidence": float,
+        "intent_recognition_min_confidence": float,
+    },
+}
+
+# 取值须落在 [0, 1] 区间的字段（浮点置信度阈值）
+_UNIT_INTERVAL_FIELDS: dict[str, tuple[str, ...]] = {
+    "routing_confidence": (
+        "task_classification_min_confidence",
+        "intent_recognition_min_confidence",
+    ),
 }
 
 SUPPORTED_SECTIONS = frozenset(DEFAULT_CONFIGS)
@@ -104,6 +123,11 @@ class GlobalControlConfigService:
                 if not isinstance(value, bool):
                     raise ValueError(f"{key} 必须是布尔值")
                 cfg[key] = value
+            elif expected is float:
+                # 先排除 bool（bool 是 int 的子类），仅接受真正的数值
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"{key} 必须是数字")
+                cfg[key] = float(value)
             elif expected is int:
                 if isinstance(value, bool) or not isinstance(value, int):
                     raise ValueError(f"{key} 必须是整数")
@@ -117,6 +141,10 @@ class GlobalControlConfigService:
 
         if section == "image_request_policy" and cfg["policy"] not in _POLICY_OPTIONS:
             raise ValueError(f"图像请求策略仅支持: {'/'.join(sorted(_POLICY_OPTIONS))}")
+
+        for key in _UNIT_INTERVAL_FIELDS.get(section, ()):
+            if not 0.0 <= cfg[key] <= 1.0:
+                raise ValueError(f"{key} 必须在 0 到 1 之间")
 
         row = self._row()
         all_configs = dict(row.configs or {})

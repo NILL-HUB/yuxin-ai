@@ -46,6 +46,49 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "fallback_tier": "3",  # 指挥官需要强模型，默认档位 3
         "billable": False,     # 系统治理功能，系统承担成本（平台路由决策，用户不直接受益）
     },
+    # ---- 旧编排链路（Orchestrator）的三个路由决策点 ----
+    # 迁移 m8b9c0d1e2f3 曾以「指挥官已完全替代 orchestrator」为由删除这三条记录，
+    # 但该理由不成立：home_service（首页，与 ENABLE_CONDUCTOR 无关）与
+    # orchestrator_service（ENABLE_CONDUCTOR=false 时）仍会实际调用它们。
+    # 记录缺失时 is_feature_enabled 返回 True、tier 回落默认档，导致静默降级
+    # 且管理员在 /admin/public-ai-features 看不到、绑不了模型。此处显式登记以恢复
+    # admin 可配；fallback_tier 取当前隐式生效的默认档 "2"，保证行为不变。
+    {
+        "feature_key": "task_classification",
+        "feature_name": "任务分类",
+        "feature_category": "routing",
+        "feature_description": "旧 Orchestrator 的任务意图/复杂度/执行模式分类",
+        "model_type": "chat",
+        "fallback_tier": "2",
+        "billable": False,     # 平台路由决策，用户不直接受益
+    },
+    {
+        "feature_key": "pool_intent_resolution",
+        "feature_name": "子池匹配",
+        "feature_category": "routing",
+        "feature_description": "按语义把用户意图匹配到 Agent 子池（首页与旧 Orchestrator 共用）",
+        "model_type": "chat",
+        "fallback_tier": "2",
+        "billable": False,
+    },
+    {
+        "feature_key": "tool_selection",
+        "feature_name": "工具选择",
+        "feature_category": "routing",
+        "feature_description": "按查询语义选择最相关的 builtin 工具（首页与旧 Orchestrator 共用）",
+        "model_type": "chat",
+        "fallback_tier": "2",
+        "billable": False,
+    },
+    {
+        "feature_key": "public_agent_router",
+        "feature_name": "公共 Agent 路由裁决",
+        "feature_category": "routing",
+        "feature_description": "在召回的公共 Agent 候选中做二次相关性裁决，决定委派哪些 Agent",
+        "model_type": "chat",
+        "fallback_tier": "2",
+        "billable": False,     # 平台路由决策，用户不直接受益
+    },
     {
         "feature_key": "schedule_intent_parser",
         "feature_name": "定时任务配置解析",

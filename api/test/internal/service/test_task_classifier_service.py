@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel
+from internal.service.global_control_config_service import GlobalControlConfigService
 from internal.service.memory.llm_activity_probe import LLMActivityProbe
 from internal.service.task_classifier_service import (
     TaskClassificationResult,
@@ -170,6 +171,80 @@ class TestTaskClassifierConfidence:
         service = _build_service()
         decision = service.classify("在吗")
         assert "0.00" in decision.reason
+
+
+class TestTaskClassifierConfidenceGate:
+    """置信度门控：LLM 结果置信度低于阈值时回退关键词判定。
+
+    阈值来自 admin「全局控制配置」section ``routing_confidence``（默认 0.0 = 不门控）；
+    此处直接打桩 ``_min_llm_confidence`` 隔离门控逻辑，配置读写由
+    ``test_global_control_config_service.py`` 覆盖。
+    """
+
+    @patch.object(TaskClassifierService, "_min_llm_confidence", return_value=0.6)
+    @patch.object(LLMActivityProbe, "invoke_structured_with_probe")
+    def test_low_confidence_should_fall_back_to_keyword_decision(self, mock_probe, _threshold):
+        mock_probe.return_value = TaskClassificationResult(
+            intent="deep_thinking_task",
+            execution_mode="DEEP_THINKING",
+            needs_deep_thinking=True,
+            confidence=0.2,
+            reason="不太确定",
+        )
+        service = _build_service()
+        decision = service.classify("评估迁移到 gRPC 的利弊并给出迁移计划")
+        # 0.2 < 0.6 → 不采信 LLM 的路由升级，回退关键词判定（general_qa）
+        assert decision.intent == "general_qa"
+        assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
+
+    @patch.object(TaskClassifierService, "_min_llm_confidence", return_value=0.6)
+    @patch.object(LLMActivityProbe, "invoke_structured_with_probe")
+    def test_confidence_equal_to_threshold_should_use_llm_result(self, mock_probe, _threshold):
+        mock_probe.return_value = TaskClassificationResult(
+            intent="deep_thinking_task",
+            execution_mode="DEEP_THINKING",
+            needs_deep_thinking=True,
+            confidence=0.6,
+            reason="刚好达标",
+        )
+        service = _build_service()
+        decision = service.classify("评估迁移到 gRPC 的利弊并给出迁移计划")
+        assert decision.intent == "deep_thinking_task"
+
+    @patch.object(TaskClassifierService, "_min_llm_confidence", return_value=0.0)
+    @patch.object(LLMActivityProbe, "invoke_structured_with_probe")
+    def test_zero_threshold_disables_gating(self, mock_probe, _threshold):
+        """默认阈值 0.0 时门控不生效，行为与改造前一致。"""
+        mock_probe.return_value = TaskClassificationResult(
+            intent="deep_thinking_task",
+            execution_mode="DEEP_THINKING",
+            needs_deep_thinking=True,
+            confidence=0.05,
+        )
+        service = _build_service()
+        decision = service.classify("评估迁移到 gRPC 的利弊并给出迁移计划")
+        assert decision.intent == "deep_thinking_task"
+
+
+class TestTaskClassifierConfidenceConfigWiring:
+    """接线验证：``_min_llm_confidence`` 确实读取 admin「全局控制配置」的该字段。"""
+
+    @patch.object(GlobalControlConfigService, "get_config", return_value={
+        "task_classification_min_confidence": 0.55,
+        "intent_recognition_min_confidence": 0.9,
+    })
+    def test_reads_admin_config_value(self, _get_config):
+        assert TaskClassifierService._min_llm_confidence() == 0.55
+
+    @patch.object(GlobalControlConfigService, "get_config", side_effect=RuntimeError("no db"))
+    def test_config_read_failure_falls_back_to_no_gating(self, _get_config):
+        assert TaskClassifierService._min_llm_confidence() == 0.0
+
+    @patch.object(GlobalControlConfigService, "get_config", return_value={
+        "task_classification_min_confidence": 5.0,
+    })
+    def test_out_of_range_value_is_clamped(self, _get_config):
+        assert TaskClassifierService._min_llm_confidence() == 1.0
 
 
 class TestTaskClassifierFallback:

@@ -240,7 +240,11 @@ class PublicAgentA2AService(BaseService):
             return [], "候选公共Agent缺少有效app_id"
 
         try:
-            llm = self.language_model_service.load_default_language_model()
+            # 走公共 AI 功能配置：管理员可在 /admin/public-ai-features 为该路由决策
+            # 绑定模型/开关。该决策是"在多个 Agent 间做选择"的平台级路由，不应绕过
+            # admin 配置（此前用 load_default_language_model，既不可配也无从观测）。
+            # fallback_tier 同为默认档 "2"，与旧行为一致。
+            llm = LanguageModelService.get_feature_model("public_agent_router")
             if hasattr(llm, "temperature"):
                 llm.temperature = 0
 

@@ -326,6 +326,8 @@ UI 展示原则：
 > - 前端已彻底删除深度思考手动开关（2026-09）：`ChatComposer` 的 `showDeepThinkingToggle`/`deepThinkingEnabled` props 与灯泡按钮 UI 已移除，HomeView/WebApp 预览/应用调试等所有聊天入口不再暴露 toggle，也不向请求体传 `confirm_deep_thinking`（web-app/assistant-agent/app 调试的 model、service、hook 均已清理该字段）；前端仅保留对指挥官决策后的 `deep_thinking` 过程事件做展示。
 > - Conductor（LLM 指挥官）本身不输出 `deep_thinking` 模式，orchestrator 在 conductor 决策后对其 single/multi agent 类结果做**关键词层深度思考增强**（复用 `TaskClassifier._classify_with_keywords`，零 LLM 成本），命中且 `ENABLE_AUTO_DEEP_THINKING` 开启时升级为 `deep_thinking`。
 
+> **路由决策置信度门控（2026-09-27 新增）**：旧规则链路的 LLM 兜底（`TaskClassifierService.classify` 第③步）与首页意图识别（`IntentRecognitionService.recognize`）此前只把 `confidence` 写进 `reason` / 随结果返回，**从不参与任何判断**。现接入统一门控：LLM 结果置信度低于阈值时**不采信其路由升级**，回退保守路径——任务分类回退关键词判定（该分支即 `general_qa`）、意图识别回退 `DEFAULT_INTENT`，与既有的「解析失败 / 调用失败」降级路径保持一致。阈值来自 admin「全局控制配置」section `routing_confidence`（字段 `task_classification_min_confidence` / `intent_recognition_min_confidence`，取值 `[0,1]`），**默认 0.0 = 不门控**（行为与改造前完全一致），由管理员按所绑模型的实际置信度分布调高后生效。Conductor 走 `structured_output` 的 `ConductorPlan` 且其置信度语义不同，不在本次门控范围内。
+
 > **SSE 长任务活性保障（2026-09 修复）**：`support.py` 的 `_sse_response` 心跳帧（`: keep-alive`）现在同步刷新 `last_activity`——历史缺陷：Agent 图单节点（如 deep_agent 内部长 LLM 调用）单帧耗时超过原 `SSE_ACTIVITY_TIMEOUT`（60s）会被误判"生成器失活"掐断整条 SSE 流，导致深度思考最终长文丢失。现改为单帧上限 `SSE_MAX_FRAME_SECONDS`（默认 1800s，仅兜底线程死锁）。同时 `conversation_service.save_agent_thoughts` 修复两个落库缺陷：(a) message 已被删除/查询为 None 时安全早退（不再 AttributeError 拖垮整条持久化链）；(b) 分块流式/空 answer 的 token 统计 AGENT_MESSAGE 事件不再逐条覆盖 `message.answer`——仅当 answer 尚未写入时用事件内容兜底，保证外层聚合的完整长文正确落库。
 
 ### 13.2 快速路径（direct_answer）

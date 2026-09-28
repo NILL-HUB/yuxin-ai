@@ -11,7 +11,7 @@
 
 ### 24.1.1 问题定义
 
-钰见我 平台存在 40+ 个系统级 AI 调用点（`get_feature_model()` 生产调用在 `api/internal/` 下共 44 处、32 个文件），分散在记忆系统、对话路由、助手引导、内容生成等链路。原设计存在三个核心问题：
+钰见我 平台存在 40+ 个系统级 AI 调用点（`get_feature_model()` 生产调用在 `api/internal/` 下共 35 处、30 个文件，2026-09-27 AST 实测），分散在记忆系统、对话路由、助手引导、内容生成等链路。原设计存在三个核心问题：
 
 1. **模型选择硬编码**：每个调用点独立调用 `get_cheap_chat_model()`，无法按需切换模型，admin 无法介入
 2. **成本归属混乱**：用户直接受益的 AI 能力（如直接回答、代码助手）与系统基础设施能力（如记忆检测、路由判断）共用同一成本中心，无法准确计费
@@ -21,9 +21,9 @@
 
 引入统一的 `public_ai_feature_config` 配置层，将"用哪个模型做这个 AI 任务"从代码层下沉到数据库层：
 
-- **集中管理**：admin 通过后台界面统一配置 27 个公共 AI 能力的模型、降级策略、是否计费
+- **集中管理**：admin 通过后台界面统一配置 32 个公共 AI 能力的模型、降级策略、是否计费
 - **类型隔离**：通过 `model_type` 字段强制 chat / image 类型匹配，防止类型错配
-- **成本归属**：通过 `billable` 字段明确区分用户付费（9 个）vs 系统付费（18 个）
+- **成本归属**：通过 `billable` 字段明确区分用户付费（9 个）vs 系统付费（23 个）
 - **降级路径**：未配置时按 `fallback_tier`（模型池数字档位 `1`~`5`）从模型池自动选取兜底模型
 
 ### 24.1.3 设计原则
@@ -33,7 +33,7 @@
 | 配置优先 | 所有公共 AI 调用必须经过 `get_feature_model(feature_key)`，禁止直连 `get_cheap_chat_model` |
 | 系统预设非编辑 | `feature_key` / `feature_name` / `feature_category` / `feature_description` 由系统预置，admin 不可改 |
 | 仅 4 字段可编辑 | `model_config_id`（下拉）/ `fallback_tier`（下拉）/ `enabled`（勾选）/ `billable`（单选）|
-| 不支持增删 | 27 个 feature_key 由迁移 seed 与启动补齐（`_BUILTIN_FEATURES`）共同预置，admin 不能 create/delete，只能 edit |
+| 不支持增删 | 32 个 feature_key 由迁移 seed 与启动补齐（`_BUILTIN_FEATURES`）共同预置，admin 不能 create/delete，只能 edit |
 | 类型严格匹配 | `model_type` 决定下拉列表过滤范围，图像类只能选图像模型 |
 
 ---
@@ -53,7 +53,7 @@
 | `fallback_tier` | VARCHAR(64) | 降级档位：引用 `model_tier_policy.tier_code` 的字符串档位码（内置 seed 为 `1`经济型/`2`标准型/`3`强力型/`4`视觉型/`5`长上下文型，档位名可在后台重命名，如线上实例为 `0`免费/`1`低价/`2`均衡/`3`高价）。缺省归一化为默认档 `2` |
 | `enabled` | BOOLEAN | 是否启用，禁用时直接跳过该 AI 能力 |
 | `billable` | BOOLEAN | 是否计费：true=扣用户配额，false=系统承担 |
-| `deprecated` | BOOLEAN DEFAULT false | 是否已废弃（v5.2 新增）：被指挥官替代的旧路由 feature_key 标记为 true，运行时不再调用 |
+| `deprecated` | BOOLEAN DEFAULT false | 是否已废弃（v5.2 新增）：标记确实无调用点的旧路由 feature_key（当前仅 `task_decomposition` 属此语义）。注意：`task_classification` / `pool_intent_resolution` / `tool_selection` **仍有调用点**，不得再视为「已被指挥官替代」 |
 | `last_called_at` | TIMESTAMP NULL | 最后调用时间（60s 频控更新），用于识别未使用配置 |
 | `extra_config` | JSONB DEFAULT {} | 扩展配置 |
 | `created_at` / `updated_at` | TIMESTAMP | 时间戳 |
@@ -68,16 +68,18 @@
 
 ### 24.2.3 Alembic 迁移
 
-迁移链：建表迁移为 `a4b5c6d7e8f9_create_public_ai_feature_config`，初始数据由 `b5c6d7e8f9a0_seed_public_ai_feature_defaults` 写入 27 条。此后经 `m8b9c0d1e2f3_cleanup_public_ai_feature_config` 删除 4 条被指挥官替代的旧路由键，`f1a2b3c4d5e6` 与 `f1a2b3c4d5e7` 做字段/档位调整，`ensure_builtin_features()` 启动补齐 `vision_analyze`。**当前表内共 27 条**（验证日期 2026-09-20）。
+迁移链：建表迁移为 `a4b5c6d7e8f9_create_public_ai_feature_config`，初始数据由 `b5c6d7e8f9a0_seed_public_ai_feature_defaults` 写入 27 条。此后经 `m8b9c0d1e2f3_cleanup_public_ai_feature_config` 删除 4 条被指挥官替代的旧路由键，`f1a2b3c4d5e6` 与 `f1a2b3c4d5e7` 做字段/档位调整，`ensure_builtin_features()` 启动补齐 `vision_analyze` / `task_classification` / `pool_intent_resolution` / `tool_selection` / `public_agent_router` 等。**当前表内共 32 条**（验证日期 2026-09-27）。
 
 迁移幂等性：使用 `INSERT ... ON CONFLICT (feature_key) DO NOTHING` 确保重复执行不重复插入。
 
 ---
 
-## 24.3 27 个预置功能清单
+## 24.3 32 个预置功能清单
 
-> **DB 实际预置**：当前 `public_ai_feature_config` 表内共 27 条记录（验证日期 2026-09-20）。
-> **记录来源有两条通道**：① 迁移 seed（`b5c6d7e8f9a0` 写入 27 条，`m8b9c0d1e2f3` 删 4 条 → 23 条）；② 应用启动时 `PublicAIFeatureService.ensure_builtin_features()` 按 `_BUILTIN_FEATURES` 补齐（当前注册 `conductor`、`schedule_intent_parser`、`admin_agent`、`vision_analyze`）。`assistant_agent` 为历史遗留记录，代码中**只被读取**（`get_assistant_agent_model_config`），无迁移或启动补齐写入点。
+> **DB 实际预置**：当前 `public_ai_feature_config` 表内共 32 条记录（验证日期 2026-09-27）。
+> **记录来源有两条通道**：① 迁移 seed（`b5c6d7e8f9a0` 写入 27 条，`m8b9c0d1e2f3` 删 4 条 → 23 条）；② 应用启动时 `PublicAIFeatureService.ensure_builtin_features()` 按 `_BUILTIN_FEATURES` 补齐（当前注册 `conductor`、`task_classification`、`pool_intent_resolution`、`tool_selection`、`public_agent_router`、`schedule_intent_parser`、`admin_agent`、`vision_analyze` 共 8 条）。`assistant_agent` 为历史遗留记录，代码中**只被读取**（`get_assistant_agent_model_config`），无迁移或启动补齐写入点。
+>
+> **说明（2026-09-27 回收 4 条路由 feature）**：`task_classification` / `pool_intent_resolution` / `tool_selection` 三条曾被迁移 `m8b9c0d1e2f3` 以「指挥官已完全替代 orchestrator」为由删除，但该理由不成立——`task_classifier_service` / `pool_intent_resolver_service` / `tool_selector_service` 仍被 `home_service`（首页，与 `ENABLE_CONDUCTOR` 无关）与 `orchestrator_service`（`ENABLE_CONDUCTOR=false` 时）实际调用；记录缺失时 `is_feature_enabled` 返回 True、档位回落默认档 `2`，形成**静默降级**（admin 看不到、绑不了模型）。另 `public_agent_router`（`public_agent_a2a_service` 的公共 Agent 二次裁决）此前走了 `load_default_language_model`，从不经过 admin 配置。本次一并显式登记回 `_BUILTIN_FEATURES`，`fallback_tier` 取当时隐式生效的默认档 `2`，**行为零变化**、仅恢复 admin 可配可观测。
 
 ### 24.3.1 图标类（2 个，全部 billable=false）
 
@@ -106,17 +108,25 @@
 >
 > **当前配置**：11 个 memory_* feature_key 绑定到模型池中的高推理模型，fallback_tier 使用模型池数字档位（内部异步任务应取"质量刚好过关"的较低档以控成本）。具体绑定的模型由 admin 在后台「池治理 → 公共 AI 配置」中按需选择，文档不硬编码推荐任何具体模型版本。
 
-### 24.3.3 路由类（3 个，全部 billable=false，model_type=chat）
+### 24.3.3 路由类（8 个，全部 billable=false，model_type=chat）
 
-> **v5.2 变更**：原 4 个路由类 feature_key（pool_intent_resolution / task_classification / task_decomposition / tool_selection）已被指挥官 `ConductorService` 一体化替代，不再作为独立调用点（其中 4 条记录已由迁移 `m8b9c0d1e2f3` 删除）。指挥官用单次 LLM `structured_output` 完成意图识别、任务分类、任务拆解和池选择。
+> **v5.2 变更（已被 2026-09-27 修正）**：原判断「4 个路由类 feature_key（pool_intent_resolution / task_classification / task_decomposition / tool_selection）已被指挥官 `ConductorService` 一体化替代，不再作为独立调用点」**部分不成立**：
+> - `task_decomposition` 确属死代码（`_stream_multi_agent` 已降级为 single_agent，`TaskDecomposer` 无调用点），保持删除，仍标记 `deprecated`。
+> - 但 `task_classification` / `pool_intent_resolution` / `tool_selection` **仍有真实调用点**（`task_classifier_service.py` / `pool_intent_resolver_service.py` / `tool_selector_service.py`，被 `home_service` 与 `orchestrator_service` 调用），记录缺失只会造成静默降级。三条已于 2026-09-27 重新登记回 `_BUILTIN_FEATURES`。
+> - `conductor` 与上述旧链路**并存**：`ENABLE_CONDUCTOR=true` 走指挥官，否则回退旧链路，两者不是非此即彼。
 
 | feature_key | 说明 |
 |---|---|
 | `conductor` | 指挥官决策层模型（输出 ConductorPlan 编排计划） |
 | `intent_recognition` | 首页用户意图识别（推荐问题、个性化介绍），与指挥官路由决策无关 |
 | `schedule_intent_parser` | 定时任务配置解析（一句话 → cron + 精化 prompt） |
+| `admin_agent` | 管理端 Agent 对话与板块动作执行 |
+| `task_classification` | 旧 Orchestrator / 首页的任务意图·复杂度·执行模式分类 |
+| `pool_intent_resolution` | 按语义把用户意图匹配到 Agent 子池（首页与旧 Orchestrator 共用） |
+| `tool_selection` | 按查询语义选择最相关的 builtin 工具（首页与旧 Orchestrator 共用） |
+| `public_agent_router` | 公共 Agent 路由裁决：在召回的公共 Agent 候选中做二次相关性裁决 |
 
-> **deprecated 字段**：`public_ai_feature_config` 表的 `deprecated` 字段（v5.2 新增）标记被指挥官替代的旧路由 feature_key，运行时不再调用。
+> **deprecated 字段**：`public_ai_feature_config` 表的 `deprecated` 字段（v5.2 新增）标记被指挥官替代的旧路由 feature_key，运行时不再调用。当前仅 `task_decomposition`（已删除）适用该语义；`assistant_agent` 等历史记录的 deprecated 取值以 DB 实际为准。
 
 ### 24.3.4 助手类（5 个，其中 4 个 billable=true，model_type=chat）
 
@@ -160,16 +170,18 @@
 |---|---|---|---|
 | 图标 | 2 | 0 | 2 |
 | 记忆 | 11 | 0 | 11 |
-| 路由 | 3 | 0 | 3 |
+| 路由 | 8 | 0 | 8 |
 | 助手 | 5 | 4 | 1 |
 | 会话 | 4 | 4 | 0 |
 | 助手 Agent | 1 | 0 | 1 |
 | 视觉 | 1 | 1 | 0 |
-| **合计** | **27** | **9** | **18** |
+| **合计** | **32** | **9** | **23** |
 
 **计费原则**：
 - `billable=true`（9 个）：用户**直接受益**的 AI 能力，扣用户配额（`CreditService.consume_for_feature`）
-- `billable=false`（18 个）：**系统基础设施**能力，平台承担成本，不扣用户配额
+- `billable=false`（23 个）：**系统基础设施**能力，平台承担成本，不扣用户配额
+
+> **口径说明**：按 `feature_category` 列统计，`vision_analyze` 归属 `assistant`（DB 实测 assistant 共 6 条 = 本表「助手」5 条 + 「视觉」1 条），上表沿用原文档的分类叙事拆分展示，合计口径与 DB 一致。
 
 ---
 
@@ -229,12 +241,12 @@ def get_feature_model(cls, feature_key: str):
 from internal.service import get_cheap_chat_model
 llm = get_cheap_chat_model()
 
-# 改造后
+# 改造后（get_feature_model 是 classmethod，见 §24.4.1）
 from internal.service import LanguageModelService
-llm = LanguageModelService().get_feature_model('memory_explicit_detection')
+llm = LanguageModelService.get_feature_model("memory_explicit_detection")
 ```
 
-改造规模：`get_feature_model()` 生产调用点在 `api/internal/` 下共 **44 处、32 个文件**（截至 2026-09-14 实测；含少量位于 docstring/注释中的示例调用），主要分布在记忆写读链路（explicit_detector / salience_scorer / entity_extractor / entity_resolution / write_time_conflict_resolver / consolidation_engine / conflict_detector / funnel_compressor / policy_router / digest_manager / skill_emergence / llm_activity_probe）、对话/路由（direct_answer / conductor / task_classifier / pool_intent_resolver / intent_recognition / tool_selector / rerank / tag_assignment / schedule_intent_parser）、助手（assistant_agent / ai_service / conversation / app_service）与图像生成（icon_generator）等。
+改造规模：`get_feature_model()` 生产调用点在 `api/internal/` 下共 **35 处、30 个文件**（截至 2026-09-27 以 AST 实测，仅统计真实 `Call` 节点、排除 docstring/注释中的示例调用），主要分布在记忆写读链路（explicit_detector / salience_scorer / entity_extractor / entity_resolution / write_time_conflict_resolver / consolidation_engine / conflict_detector / funnel_compressor / policy_router / digest_manager / skill_emergence / community_induction）、对话/路由（direct_answer / conductor / task_classifier / pool_intent_resolver / intent_recognition / tool_selector / rerank / tag_assignment / schedule_intent_parser / public_agent_router）、助手（assistant_agent / admin_agent_chat / ai_service / conversation / app_service）与图像生成（icon_generator）等。
 
 涉及服务：`MemoryWriteService` / `ConsolidationEngine` / `DigestManager` / `PolicyRouter` / `DirectAnswerExecutor` / `RerankService` / `TagAssignmentService` / `AssistantAgentService` / `ConversationService` / `AIService` / `IconGeneratorService` 等。
 
@@ -398,7 +410,7 @@ fallback_tier 池 (Level 2)
 
 ### 24.7.2 列表页
 
-- 显示 27 条预置配置
+- 显示 32 条预置配置
 - 列：feature_key / feature_name / feature_category / model_type / 绑定模型名 / fallback_tier / enabled / billable
 - 筛选：category、enabled、billable
 - 不支持"新建"和"删除"按钮
@@ -481,9 +493,9 @@ Orchestrator 的复杂度判断由 `TaskClassifierService` 承担（[task_classi
 
 ## 24.9 实施验证清单
 
-- [x] `public_ai_feature_config` 表已通过 Alembic 迁移落库（当前 27 条，含启动补齐的 `vision_analyze`）
+- [x] `public_ai_feature_config` 表已通过 Alembic 迁移落库（当前 32 条，含启动补齐的 `vision_analyze` 与 4 条回收的路由 feature）
 - [x] `LanguageModelService.get_feature_model()` 方法实现并暴露
-- [x] `get_feature_model()` 改造完成：生产调用在 `api/internal/` 下 44 处、32 个文件，全部使用 `get_feature_model()`
+- [x] `get_feature_model()` 改造完成：生产调用在 `api/internal/` 下 35 处、30 个文件，全部使用 `get_feature_model()`
 - [x] `IconGeneratorService` 改造为配置优先 + image 类型过滤
 - [x] `CreditService.consume_for_feature()` 实现
 - [x] 8 个 billable 服务的计费集成完成

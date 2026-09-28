@@ -217,7 +217,20 @@ class TaskClassifierService:
             try:
                 llm_result = self._classify_with_llm(normalized)
                 if llm_result is not None:
-                    return self._build_decision_from_llm(llm_result, normalized)
+                    confidence = max(0.0, min(1.0, float(llm_result.confidence or 0.0)))
+                    min_confidence = self._min_llm_confidence()
+                    if confidence < min_confidence:
+                        # 置信度门控（阈值 admin 可配，默认 0.0 即不门控）：LLM 不够自信时
+                        # 不采信其路由升级，回退到关键词判定（此处即 general_qa）——
+                        # 与 LLM 调用失败时的降级路径保持一致，宁可保守也不误路由到重链路。
+                        logger.info(
+                            "LLM 分类置信度 %.2f 低于门控阈值 %.2f，回退关键词判定: query=%r",
+                            confidence,
+                            min_confidence,
+                            normalized[:80],
+                        )
+                    else:
+                        return self._build_decision_from_llm(llm_result, normalized)
             except Exception as exc:
                 # LLM 兜底失败时，记录详细错误（含 query 摘要），降级到 general_qa
                 query_preview = normalized[:80]
@@ -230,6 +243,27 @@ class TaskClassifierService:
 
         # ④ 最终兜底：general_qa（关键词 + LLM 均未命中明确意图）
         return keyword_decision
+
+    @staticmethod
+    def _min_llm_confidence() -> float:
+        """读取 LLM 分类置信度门控阈值。
+
+        阈值来自 admin「全局控制配置」的 ``routing_confidence`` section；
+        缺省或读取失败时返回 0.0（不门控），保证默认行为与既有逻辑一致。
+        """
+        try:
+            from internal.service.global_control_config_service import (
+                GlobalControlConfigService,
+            )
+
+            cfg = GlobalControlConfigService().get_config("routing_confidence")
+            return max(
+                0.0,
+                min(1.0, float(cfg.get("task_classification_min_confidence") or 0.0)),
+            )
+        except Exception:
+            logger.warning("读取 routing_confidence 配置失败，按不门控处理", exc_info=True)
+            return 0.0
 
     def _classify_with_llm(self, query: str) -> TaskClassificationResult:
         from internal.service.memory.llm_activity_probe import LLMActivityProbe

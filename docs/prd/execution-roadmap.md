@@ -490,6 +490,28 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 
 `recall_relevant_memories` 已按 `owner_account_id`、`status` 和 `scope` 过滤。（注：`memory_candidate` 表已由迁移 `s3d4e5f6a7b8` 删除，记忆候选确认流程整体废弃，改为自动写入。）
 
+### 差异 7：路由类 feature_key 记录缺失导致静默降级 + 一处绕过 admin 配置（✅ 已修复，2026-09-27）
+
+**问题**：迁移 `m8b9c0d1e2f3` 以「指挥官已完全替代 orchestrator」为由删除了 `task_classification` / `pool_intent_resolution` / `tool_selection` 三条路由配置，但该理由**不成立**——`task_classifier_service` / `pool_intent_resolver_service` / `tool_selector_service` 仍被 `home_service`（首页，与 `ENABLE_CONDUCTOR` 无关）与 `orchestrator_service`（`ENABLE_CONDUCTOR=false` 时）实际调用。记录缺失时 `is_feature_enabled` 返回 True、`fallback_tier` 回落默认档，形成**静默降级**：管理员在 `/admin/public-ai-features` 既看不到、也绑不了模型。另有 `public_agent_a2a_service` 的公共 Agent 二次裁决此前走 `load_default_language_model`，从不经过 admin 配置（同一类「绕过单一权威入口」）。
+
+**修复**：① 三条路由 feature 显式重新登记回 `PublicAIFeatureService._BUILTIN_FEATURES`；② 新增登记 `public_agent_router`；③ `public_agent_a2a_service` 改为 `LanguageModelService.get_feature_model("public_agent_router")`。`fallback_tier` 全部取当时**隐式生效的默认档 `2`**，保证**行为零变化**，仅恢复 admin 可配可观测。
+
+**接线核对**：4 个 feature_key 均有真实 `get_feature_model(...)` 调用点（分别为 `task_classifier_service.py:237`、`pool_intent_resolver_service.py:113`、`tool_selector_service.py:365`、`public_agent_a2a_service.py:247`），并已用真实 DB 验证落库（`fallback_tier=2`、`enabled=t`、`billable=f`）。
+
+**回归防护**：`test_public_ai_feature_service.py::TestRoutingFeaturesRegistered`（3 用例：四条路由 feature 均已注册 / 默认档为数字且在 1–5 内 / 所有注册 feature 必填字段齐全），**含反向验证**（临时改坏 `public_agent_router` 键名时测试失败，已复原）。
+
+**明确不修（避免过度修复）**：`deep_thinking_agent`（用 Agent 自己的 `self.llm`）与工作流 `intent_classifier_node`（用节点级 `llm_config`）两处**有意设计**，非缺陷，保持不动。
+
+### 差异 8：路由决策置信度被算出却从不消费（✅ 已修复，2026-09-27）
+
+**问题**：`TaskClassifierService.classify` 的 LLM 兜底分支把 `confidence` 拼进 `reason` 字符串、`IntentRecognitionService.recognize` 把 `confidence` 随结果返回，但两处**都不基于置信度做任何判断**——LLM 说什么就采信什么。记忆子系统早已是「置信度驱动路由」的正确范式（`memory_settings.fast_path_threshold=0.85` / `boost_threshold=0.5`），路由链路却是空白。
+
+**修复**：接入统一门控——LLM 结果置信度低于阈值时**不采信其路由升级**，回退保守路径：任务分类回退关键词判定（该分支即 `general_qa`）、意图识别回退 `DEFAULT_INTENT`（与既有解析失败/调用失败降级路径一致）。阈值按 AGENTS.md「阈值走 admin」落 `global_control_config` 新增 section `routing_confidence`（`task_classification_min_confidence` / `intent_recognition_min_confidence`，`[0,1]` 区间校验），**默认 0.0 = 不门控**，**行为零变化**，管理员调高后生效。
+
+**成对交付**：admin 可编辑入口（`GlobalControlConfigView.vue` 新增「路由决策置信度门控」卡片 + `routing_confidence` section 服务类型 + zh/en i18n）↔ 运行时读取点（`TaskClassifierService._min_llm_confidence` / `IntentRecognitionService._min_intent_confidence` → `GlobalControlConfigService.get_config("routing_confidence")`，读取失败按不门控回退）。
+
+**回归防护**：`test_global_control_config_service.py`（section 注册 + float/区间/非数值校验）、`test_task_classifier_service.py::TestTaskClassifierConfidenceGate` / `TestTaskClassifierConfidenceConfigWiring`、`test_intent_recognition_service.py::TestIntentRecognitionConfidenceGate` / `TestIntentRecognitionConfidenceConfigWiring`——**均含反向验证**（禁用门控分支或断开配置读取时测试失败）。
+
 ---
 
 ## 3. 最新任务清单

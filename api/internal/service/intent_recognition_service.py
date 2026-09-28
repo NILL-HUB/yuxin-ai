@@ -105,11 +105,47 @@ class IntentRecognitionService(BaseService):
             # 5. 解析响应
             result = self._parse_response(str(response_text or ""))
 
+            # 6. 置信度门控（阈值 admin 可配，默认 0.0 即不门控）：
+            # LLM 对用户意图不够确信时回退默认意图卡片，避免展示可能错误的个性化意图。
+            if result.get("is_default") is not True:
+                confidence = max(0.0, min(1.0, float(result.get("confidence") or 0.0)))
+                min_confidence = self._min_intent_confidence()
+                if confidence < min_confidence:
+                    logging.info(
+                        "意图识别置信度 %.2f 低于门控阈值 %.2f，回退默认意图",
+                        confidence,
+                        min_confidence,
+                    )
+                    # 返回浅拷贝：调用方会向结果写入 synthesis_summary 等字段，
+                    # 直接返回类常量会被就地污染。
+                    return dict(self.DEFAULT_INTENT)
+
             return result
 
         except Exception as e:
             logging.error(f"Intent recognition failed: {str(e)}")
             raise FailException(f"意图识别失败: {str(e)}")
+
+    @staticmethod
+    def _min_intent_confidence() -> float:
+        """读取意图识别置信度门控阈值。
+
+        阈值来自 admin「全局控制配置」的 ``routing_confidence`` section；
+        缺省或读取失败时返回 0.0（不门控），保证默认行为与既有逻辑一致。
+        """
+        try:
+            from internal.service.global_control_config_service import (
+                GlobalControlConfigService,
+            )
+
+            cfg = GlobalControlConfigService().get_config("routing_confidence")
+            return max(
+                0.0,
+                min(1.0, float(cfg.get("intent_recognition_min_confidence") or 0.0)),
+            )
+        except Exception:
+            logging.warning("读取 routing_confidence 配置失败，按不门控处理", exc_info=True)
+            return 0.0
 
     def _build_langchain_messages(self, messages: list[dict[str, str]]) -> list[BaseMessage]:
         """构建LangChain消息列表"""

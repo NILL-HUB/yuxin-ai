@@ -41,6 +41,11 @@ const form = reactive({
     failure_threshold: 3,
     cooldown_seconds: 300,
   },
+  routing_confidence: {
+    // 0 表示不门控（保持既有路由行为）
+    task_classification_min_confidence: 0,
+    intent_recognition_min_confidence: 0,
+  },
 })
 
 const apiOrigin = ref('')
@@ -68,6 +73,10 @@ const loadConfig = async () => {
     form.vision_fallback.model = configs.vision_fallback?.model || ''
     form.model_key_pool.failure_threshold = configs.model_key_pool?.failure_threshold ?? 3
     form.model_key_pool.cooldown_seconds = configs.model_key_pool?.cooldown_seconds ?? 300
+    form.routing_confidence.task_classification_min_confidence =
+      configs.routing_confidence?.task_classification_min_confidence ?? 0
+    form.routing_confidence.intent_recognition_min_confidence =
+      configs.routing_confidence?.intent_recognition_min_confidence ?? 0
     apiOrigin.value = desktop.api_origin || ''
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.globalControlConfig.loadFailed')))
@@ -93,6 +102,17 @@ const handleSave = async () => {
     form.media_fetch.max_bytes_fallback_mb <= 0
   ) {
     Message.error(t('admin.globalControlConfig.fields.maxBytesMbInvalid'))
+    return
+  }
+  if (
+    !Number.isFinite(form.routing_confidence.task_classification_min_confidence) ||
+    !Number.isFinite(form.routing_confidence.intent_recognition_min_confidence) ||
+    form.routing_confidence.task_classification_min_confidence < 0 ||
+    form.routing_confidence.task_classification_min_confidence > 1 ||
+    form.routing_confidence.intent_recognition_min_confidence < 0 ||
+    form.routing_confidence.intent_recognition_min_confidence > 1
+  ) {
+    Message.error(t('admin.globalControlConfig.fields.routingConfidenceInvalid'))
     return
   }
   saving.value = true
@@ -122,6 +142,12 @@ const handleSave = async () => {
       saveGlobalControlSection('model_key_pool', {
         failure_threshold: Math.round(form.model_key_pool.failure_threshold),
         cooldown_seconds: Math.round(form.model_key_pool.cooldown_seconds),
+      }),
+      saveGlobalControlSection('routing_confidence', {
+        task_classification_min_confidence:
+          form.routing_confidence.task_classification_min_confidence,
+        intent_recognition_min_confidence:
+          form.routing_confidence.intent_recognition_min_confidence,
       }),
       saveDesktopClientConfig({ api_origin: apiOrigin.value.trim() }),
     ])
@@ -265,6 +291,41 @@ onMounted(loadConfig)
           </a-form>
           <p class="hint-text">{{ t('admin.globalControlConfig.fields.failureThresholdHint') }}</p>
           <p class="hint-text">{{ t('admin.globalControlConfig.fields.cooldownSecondsHint') }}</p>
+        </section>
+
+        <!-- 路由置信度门控 -->
+        <section class="config-card">
+          <div class="card-header">
+            <h3>{{ t('admin.globalControlConfig.sections.routingConfidence.title') }}</h3>
+            <p>{{ t('admin.globalControlConfig.sections.routingConfidence.description') }}</p>
+          </div>
+          <a-form :model="form.routing_confidence" layout="vertical">
+            <a-form-item
+              :label="t('admin.globalControlConfig.fields.taskClassificationMinConfidence')"
+              field="task_classification_min_confidence"
+            >
+              <a-input-number
+                v-model="form.routing_confidence.task_classification_min_confidence"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :precision="2"
+              />
+            </a-form-item>
+            <a-form-item
+              :label="t('admin.globalControlConfig.fields.intentRecognitionMinConfidence')"
+              field="intent_recognition_min_confidence"
+            >
+              <a-input-number
+                v-model="form.routing_confidence.intent_recognition_min_confidence"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :precision="2"
+              />
+            </a-form-item>
+          </a-form>
+          <p class="hint-text">{{ t('admin.globalControlConfig.fields.routingConfidenceHint') }}</p>
         </section>
 
         <!-- 桌面客户端连接 -->

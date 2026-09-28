@@ -1820,7 +1820,7 @@ def register_routes(quart_app):
     # ------------------------------------------------------------------
     # admin 全局控制配置（global_control_config 单行 JSONB）：读取 / 更新
     # 系统级全局行为配置（模型运行时降级 / 外部素材获取 / 会话级 Checkpoint /
-    # 技能目录同步 / 图像请求策略 / 视觉兜底模型），按 section 分组更新。
+    # 技能目录同步 / 图像请求策略 / 视觉兜底模型 / 路由置信度门控），按 section 分组更新。
     # ------------------------------------------------------------------
     @quart_app.get("/admin/global-control-config")
     async def admin_global_control_config_get():

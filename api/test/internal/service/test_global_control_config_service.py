@@ -168,3 +168,60 @@ def test_update_model_key_pool_ignores_unknown_key():
 
     assert "unknown_key" not in cfg
     assert cfg["failure_threshold"] == 3
+
+
+def test_routing_confidence_is_registered_as_supported_section():
+    assert "routing_confidence" in SUPPORTED_SECTIONS
+    assert "routing_confidence" in DEFAULT_CONFIGS
+
+
+def test_get_config_returns_routing_confidence_defaults():
+    assert _service().get_config("routing_confidence") == {
+        "task_classification_min_confidence": 0.0,
+        "intent_recognition_min_confidence": 0.0,
+    }
+
+
+def test_update_routing_confidence_accepts_float_in_unit_interval():
+    cfg = _service().update_config(
+        "routing_confidence", {"task_classification_min_confidence": 0.6}
+    )
+    # 未提供的字段保持默认值（0.0 = 不门控）
+    assert cfg == {
+        "task_classification_min_confidence": 0.6,
+        "intent_recognition_min_confidence": 0.0,
+    }
+
+
+def test_update_routing_confidence_accepts_int_as_float():
+    cfg = _service().update_config(
+        "routing_confidence", {"intent_recognition_min_confidence": 1}
+    )
+    assert cfg["intent_recognition_min_confidence"] == 1.0
+
+
+def test_update_routing_confidence_rejects_out_of_range():
+    import pytest
+
+    with pytest.raises(ValueError, match="必须在 0 到 1 之间"):
+        _service().update_config(
+            "routing_confidence", {"task_classification_min_confidence": 1.5}
+        )
+    with pytest.raises(ValueError, match="必须在 0 到 1 之间"):
+        _service().update_config(
+            "routing_confidence", {"intent_recognition_min_confidence": -0.1}
+        )
+
+
+def test_update_routing_confidence_rejects_non_numeric():
+    import pytest
+
+    with pytest.raises(ValueError, match="必须是数字"):
+        _service().update_config(
+            "routing_confidence", {"task_classification_min_confidence": "high"}
+        )
+    # bool 是 int 的子类，必须显式拒绝
+    with pytest.raises(ValueError, match="必须是数字"):
+        _service().update_config(
+            "routing_confidence", {"task_classification_min_confidence": True}
+        )

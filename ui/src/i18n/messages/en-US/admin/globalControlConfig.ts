@@ -1,7 +1,7 @@
 export default {
   title: 'Global Control Config',
   description:
-    'Centralized management of platform-wide behavior: model runtime fallback, external media fetching, conversation checkpoints, skill catalog sync, image request policy, vision fallback model, and the desktop client connection address.',
+    'Centralized management of platform-wide behavior: model runtime fallback, external media fetching, conversation checkpoints, skill catalog sync, image request policy, vision fallback model, routing confidence gating, and the desktop client connection address.',
   loadFailed: 'Failed to load global control config',
   saved: 'Global control config saved',
   saveFailed: 'Failed to save global control config',
@@ -35,6 +35,11 @@ export default {
       title: 'Model key pool',
       description: 'Controls the circuit-breaker threshold and cooldown recovery for model keys.',
     },
+    routingConfidence: {
+      title: 'Routing Confidence Gating',
+      description:
+        'Falls back to a conservative path when LLM routing/classification confidence is below the threshold (task classification falls back to keyword decision; intent recognition falls back to the default intent).',
+    },
     desktopClient: {
       title: 'Desktop Client Connection',
       description: 'Sets the API server address for the desktop client. Leave empty to connect to the current server origin.',
@@ -61,6 +66,11 @@ export default {
     failureThresholdInvalid: 'Failure threshold must be greater than 0',
     cooldownSeconds: 'Cooldown recovery (seconds)',
     cooldownSecondsHint: 'A tripped key recovers automatically after this duration. Default 300 seconds.',
+    taskClassificationMinConfidence: 'Task classification minimum confidence',
+    intentRecognitionMinConfidence: 'Intent recognition minimum confidence',
+    routingConfidenceHint:
+      'Range 0~1; 0 disables gating (keeps existing behavior). LLM results below the threshold are no longer trusted and fall back to the conservative path.',
+    routingConfidenceInvalid: 'Confidence threshold must be between 0 and 1',
     apiOrigin: 'Connection Address (API Server)',
     apiOriginPlaceholder: 'e.g. http://127.0.0.1 or https://your-domain.com',
   },
