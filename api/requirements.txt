@@ -5,7 +5,7 @@ aiosignal==1.4.0
 alembic==1.15.1
 amqp==5.3.1
 annotated-types==0.7.0
-anyio==4.12.1
+anyio==4.14.2
 asttokens==3.0.1
 asyncpg==0.30.0
 attrs==25.4.0
@@ -71,7 +71,7 @@ httpcore==1.0.9
 httpx==0.28.1
 httpx-sse==0.4.3
 hyperframe==6.1.0
-idna==3.11
+idna==3.20
 imageio-ffmpeg==0.6.0
 iniconfig==2.3.0
 injector==0.21.0
@@ -111,7 +111,7 @@ langsmith==0.8.3
 deepagents==0.5.9
 e2b-code-interpreter==2.6.2
 wcmatch==10.1
-lxml==6.0.2
+lxml==6.1.3
 Mako==1.3.10
 Markdown==3.8.2
 MarkupSafe==3.0.3
@@ -129,7 +129,7 @@ olefile==0.47
 ollama==0.6.1
 openai==2.24.0
 optionaldict==0.1.2
-orjson==3.11.7
+orjson==3.12.0
 ormsgpack==1.12.2
 packaging==25.0
 pandocfilters==1.5.1
@@ -232,3 +232,4 @@ networkx
 mcp>=2.0.0,<3
 croniter>=2.0.0
 yt-dlp==2026.8.19
+scrapling[ai]==0.4.15

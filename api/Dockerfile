@@ -30,6 +30,10 @@ WORKDIR /app/api
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libmagic1 curl tzdata \
         fontconfig fonts-dejavu-core \
+        libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 \
+        libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
+        libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
+        libcairo2 libasound2 libatspi2.0-0 \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,6 +47,9 @@ COPY requirements.txt .
 RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple && \
     rm -rf /root/.cache
+
+# Scrapling 的 DynamicFetcher 需要 Chromium；stealthy_fetch 的 Camoufox 刻意不装（见 spec §7）
+RUN python -m playwright install chromium
 
 
 # 复制代码文件
