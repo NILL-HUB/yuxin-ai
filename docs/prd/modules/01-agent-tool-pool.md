@@ -1147,6 +1147,17 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 - 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
   **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。
 
+### Scrapling 网页抓取（MCP stdio）
+
+平台内置 Scrapling 抓取能力，作为 MCP 目录条目（`api/internal/core/tools/mcp_tools/providers/providers.yaml` 中的 `scrapling`）接通：
+
+- **部署形态**：不新增容器。运行时由既有 `McpToolFactory → McpStdioClient` 在 API 容器内 spawn `scrapling-mcp` 的**短连接子进程**（用完即回收），依赖与 Chromium 随 `api` 镜像提供。
+- **与 `browser_action` 的分工**：Scrapling 负责**抓取**（反爬绕过、浏览器指纹伪装、自适应选择器、批量并发、代理轮换、页面转 Markdown）；`browser_action` 负责**交互**（点击/输入/按键/滚动，以及经 bridge 使用用户本机浏览器）。二者能力互补、不重叠。
+- **默认开放工具**（`tool_names` 白名单）：`make_request`、`bulk_get`、`fetch`。
+- **其余 10 个工具**（`bulk_fetch`、`stealthy_fetch`、`bulk_stealthy_fetch`、`open_session`、`open_request_session`、`close_session`、`list_sessions`、`session_fetch`、`session_make_request`、`screenshot`）**已接入但默认关闭**，由管理员在 `/admin/mcp` 编辑该条目的 `tool_names` 按需开启（`tool_names` 为空表示全部开放，非空即白名单过滤）。
+- **已知限制**：`stealthy_fetch` / `bulk_stealthy_fetch` 依赖 Camoufox，当前镜像**未安装**，调用会明确报错；如需启用须在 `api/Dockerfile` 追加 Camoufox 安装。
+- **配置提示**：该条目 `timeout_seconds` 为 120（浏览器抓取较慢）；Chromium 位于镜像内 `/root/.cache/ms-playwright`。
+
 ---
 
 ## 11. 内置工具：知识库板块创建（create_knowledge_base）
