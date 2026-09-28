@@ -497,6 +497,13 @@ def test_mcp_provider_manager_should_load_repo_catalog_urls(monkeypatch):
     assert manager.get_provider("filesystem-mcp").provider_entity.transport == "stdio"
     assert manager.get_provider("filesystem-mcp").provider_entity.args[-1] == "/app/api/storage"
 
+    scrapling = manager.get_provider("scrapling").provider_entity
+    assert scrapling.transport == "stdio"
+    assert scrapling.command == "scrapling-mcp"
+    assert scrapling.timeout_seconds == 120
+    assert scrapling.tool_names == ["make_request", "bulk_get", "fetch"]
+    assert scrapling.source_type == "catalog"
+
 
 def test_builtin_provider_manager_should_skip_init_when_provider_map_not_empty(
     monkeypatch,

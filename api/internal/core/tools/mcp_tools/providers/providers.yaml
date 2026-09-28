@@ -535,3 +535,25 @@
   source_url: https://github.com/serper/mcp-server-serper
   created_at: 1789000006
   is_public: true
+- name: scrapling
+  label: Scrapling 网页抓取 MCP
+  description: 自适应网页抓取框架，具备反爬绕过、浏览器指纹伪装、自适应选择器与批量并发抓取能力，适合数据采集与反爬场景；交互式操作仍用 browser_action。
+  icon: ""
+  background: "#DCFCE7"
+  category: browser
+  transport: stdio
+  command: scrapling-mcp
+  url: ""
+  headers: []
+  tool_names:
+    - make_request
+    - bulk_get
+    - fetch
+  args: []
+  env: {}
+  timeout_seconds: 120
+  source_type: catalog
+  source_key: "D4Vinci/Scrapling"
+  source_url: https://github.com/D4Vinci/Scrapling
+  created_at: 1790400000
+  is_public: true
