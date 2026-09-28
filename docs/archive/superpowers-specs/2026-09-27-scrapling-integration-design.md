@@ -75,7 +75,7 @@ CALL_TOOL_OK {'content': [{'text': 'Echo: hello-mcp2'}], 'isError': False}
 1. `requirements.txt` 增加 `scrapling[ai]==0.4.15`（并收敛冲突 pin：`lxml`/`orjson`/`idna`/`anyio`，见 §3）。
 2. 系统依赖：在 Dockerfile 的 apt 段追加 Chromium 运行库，并执行 `python -m playwright install chromium`。
    - **不使用 `scrapling install`**（它会连带安装 Camoufox）。
-   - **不可在该行追加 `rm -rf /root/.cache`**：Playwright 默认将浏览器装到 `/root/.cache/ms-playwright`，清缓存会误删刚装好的 Chromium，导致运行时 `DynamicFetcher` 报 "Executable doesn't exist"（此坑已在实施中实测踩到并修复）。
+   - **必须让浏览器脱离 `/root/.cache`**：Playwright 默认将浏览器装到 `/root/.cache/ms-playwright`，会被 pip 段的 `rm -rf /root/.cache` 误删，导致运行时 `DynamicFetcher` 报 "Executable doesn't exist"（此坑已在实施中实测踩到）。**最终方案**为设置镜像级 `ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright`（并同时 `TIKTOKEN_CACHE_DIR=/opt/tiktoken`），把运行时必需资产移出 `/root/.cache`，使 pip 缓存清理得以安全保留。
 3. **StealthyFetcher 的 Camoufox 依赖**：需在构建期单独安装（`scrapling` 的 stealth 引擎）。若构建期安装体积/网络不可接受，可退化为「仅 `Fetcher`/`DynamicFetcher` 可用，`stealthy_fetch` 构建期不装浏览器、运行时按需报错」——见 §7 风险。
 
 ### 4.2 admin 配置（零代码）

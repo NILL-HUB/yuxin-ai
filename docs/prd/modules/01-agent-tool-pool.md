@@ -1156,7 +1156,7 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 - **默认开放工具**（`tool_names` 白名单）：`make_request`、`bulk_get`、`fetch`。
 - **其余 10 个工具**（`bulk_fetch`、`stealthy_fetch`、`bulk_stealthy_fetch`、`open_session`、`open_request_session`、`close_session`、`list_sessions`、`session_fetch`、`session_make_request`、`screenshot`）**已接入但默认关闭**，由管理员在 `/admin/mcp` 编辑该条目的 `tool_names` 按需开启（`tool_names` 为空表示全部开放，非空即白名单过滤）。
 - **已知限制**：`stealthy_fetch` / `bulk_stealthy_fetch` 依赖 Camoufox，当前镜像**未安装**，调用会明确报错；如需启用须在 `api/Dockerfile` 追加 Camoufox 安装。
-- **配置提示**：该条目 `timeout_seconds` 为 120（浏览器抓取较慢）；Chromium 位于镜像内 `/root/.cache/ms-playwright`。
+- **配置提示**：该条目 `timeout_seconds` 为 120（浏览器抓取较慢）；Chromium 位于镜像内 `/opt/ms-playwright`（由镜像级 `PLAYWRIGHT_BROWSERS_PATH` 指定，与 `/root/.cache` 解耦）；tiktoken 编码缓存位于 `/opt/tiktoken`（由 `TIKTOKEN_CACHE_DIR` 指定）。
 
 ---
 

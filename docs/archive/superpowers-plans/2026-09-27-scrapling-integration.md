@@ -112,16 +112,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ```
 
-- [ ] **Step 3: 在 pip 段之后安装 Chromium 浏览器**
+- [ ] **Step 3: 必需资产移出 /root/.cache，并安装 Chromium 浏览器**
 
-在 `api/Dockerfile` 的 pip install 段（第 43-45 行）之后追加：
+在 `api/Dockerfile` 的 apt 段之后、pip 段之前插入（使运行时必需资产与 `/root/.cache` 解耦）：
 
 ```dockerfile
-# Scrapling 的 DynamicFetcher 需要 Chromium；stealthy_fetch 的 Camoufox 刻意不装（见 spec §7）
-# 注意：**不可**追加 `&& rm -rf /root/.cache` —— Playwright 默认把浏览器装在
-# /root/.cache/ms-playwright，清缓存会把刚下好的 Chromium 一并删除，导致运行时
-# DynamicFetcher 报 "Executable doesn't exist at .../chromium-XXXX/chrome"。
-# （pip 层原有的缓存清理保留不变。）
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken
+```
+
+删除原"预下载 tiktoken 到 `/root/.cache/tiktoken`"的步骤（该位置与文件名——应为 url 的 sha1——均不符，从未生效；且会被 pip 段 `rm -rf /root/.cache` 删除），改为在 pip 段之后追加：
+
+```dockerfile
+# 预热 tiktoken 编码缓存（tiktoken 自身按 TIKTOKEN_CACHE_DIR + url 的 sha1 键名写入）
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+
+# 浏览器装到 PLAYWRIGHT_BROWSERS_PATH，与 /root/.cache 解耦（曾误加 `rm -rf /root/.cache`
+# 导致 Chromium 被删、DynamicFetcher 报 "Executable doesn't exist"）
 RUN python -m playwright install chromium
 ```
 
