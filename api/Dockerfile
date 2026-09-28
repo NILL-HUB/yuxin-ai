@@ -37,18 +37,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
-# 预下载 tiktoken 编码文件到缓存目录
-RUN mkdir -p /root/.cache/tiktoken && \
-    curl -o /root/.cache/tiktoken/cl100k_base.tiktoken \
-    https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken
+# 运行时必需资产统一放 /opt，与 /root/.cache（pip 缓存，构建末清理）解耦：
+# - PLAYWRIGHT_BROWSERS_PATH：Scrapling 的 Chromium（默认装到 /root/.cache/ms-playwright，会被下面的 rm 误删）
+# - TIKTOKEN_CACHE_DIR：tiktoken 编码缓存（默认在 /tmp/data-gym-cache；旧版误预下载到
+#   /root/.cache/tiktoken，位置与文件名（应为 url 的 sha1）均不符，从未生效）
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    TIKTOKEN_CACHE_DIR=/opt/tiktoken
 
-# 复制 requirements 并安装依赖
+# 复制 requirements 并安装依赖（仅清理 pip 缓存，不再误伤 /opt 下的必需资产）
 COPY requirements.txt .
 RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
     pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple && \
     rm -rf /root/.cache
 
-# Scrapling 的 DynamicFetcher 需要 Chromium；stealthy_fetch 的 Camoufox 刻意不装（见 spec §7）
+# 预热 tiktoken 编码缓存（tiktoken 自身按 TIKTOKEN_CACHE_DIR + url 的 sha1 键名写入）
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+
+# Scrapling 的 DynamicFetcher 需要 Chromium（按 PLAYWRIGHT_BROWSERS_PATH 装到 /opt/ms-playwright）；
+# stealthy_fetch 的 Camoufox 刻意不装（见 spec §7）
 RUN python -m playwright install chromium
 
 
