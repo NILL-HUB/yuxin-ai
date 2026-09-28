@@ -1147,7 +1147,7 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 - 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
   **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。
 
-### Scrapling 网页抓取（MCP stdio）
+### 10.7 Scrapling 网页抓取（MCP stdio）
 
 平台内置 Scrapling 抓取能力，作为 MCP 目录条目（`api/internal/core/tools/mcp_tools/providers/providers.yaml` 中的 `scrapling`）接通：
 
