@@ -36,10 +36,12 @@
 
 | 依赖 | Scrapling 要求 | 项目现状 | 处置 |
 |---|---|---|---|
-| `mcp` | >=2.0.0 | 1.30.0 | **升级至 2.x**（已实测兼容，见 §3.1） |
-| `playwright` | >=1.62.0 | 1.55.0（worker 镜像） | API 容器新装；worker 镜像不装 scrapaling，不受影响 |
-| `lxml` | >=6.1.1 | 6.0.2 | 升级（minor） |
-| `orjson` | >=3.11.8 | 3.11.7 | 升级（patch） |
+| `mcp` | >=2.0.0 | 1.30.0 | **升级至 `>=2.0.0,<3`**（已实测兼容，见 §3.1） |
+| `playwright` | >=1.62.0 | 1.55.0（worker 镜像） | API 容器新装；worker 镜像不装 scrapling，不受影响 |
+| `lxml` | >=6.1.1 | 6.0.2 | 升级至 6.1.3（minor，**必须**，否则 pip 冲突） |
+| `orjson` | >=3.11.8 | 3.11.7 | 升级至 3.12.0（patch，**必须**，否则 pip 冲突） |
+| `idna` | >=3.18（间接：mcp 2.x → httpx2） | 3.11 | 升级至 3.20（**必须**，否则 pip 冲突） |
+| `anyio` | >=4.14.0（间接：scrapling[fetchers]） | 4.12.1 | 升级至 4.14.2（**必须**，否则 pip 冲突） |
 | 新增 | curl_cffi / patchright / browserforge / apify-fingerprint-datapoints / msgspec / anyio / protego / cssselect / tld / w3lib / markdownify | — | 新增 |
 
 ### 3.1 mcp 1.30 → 2.x 兼容性（决定性验证）
@@ -53,14 +55,27 @@ from .client.stdio import StdioServerParameters, stdio_client   # 保留
 
 项目对 `mcp` 的 Python 依赖**仅 2 处 import**，均在 [mcp_stdio_client.py](file:///d:/DEMO/openagent-main/api/internal/core/tools/mcp_tools/providers/mcp_stdio_client.py#L277-L331)（`_list_tools_async` / `_call_tool_async`），且只用协议最稳定的 API（`initialize` / `list_tools` / `call_tool`）。**升级后现有代码无需改一行**，但仍须全量回归验证。
 
+**端到端实测（隔离 `/tmp/mcp2` 加载 mcp 2.2.0 真实运行）**：
+
+```
+EXPORTS_OK                     # ClientSession / StdioServerParameters / stdio_client 均可导入
+IMPORT_CLIENT_OK               # 项目 McpStdioClient 成功 import
+LIST_TOOLS_OK 13               # 真实 spawn npx @modelcontextprotocol/server-everything → initialize → tools/list
+CALL_TOOL_OK {'content': [{'text': 'Echo: hello-mcp2'}], 'isError': False}
+```
+
+即 mcp 2.2.0 下导出 / import / 真实 spawn / `list_tools` / `call_tool` 全部可用，**无需迁移既有 client 代码**。为防未来 mcp 3.x 静默漂移，依赖收敛为 `mcp>=2.0.0,<3`。
+
 ## 4. 部署设计
 
 ### 4.1 镜像改造（`api/Dockerfile`）
 
 在既有 `api` 镜像上叠加 Scrapling 及其浏览器依赖：
 
-1. `requirements.txt` 增加 `scrapling[ai]>=0.4.15`。
-2. 系统依赖：`scrapling install` 会执行 `playwright install chromium` 与 `playwright install-deps`（需 root + apt）。在 Dockerfile 的 apt 段追加 Chromium 运行库，并执行 `python -m playwright install --with-deps chromium`。
+1. `requirements.txt` 增加 `scrapling[ai]==0.4.15`（并收敛冲突 pin：`lxml`/`orjson`/`idna`/`anyio`，见 §3）。
+2. 系统依赖：在 Dockerfile 的 apt 段追加 Chromium 运行库，并执行 `python -m playwright install chromium`。
+   - **不使用 `scrapling install`**（它会连带安装 Camoufox）。
+   - **不可在该行追加 `rm -rf /root/.cache`**：Playwright 默认将浏览器装到 `/root/.cache/ms-playwright`，清缓存会误删刚装好的 Chromium，导致运行时 `DynamicFetcher` 报 "Executable doesn't exist"（此坑已在实施中实测踩到并修复）。
 3. **StealthyFetcher 的 Camoufox 依赖**：需在构建期单独安装（`scrapling` 的 stealth 引擎）。若构建期安装体积/网络不可接受，可退化为「仅 `Fetcher`/`DynamicFetcher` 可用，`stealthy_fetch` 构建期不装浏览器、运行时按需报错」——见 §7 风险。
 
 ### 4.2 admin 配置（零代码）
@@ -124,13 +139,14 @@ Scrapling MCP 提供 **13 个工具**（已从 `scrapling/core/ai.py` 源码逐�
 
 | 风险 | 严重度 | 缓解 |
 |---|---|---|
-| `mcp 1.30→2.x` 破坏既有 MCP 集成 | 中 | 已实测三导出保留；全量回归 MCP 相关测试；若失败则隔离到独立容器（回退方案 A） |
+| `mcp 1.30→2.x` 破坏既有 MCP 集成 | 中 | **已端到端实测通过**（真实 spawn + `list_tools` + `call_tool`，见 §3.1）；全量回归 MCP 相关测试；若失败则隔离到独立容器（回退方案 A） |
 | `scrapling install` 需 root/apt，构建失败 | 中 | Dockerfile 显式装 Chromium 运行库；构建期日志校验 |
 | Camoufox 体积大 / 构建期网络受限 | 中 | 可不装 Camoufox → `stealthy_fetch` 运行时明确报错，其余工具不受影响 |
 | 浏览器抓取超时（默认 30s） | 中 | Provider `timeout_seconds` 设 120 |
 | 过盾能力被滥用（合规） | 中 | 默认关闭 stealthy 类；仅 admin 显式开启 |
 | 每次调用 spawn 子进程的开销 | 低 | 短连接是有意设计（无常驻内存）；高频调用可后续评估会话复用 |
-| lxml/orjson 升级副作用 | 低 | 全量后端回归 |
+| lxml/orjson/idna/anyio 升级副作用 | 低 | 全量后端回归（Task 5） |
+| MCP 工具参数名与 pydantic 保留属性冲突（如 `json`） | 低 | 实施中发现 `make_request` 的 `json` 参数触发 `Field name "json" shadows an attribute in parent "BaseModel"` 告警；当前不影响工具构建与调用，若后续需要可让 `McpSchemaCompiler` 对冲突字段名做别名映射 |
 
 **回退**：移除 Provider 配置即停用（工具不再装配）；`requirements.txt` 回退即恢复镜像。
 

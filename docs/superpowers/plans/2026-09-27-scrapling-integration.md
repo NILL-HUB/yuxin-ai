@@ -6,7 +6,7 @@
 
 **Architecture:** 不新建容器、不新建代码链路。在 `api` 镜像内安装 `scrapling[ai]` 与 Chromium 依赖；在既有 MCP 目录 `providers.yaml` 新增一条 `transport=stdio`、`command=scrapling-mcp` 的 catalog 条目；admin 在 `/admin/mcp` 一键导入并配置 `tool_names` 白名单控制工具开放范围。运行时由既有 `McpToolFactory → McpStdioClient` 在 API 容器内 spawn 短连接子进程。
 
-**Tech Stack:** Python 3.12 / Quart / SQLAlchemy / pytest / Docker / MCP（`mcp>=2.0.0`）/ Scrapling 0.4.15 / Playwright / Vue3（仅 i18n 与提示，不改逻辑）
+**Tech Stack:** Python 3.12 / Quart / SQLAlchemy / pytest / Docker / MCP（`mcp>=2.0.0,<3`）/ Scrapling 0.4.15 / Playwright / Vue3（仅 i18n 与提示，不改逻辑）
 
 **Spec:** `docs/superpowers/specs/2026-09-27-scrapling-integration-design.md`
 
@@ -16,7 +16,7 @@
 
 | 文件 | 动作 | 职责 |
 |---|---|---|
-| `api/requirements.txt` | 修改 | 增 `scrapling[ai]`，将 `mcp>=1.0.0` 收敛为 `mcp>=2.0.0` |
+| `api/requirements.txt` | 修改 | 增 `scrapling[ai]`，将 `mcp>=1.0.0` 收敛为 `mcp>=2.0.0,<3` |
 | `api/Dockerfile` | 修改 | 装 Chromium 运行库 + `playwright install chromium` |
 | `api/internal/core/tools/mcp_tools/providers/providers.yaml` | 修改 | 新增 `scrapling` catalog 条目 |
 | `api/test/internal/core/tools/test_tooling_core.py` | 修改 | 断言 scrapling catalog 条目的字段 |
@@ -44,7 +44,7 @@ mcp>=1.0.0
 改为：
 
 ```
-mcp>=2.0.0
+mcp>=2.0.0,<3
 ```
 
 - [ ] **Step 2: 验证关键导出在 2.x 下仍存在**
@@ -59,7 +59,7 @@ Expected: `mcp exports ok`
 
 Run:
 ```bash
-docker exec llmops-api sh -lc "cd /app/api && python -m pytest test/internal/core/tools/test_mcp_stdio_client_raw.py test/internal/service/test_mcp_service.py test/internal/service/test_mcp_import_service.py -q --no-cov"
+docker exec llmops-api sh -lc "cd /app/api && python -m pytest test/internal/core/tools/test_mcp_stdio_client_raw.py test/internal/service/test_mcp_service.py test/internal/service/test_mcp_service_cli_binding.py test/internal/service/test_mcp_runtime_adapter.py -q --no-cov"
 ```
 Expected: 全部 PASS（升级未破坏既有集成）
 
@@ -80,13 +80,21 @@ git commit -m "chore(deps): 收敛 mcp 依赖至 2.x 以支持 Scrapling"
 - Modify: `api/requirements.txt`（追加 scrapling）
 - Modify: `api/Dockerfile:30-45`
 
-- [ ] **Step 1: 追加 scrapling 依赖**
+- [ ] **Step 1: 升级冲突 pin 并追加 scrapling 依赖**
 
-在 `api/requirements.txt` 末尾（第 234 行 `yt-dlp==2026.8.19` 之后）追加：
+有下列 pin 会与新增依赖冲突，**必须先升级，否则 pip 解析失败、镜像构建失败**：
+
+1. `api/requirements.txt`:114 —— `lxml==6.0.2` 改为 `lxml==6.1.3`（scrapling 要求 `lxml>=6.1.1`）
+2. `api/requirements.txt`:132 —— `orjson==3.11.7` 改为 `orjson==3.12.0`（scrapling 要求 `orjson>=3.11.8`）
+3. `api/requirements.txt`:74 —— `idna==3.11` 改为 `idna==3.20`（`mcp>=2.0.0` → mcp 2.x → `httpx2>=2.5.0` → httpx2 要求 `idna>=3.18`）
+4. `api/requirements.txt`:8 —— `anyio==4.12.1` 改为 `anyio==4.14.2`（`scrapling[ai]` 传递启用 `scrapling[fetchers]`，其硬要求 `anyio>=4.14.0`）
+5. 在文件末尾（`yt-dlp==2026.8.19` 之后）追加：
 
 ```
 scrapling[ai]==0.4.15
 ```
+
+> 已核实：其余 pin（pydantic==2.12.5 / cryptography==46.0.5 / greenlet==3.3.2 / typing_extensions==4.15.0 / jsonschema==4.26.0 / typing-inspection==0.4.2 / uvicorn==0.35.0 / click==8.3.1）均满足 mcp 2.2.0 与 scrapling 的约束，无需改动。
 
 - [ ] **Step 2: 在 Dockerfile 装 Chromium 运行库**
 
@@ -110,7 +118,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ```dockerfile
 # Scrapling 的 DynamicFetcher 需要 Chromium；stealthy_fetch 的 Camoufox 刻意不装（见 spec §7）
-RUN python -m playwright install chromium && rm -rf /root/.cache
+# 注意：**不可**追加 `&& rm -rf /root/.cache` —— Playwright 默认把浏览器装在
+# /root/.cache/ms-playwright，清缓存会把刚下好的 Chromium 一并删除，导致运行时
+# DynamicFetcher 报 "Executable doesn't exist at .../chromium-XXXX/chrome"。
+# （pip 层原有的缓存清理保留不变。）
+RUN python -m playwright install chromium
 ```
 
 - [ ] **Step 4: 重建 api 镜像**
@@ -134,9 +146,11 @@ Expected: 输出包含 `--http`、`--auth-token` 等选项的 usage
 
 Run:
 ```bash
-docker exec llmops-api python -c "from scrapling.fetchers import Fetcher; r = Fetcher.get('https://example.com'); print('STATUS', r.status, 'LEN', len(r.body))"
+docker exec llmops-api python -c "from scrapling.fetchers import DynamicFetcher; r = DynamicFetcher.fetch('https://example.com', headless=True); print('STATUS', r.status, 'LEN', len(r.body))"
 ```
 Expected: `STATUS 200 LEN <非零>`
+
+> 必须用 `DynamicFetcher`（基于 Playwright/Chromium）验收。`Fetcher` 是 curl_cffi 的纯 HTTP 抓取器、**不启动浏览器**，它通过并不能证明 Chromium 可用（曾因此放过一个"Chromium 被 rm -rf 删掉"的断链）。
 
 - [ ] **Step 7: 提交**
 
@@ -229,20 +243,22 @@ git commit -m "feat(scrapling): 新增 Scrapling 内置 MCP 目录条目"
 **Files:**
 - 无代码改动（纯验证；若失败则回到 Task 2/3 修复）
 
-- [ ] **Step 1: 直接验证 MCP 握手与工具列表**
+- [ ] **Step 1: 直接验证 MCP 握手与工具列表（发现全部工具）**
+
+> 注意：`list_remote_tool_definitions` **内部已按 `binding.tool_names` 过滤**，要看到服务端**全部**工具必须传空白名单 `tool_names: []`；传非空白名单只会返回过滤后的子集（实测传 3 个白名单只回 3 个）。
 
 Run:
 ```bash
 docker exec llmops-api python -c "
 from internal.core.tools.mcp_tools.providers.mcp_tool_factory import McpToolFactory
 f = McpToolFactory()
-binding = {'name': 'scrapling', 'transport': 'stdio', 'command': 'scrapling-mcp', 'args': [], 'env': {}, 'tool_names': ['make_request','bulk_get','fetch'], 'timeout_seconds': 120}
+binding = {'name': 'scrapling', 'transport': 'stdio', 'command': 'scrapling-mcp', 'args': [], 'env': {}, 'tool_names': [], 'timeout_seconds': 120}
 defs = f.list_remote_tool_definitions(binding)
 print('TOTAL_DISCOVERED', len(defs))
 print('NAMES', sorted(d['name'] for d in defs))
 " 2>&1 | tail -n 5
 ```
-Expected: `TOTAL_DISCOVERED 13`，NAMES 含 `make_request`/`bulk_get`/`fetch`/`stealthy_fetch` 等 13 个
+Expected: `TOTAL_DISCOVERED 13`，NAMES 含 `make_request`/`bulk_get`/`fetch`/`stealthy_fetch`/`screenshot` 等 13 个
 
 - [ ] **Step 2: 验证白名单过滤生效**
 
