@@ -70,6 +70,43 @@ def test_file_read_blocks_outside_safe_root(tmp_path, monkeypatch):
     assert "超出允许目录" in result["error"]
 
 
+def test_file_list_enumerates_dirs_first_and_sensitive_skipped(tmp_path, monkeypatch):
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+    (tmp_path / "A").mkdir()
+    (tmp_path / ".env").write_text("SECRET=1", encoding="utf-8")
+
+    result = _file_operation({"op": "list", "path": str(tmp_path), "working_dir": str(tmp_path)})
+
+    assert result["ok"] is True
+    names = [entry["name"] for entry in result["entries"]]
+    # 目录在前，字典序；敏感文件（.env）被跳过
+    assert names == ["A", "b.txt"]
+    assert result["entries"][0]["is_dir"] is True
+    assert result["entries"][1]["is_dir"] is False
+
+
+def test_file_list_blocks_outside_safe_root(tmp_path, monkeypatch):
+    outside = tmp_path.parent
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+
+    result = _file_operation({"op": "list", "path": str(outside), "working_dir": str(tmp_path)})
+
+    assert result["ok"] is False
+    assert "越界" in result["error"]
+
+
+def test_file_list_rejects_non_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / "notes.txt"
+    target.write_text("x", encoding="utf-8")
+
+    result = _file_operation({"op": "list", "path": str(target), "working_dir": str(tmp_path)})
+
+    assert result["ok"] is False
+    assert "不是目录" in result["error"]
+
+
 def test_file_patch_preview_then_apply(tmp_path, monkeypatch):
     """preview 只读校验后可选择 dry-run 预检查；apply 直接执行无需 approval_token。"""
     monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))

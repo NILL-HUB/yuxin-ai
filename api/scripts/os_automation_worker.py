@@ -247,6 +247,47 @@ def _sensitive_search_globs() -> list[str]:
     return globs
 
 
+def _file_list_dir(path: str, root: str, limit: int = 0) -> dict[str, Any]:
+    """枚举目录内的直接子项（名称/类型/大小/修改时间），敏感项跳过。
+
+    仅列一层（不做递归），便于 Agent 与用户逐级浏览；越界与敏感路径拒绝。
+    """
+    try:
+        resolved = str(Path(path).expanduser().resolve()) if path else root
+    except OSError:
+        return {"ok": False, "error": f"路径无法解析: {path}"}
+    if not _is_path_within(root, resolved):
+        return {"ok": False, "error": f"目录越界（安全根 {root}）"}
+    if not os.path.isdir(resolved):
+        return {"ok": False, "error": "目标不是目录或不存在"}
+    entries: list[dict[str, Any]] = []
+    try:
+        with os.scandir(resolved) as scan:
+            for item in scan:
+                if _sensitive_read_hit(item.path):
+                    continue
+                try:
+                    stat = item.stat()
+                except OSError:
+                    continue
+                entries.append(
+                    {
+                        "name": item.name,
+                        "is_dir": item.is_dir(),
+                        "size": stat.st_size,
+                        "modified_at": int(stat.st_mtime),
+                    }
+                )
+    except PermissionError as exc:
+        return {"ok": False, "error": f"无权限访问: {exc}"}
+    entries.sort(key=lambda entry: (not entry["is_dir"], str(entry["name"]).lower()))
+    truncated = False
+    if limit and limit > 0 and len(entries) > limit:
+        entries = entries[:limit]
+        truncated = True
+    return {"ok": True, "path": resolved, "entries": entries, "truncated": truncated}
+
+
 def _file_safe_read(path: str, root: str, offset: int = 0, limit: int = 0) -> dict[str, Any]:
     if not _is_path_within(root, path):
         return {"ok": False, "error": "路径超出允许目录", "path": path}
@@ -638,6 +679,11 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             offset=payload.get("offset", 0),
             limit=payload.get("limit", 0),
         )
+        return result
+
+    if op == "list":
+        path = str(payload.get("path") or "").strip() or working_dir
+        result = _file_list_dir(path, working_dir, limit=int(payload.get("limit") or 0))
         return result
 
     if op == "search":

@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 class OsFileTaskInput(BaseModel):
     """宿主机文件操作输入。"""
 
-    op: Literal["read", "search", "patch"] = Field(
+    op: Literal["read", "search", "patch", "list"] = Field(
         ...,
-        description="read=读取文件内容（支持分页）；search=在目录内用 ripgrep 搜索文件内容；patch=应用 V4A 补丁修改文件",
+        description="read=读取文件内容（支持分页）；search=在目录内用 ripgrep 搜索文件内容；patch=应用 V4A 补丁修改文件；list=枚举目录内的直接子项（名称/类型/大小/修改时间）",
     )
     path: str = Field(
         "",
@@ -130,8 +130,9 @@ class OsFileTaskTool(BaseTool):
 
     name: str = "os_file_task"
     description: str = (
-        "在宿主机操作系统上读取/搜索文件，或应用 V4A 补丁修改文件。"
-        "read 模式直接返回文件内容（可带 offset/limit 分页）；search 模式在目录内"
+        "在宿主机操作系统上读取/搜索/枚举文件，或应用 V4A 补丁修改文件。"
+        "read 模式直接返回文件内容（可带 offset/limit 分页）；list 模式枚举目录内的"
+        "直接子项（名称/是否目录/大小/修改时间，敏感项自动跳过）；search 模式在目录内"
         "用 ripgrep 搜索文件内容并返回命中的行；patch 模式默认 mode=apply 直接执行"
         "修改——worker 会在写前自动为受影响文件捕获快照、删除类操作移入回收站，"
         "改错可用 os_snapshot 工具回滚，无需逐次用户确认；如需先预检查，可用 "
