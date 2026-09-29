@@ -25,6 +25,7 @@
 - [公共 AI 资源配置](prd/modules/07-public-ai-config.md)
 - [OS 自动化与设备 Agent](prd/modules/08-os-automation.md)
 - [Windows 桌面客户端（设备 Agent 宿主壳）](prd/modules/09-desktop-client.md)
+- [沙箱运行时（admin 统一配置与多后端热切换）](prd/modules/10-sandbox-runtime.md)
 
 ## 记忆系统
 
@@ -49,7 +50,12 @@
   - [配置治理：admin 统一化审计清单](research/config-inventory.md)：env 读取点分级（已修复/死代码/合理保留/待评估），存储 configs 接入入口
 - [已完成计划的归档](archive/)：已落地的 roadmap / 执行历史 / 计划与规格（orchestration / knowledge / admin-refactor / memory-system execution / superpowers-plans / superpowers-specs）
 - [superpowers plans & specs](superpowers/)：**仅保留尚未落地或仍在途**的实现计划与规格
-  - [沙箱配置治理与多后端热切换设计](superpowers/specs/2026-09-29-sandbox-config-multi-backend-design.md)：把沙箱从"14 处散读 env"收编为 admin 可配 + 多后端热切换（在途，待评审）
+  - [用户侧统一文件中心（虚拟目录树）设计](superpowers/specs/2026-09-30-user-file-center-design.md)：新增用户可见的文件目录树管理面 + 可被 Agent 使用的 `file_center` 工具集（在途，待评审）
+  - [用户侧文件中心（后端核心）实施计划](superpowers/plans/2026-09-30-user-file-center-backend.md)：模型 + 迁移 + `FileCenterService` + `/space/files/*` 路由（在途，Plan 1）
+  - [用户侧文件中心（回收站原目录恢复）实施计划](superpowers/plans/2026-09-30-user-file-center-recycle-restore.md)（在途，Plan 2）
+  - [用户侧文件中心（Agent 工具）实施计划](superpowers/plans/2026-09-30-user-file-center-agent-tools.md)（在途，Plan 3）
+  - [用户侧文件中心（产物收编）实施计划](superpowers/plans/2026-09-30-user-file-center-artifact-collection.md)（在途，Plan 4）
+  - [用户侧文件中心（前端）实施计划](superpowers/plans/2026-09-30-user-file-center-frontend.md)（在途，Plan 5）
   - [第三方工具凭证收编 admin 设计](superpowers/specs/2026-09-29-tool-provider-credential-admin-design.md)：搜索密钥等从"散读 env"收编为 admin 可配 + 加密入库 + 单一解析入口（在途，待评审）
   - [管理端 Agent 定时任务统一设计](superpowers/specs/2026-09-26-admin-agent-schedule-unification-design.md)
   - [MCP 配置表单简化设计](superpowers/specs/2026-09-25-mcp-config-form-simplification-design.md)

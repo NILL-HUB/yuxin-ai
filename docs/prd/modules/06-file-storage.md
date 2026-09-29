@@ -400,3 +400,32 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 | POST | `/space/chunked-uploads/abort` |
 
 > 与单次上传的配额口径差异：单次上传经 `RuntimeStorageProxy` 收口校验；分片上传由 `ChunkedUploadService` 直接调用 `StorageQuotaService.check_quota`（init / instant）与 `add_usage`（complete / instant），语义一致（成功后才计量）。
+
+### 17.14 用户文件中心（虚拟目录树）
+
+用户可见的文件管理面：每账号一棵目录树，聚合「用户上传 / Agent 产物 / 渲染成品 / 平台云端存储」四类来源。
+
+**定位（组织层，非存储层）**：
+- 物理对象仍归 `RuntimeStorageProxy`（local/cos/oss 切换与配额不变）；
+- 删除/恢复仍归 `RecycleBinService`（`resource_type="upload_file"`）；
+- 配额仍归 `StorageQuotaService`；
+- 本中心只维护「文件在目录树中的位置与展示名」。
+
+**数据模型** `file_center_entry`（`api/internal/model/file_center_entry.py`，迁移 `o9f0a1b2c3d4`）：
+
+| 列 | 说明 |
+|---|---|
+| `id` / `account_id` / `parent_id` | 节点标识与树结构（`parent_id IS NULL` 表示账号根） |
+| `name` / `is_folder` | 展示名与节点类型（folder / file） |
+| `upload_file_id` | 文件节点 1:1 指向 `UploadFile`；**不加外键**——回收站物理删除 `upload_file` 后节点需保留，恢复时再挂回，外键会阻塞删除 |
+| `source` | 来源：`upload` / `artifact` / `render_output` / `platform` |
+| `origin` | 来源标记（如 `knowledge_base` 表示只读来源） |
+
+唯一性：`(account_id, name)`（根级）与 `(account_id, parent_id, name)`（子级）两条 **partial unique index**（Postgres 中 NULL 不参与唯一约束，故必须拆两条）。
+
+**服务与路由**：
+- 服务：`api/internal/service/file_center_service.py`（`list_children` / `list_all_files` / `mkdir` / `rename` / `move` / `import_upload_file` / `delete_node`）；
+- 路由：`api/app/http/file_center_routes.py` → `GET /space/files`、`GET /space/files/all`、`POST /space/files/folders`、`PATCH /space/files/<id>`、`DELETE /space/files/<id>`、`POST /space/files/import`；
+- 删除语义：文件节点入回收站（可恢复）；目录节点递归处理子树。
+
+**与知识库的关系**：`KnowledgeDocument.upload_file_id` 对应文件**不复制**，以 `origin=knowledge_base` 只读出现，删除受既有引用保护。
