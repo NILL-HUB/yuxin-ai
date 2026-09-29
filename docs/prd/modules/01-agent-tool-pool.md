@@ -1127,6 +1127,18 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 
 渐进式启用通过 OrchestrationFeatureFlag 控制（底座已有此机制）。
 
+#### 10.5.3 模型能力 → 工具绑定打通（`bind_tools` 闸门）
+
+工具"装配完成"不等于"模型能用"。`FunctionCallAgent._llm_node` 仅在
+`ModelFeature.TOOL_CALL ∈ llm.features` 时才 `bind_tools(tools)`；`llm.features`
+由模型池 `model_pool_config.capabilities` 经 `LanguageModelManager._build_model_entity`
+→ `_normalize_capability_to_feature` 归一化得到。
+
+- **能力标签归一化（`language_model_manager.py`）**：`_CAPABILITY_LABEL_TO_FEATURE` **同时识别中英文**（`tool_call`/`工具调用`/`函数调用`；`reasoning`/`深度推理`；`image_input`/`多模态`/`视觉` 等），并对 `多模态理解…`、`内置工具调用能力` 等复合中文标签做高精度子串兜底。历史缺陷：只认英文，中文能力标签被静默丢弃 → 闸门误判为"模型不支持工具调用"，工具装配了却永不绑定、模型转而编造伪工具调用。
+- **数据面**：模型 `capabilities` 必须如实声明（如 `["tool_call"]`）；`public_ai_feature_config` 中实际使用的 feature（`assistant_agent` / `conductor` / `task_classification` / `tool_selection` / `pool_intent_resolution` / `public_agent_router` 等）需绑定可用模型。
+- **防御（伪工具调用剥离）**：当模型未真正绑定工具却按 system prompt 编造 XML 工具调用时，`internal/core/agent/entities/agent_text_sanitizer.py` 在唯一权威输出口剥离 `<tool>…</tool>`（标签名 ∈ 实际工具名 ∪ 通用工具标签）；流式经 `PseudoToolCallStreamFilter` 前缀回撤缓冲，避免跨 chunk 标签泄漏（`<`、`search`、`_knowledge_base>` 分片）。
+- **提示词一致性**：模型无法绑定工具时，`_long_term_memory_recall_node` 选用 `agent_system_prompt_template_no_tools`（不注入任何"调用某工具"指令），避免"提示词承诺工具、运行时没有工具"的错配。
+
 ### 10.6 凭证与 Key 池的分区判据
 
 判据**不是**「模型 vs 工具」，而是**「该凭证是否需要在多个候选之间路由」**：
@@ -1227,4 +1239,42 @@ AssistantAgentService._build_assistant_runtime_tools(account_id)
 入参组装由 `RetrievalService._build_retrieval_filter(...)` 完成，产出 `RetrievalFilter` 传给 `layered_search`：四个入参全为空时返回 `None`（不过滤）；有标签名但解析不到任何标签时返回**空 `tag_ids`** 的 filter，由检索层 **fail closed**（返回空结果），**不得退化成"不过滤"**。过滤语义与 SQL 下推位置详见 [02-knowledge-base.md §11.9](./02-knowledge-base.md#119-检索过滤参数p3-已落地)。
 
 > 注意：工具入参名为 `media_types`（复数列表），与产品设计稿中早期写的单数 `media_type` 不同，以代码为准。
+
+---
+
+## 13. 技能包同步状态机（`sync_status`）
+
+`executor_type=scf` 的技能包需要把代码（`skill.py` + 工具定义）推送到远端 **SCF 云函数执行服务**（`SkillScfClient`，endpoint 取 `SKILL_SCF_URL`，缺失时回落 `SANDBOX_URL`），推成功后 Agent 才能调用其工具；`executor_type=prompt` 的技能包不涉及远端。同步结果落在 `skill_package.sync_status` 与 `skill_package_version.sync_status`。
+
+### 13.1 取值与语义
+
+写入方单一权威入口：`api/internal/service/skill_service.py`。
+
+| 取值 | 含义 | 是否终态 |
+| --- | --- | --- |
+| `pending` | 已创建/已变更，尚未成功同步（瞬态，随后写入下面之一） | 否 |
+| `synced` | 已成功同步到远端 SCF | 是 |
+| `failed` | 已尝试同步但失败（原因见 `sync_error`） | 是 |
+| `skipped` | 无需远端同步（非 scf 类型，或 scf 但无工具定义） | 是 |
+| `not_configured` | 远端 SCF 未配置（`SKILL_SCF_URL` / `SANDBOX_URL` 缺失或为占位符），未发起同步，原因见 `sync_error` | 否（刻意） |
+
+**终态集合**为 `{synced, skipped, failed}`，用于 `_sync_local_package` 的"内容未变则不重推"短路判断。`pending` / `not_configured` **刻意不属终态**：远端配置补齐后，下次同步应自动补推。常量定义见 `skill_service.py` 顶部注释。
+
+### 13.2 写入路径与读取路径（接线）
+
+| 方向 | 位置 |
+| --- | --- |
+| 写入（同步执行） | `SkillService._sync_package_to_scf`（唯一落库点，被创建/更新/回滚/强制同步/catalog 同步共用） |
+| 写入（跳过） | 非 scf 或无工具 → 直接写 `skipped`（`_sync_local_package` / `create_skill_package_for_admin` / `update_skill_package_for_admin`） |
+| 管理端入口 | `POST /admin/skills/<id>/sync`（`admin_routes_4.py`，强制同步） |
+| 用户端入口 | `POST /skills/<id>/sync`（`skills_tools_routes.py`） |
+| 返回契约 | 两个入口均回传 `{"sync_status", "sync_error"}`，调用方据此如实提示（**不得用"接口 200"等同"已同步"**） |
+| 前端入口 | `GlobalControl`→Skills 管理页 `AdminSkillsView.vue`（`/admin/skills`） |
+| 前端状态映射 | `ui/src/utils/admin-skill-sync.ts`（单一事实源：全部取值 → 文案/颜色/提示级别） |
+
+### 13.3 已修复缺陷（2026-09-27）
+
+`_sync_package_to_scf` 曾把"远端未配置（`skipped` 结果）"写成 `sync_status="pending"` 且 `sync_error=""`。由于 `pending` 在前端渲染为**"同步中"**、且没有任何任务会把它推进到终态，导致所有 scf 类型技能永久卡在"同步中"（管理员既看不出是"未配置"，也等不到结果）。修复：改写 `not_configured` 并保留原因；前端补齐 `skipped` / `not_configured` 映射、展示 `sync_error`、提示语改为按真实结果给出。
+
+**同族实体核查**（同期）：`mcp_tool.sync_status`（`pending` / `ready` / `stale`）未在任何管理端界面展示，MCP 在应用能力侧另有 `mcp-status.ts` 的兜底呈现，无同等误导；`external_data_source.sync_status`（`idle` / `syncing` / `success` / `failed`）前端映射完整且失败经 `last_error` 如实回显。故本类缺陷仅 `skill_package` 一侧成立。
 

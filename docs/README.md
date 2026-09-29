@@ -44,6 +44,7 @@
 ## 调研与计划归档
 
 - [调研文档](research/)：外部项目调研（Hermes 等）与内部审计快照，结论供参考、不代表当前实现
+  - [**能力可用性与用户链路体检（Web 环境）**](research/2026-09-29-capability-and-user-path-audit.md)：**当前最优参考**——Web 环境「真能干什么/不能干什么」、云端与本地客户端依赖矩阵、生产就绪度缺陷清单与修复路径（含真实用户链路实测）
   - [渲染架构与多租户扩容方案评估](research/render-distribution-and-multi-tenant-scaling.md)：渲染算力成本模型、官方分布式方案、桌面端本机渲染可行性（设计稿）
   - [配置治理：admin 统一化审计清单](research/config-inventory.md)：env 读取点分级（已修复/死代码/合理保留/待评估），存储 configs 接入入口
 - [已完成计划的归档](archive/)：已落地的 roadmap / 执行历史 / 计划与规格（orchestration / knowledge / admin-refactor / memory-system execution / superpowers-plans / superpowers-specs）

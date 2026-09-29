@@ -300,8 +300,8 @@ UI 展示原则：
 ## 13. 编排执行：Conductor + ExecutionCoordinatorService
 
 > **现状说明（取代原 v5.2 注记）**：原 Orchestrator 多模块串行（TaskClassifier → TaskPlanner → PoolIntentResolver → ExecutionModeSelector）已被 ConductorService 替代。现状链路为：
-> - 编排决策：`ENABLE_CONDUCTOR` 开启时，`assistant_agent_service.py` / `orchestrator_service.py` 委托 **ConductorService.plan()** 单次 LLM `structured_output` 输出 `ConductorPlan`；OrchestratorService 在 Conductor 决策异常时回退旧规则链路（`orchestrator_service.py` 日志"Conductor 决策失败，回退旧 Orchestrator"）。
-> - 执行编排：`ConductorPlan` 经 `to_task_plan()` 转为 `TaskPlan`，由 **ExecutionCoordinatorService** 按并行/波次/串行分派执行；执行失败经 `repair_plan()` 修复（`_build_plan_repairer`，见 `assistant_agent_service.py`）。
+> - 编排决策（**唯一权威入口**）：助手等所有渠道统一经 `OrchestratorService.decide()`；`ENABLE_CONDUCTOR` 开启时其内部委托 **ConductorService.decide()**（= `plan()` + 补齐 `tool_subset` / `cost_policy` + 深度思考增强 + 路由日志），异常时回退旧规则链路（`orchestrator_service.py` 日志"Conductor 决策失败，回退旧 Orchestrator"）。**2026-09-29 起 `assistant_agent_service.py` 不再直连 `conductor.plan()`**——旧实现会丢失 `tool_subset`（动态工具不挂载）/ 深度思考增强 / 路由日志，构成与 Orchestrator 的平行实现，已删除并收敛到唯一入口。
+> - 执行编排：`ConductorPlan` 经 `to_task_plan()` 转为 `TaskPlan`，由 **ExecutionCoordinatorService** 按并行/波次/串行分派执行；执行失败经 `repair_plan()` 修复（`_build_plan_repairer`，见 `assistant_agent_service.py`，**与主路由同一门控：仅 `ENABLE_CONDUCTOR` 开启时启用**，否则关闭开关后重规划会绕过开关调用 conductor）。
 > - 执行器真实现分部：`internal/service/executors/` 下为 `single_agent_executor.py` / `multi_agent_executor.py` / `direct_answer_executor.py`；`AgentTaskExecutor`（`agent_task_executor.py`）位于 `internal/service/` 根目录（不在 `executors/`），负责具体子任务执行，并在 `_resolve_query` 中把上游子任务结果（`upstream_results`）拼进 query。
 > - DAGEngine 时代遗留（`dag_entity` / `dag_engine_service` / `agent_instance_pool` / `test_dag_engine`）已于 2026-08-26 删除，统一为 `TaskPlan + ExecutionCoordinatorService`。
 

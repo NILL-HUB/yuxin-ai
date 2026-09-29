@@ -512,9 +512,33 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 
 **回归防护**：`test_global_control_config_service.py`（section 注册 + float/区间/非数值校验）、`test_task_classifier_service.py::TestTaskClassifierConfidenceGate` / `TestTaskClassifierConfidenceConfigWiring`、`test_intent_recognition_service.py::TestIntentRecognitionConfidenceGate` / `TestIntentRecognitionConfidenceConfigWiring`——**均含反向验证**（禁用门控分支或断开配置读取时测试失败）。
 
+### 差异 9：技能包同步状态"说谎"——未配置被写成"同步中"且永无终态（✅ 已修复，2026-09-27）
+
+**问题**：`SkillService._sync_package_to_scf` 在远端 SCF 未配置（`SKILL_SCF_URL` / `SANDBOX_URL` 均缺失或为占位符）时，把 `sync_package` 返回的 `{"skipped": True}` 写成 `sync_status="pending"` + `sync_error=""`。而 `pending` 在管理端渲染为**"同步中"**，且系统内**没有任何任务**会把它推进到终态——于是所有 `executor_type=scf` 的技能永久卡在"同步中"；管理员既看不到"未配置"，也拿不到任何原因（后端实测：接口瞬间返回 200 且未发起任何网络请求，"同步任务已提交"的提示与实际不符）。前端另有独立缺陷：`getSyncStatusTag` 漏映射 `skipped`（"无需同步"退化成裸英文码）。
+
+**修复**：① 后端未配置时改写 `not_configured` 并保留原因到 `sync_error`，且刻意**不进入终态集合**（`{synced, skipped, failed}`），远端配好后下次同步自动补推；② 两个同步入口（`/admin/skills/<id>/sync`、`/skills/<id>/sync`）均回传 `{"sync_status", "sync_error"}`，调用方据此如实提示；③ 前端抽出单一事实源 `ui/src/utils/admin-skill-sync.ts`（取值→文案/颜色/提示级别全量映射），补齐 `skipped` / `not_configured`、未知值不再直出裸码、抽屉与版本列表展示 `sync_error`、提示语改为按真实结果给出（`pending` 文案由"同步中"改为"待同步"）。
+
+**同族实体核查**：`mcp_tool.sync_status`（未在任何管理端界面展示）与 `external_data_source.sync_status`（前端映射完整 + `last_error` 回显）**均不成立同等误导**，故本次只改 `skill_package` 一侧；结论已写入 [01-agent-tool-pool.md §13](../prd/modules/01-agent-tool-pool.md)。
+
+**回归防护**：后端 `test_skill_service.py`（未配置→`not_configured`+原因、`not_configured` 不短路重推）、`test_admin_routes_4.py`（同步接口回传真实结果）；前端 `AdminSkillsView.spec.ts` 的映射完整性守卫（全部取值必须有语义文案、不同取值不得塌缩为同一语义键、未知值不直出裸码、非完成态不得报成功）——**均含反向验证**。
+
 ---
 
 ## 3. 最新任务清单
+
+### AUDIT-P0（能力与用户链路体检，待处理 —— 2026-09-29）
+
+> 来源：[能力可用性与用户链路体检（Web 环境）](../research/2026-09-29-capability-and-user-path-audit.md)。该文档以**真实用户请求**复核了各能力的落地状态，结论与 [product-vision.md](./product-vision.md) §三的若干「✅」**不一致**（详见体检文档 §5）。
+
+| 任务 | 证据 | 状态 |
+| --- | --- | --- |
+| **P0-1 修复工具调用主干**（✅ 2026-09-29 已修复）：根因是**能力闸门脱钩**——模型的 `capabilities=[]` 且 `_CAPABILITY_LABEL_TO_FEATURE` 只认英文（中文"工具调用"被静默丢弃），`ModelFeature.TOOL_CALL` 丢失 → `FunctionCallAgent._llm_node` 跳过 `bind_tools` → 模型按 system prompt 指令编造 XML 工具调用并当正文泄漏。修复：A1 能力归一化支持中文；A2 模型能力数据补 `tool_call`；A3 4 个 routing feature 补绑模型；B4 路由统一走 `OrchestratorService.decide`；C7 输出口伪工具调用剥离（流式状态机）；C8 无工具时不注入工具指令。 | 真实请求实测：修复前落库 `<search_knowledge_base>…`、修复后落库正常 Markdown 且出现原生 `agent_thought`(tool_calls)、`web_search` 被真实调用 | ✅ 已完成 |
+| **P0-2 决策沙箱路线**：`E2B_API_KEY`/`E2B_DOMAIN`/`SKILL_SCF_URL` 未配置 → 代码执行、深度思考产物、25 个 scf 技能不可用；深度思考**静默降级**无感知 | 端点 DNS 失败；`SANDBOX_URL` 为占位符 | ⛔ 待处理（接通或诚实下线） |
+| **P0-3 视频渲染**：`llmops-render-worker` 属 `cloud-render` profile 默认关闭 + 无在线桌面端 → `render_video` 必然失败 | compose profiles；`desktop_device` 无在线设备 | ⛔ 待处理 |
+| **P0-4 SSE 流异常截断**：约 60s 处 `ASGI callable returned without completing response`，无 traceback | api 日志；2026-09-29 复核：客户端已收全 `agent_end`/`billing_final` 后仍报 `incomplete chunked read`，属 SSE 传输层收尾问题、非业务异常 | ⛔ 待定位 |
+| **P0-5 MCP 全量不可用且失败被吞**：12 个 provider / **0 tool**，`ASSISTANT_MCP_BINDINGS=[]`，同步失败仅日志 | 数据表 | ⛔ 待处理 |
+| **P1-1 工具 enabled × 依赖联动**：75 个内置工具全部 `enabled=true`，未做「依赖缺失即标记未配置」（对齐本次已修的技能同步 `not_configured` 范式） | 数据表 | ⛔ 待处理 |
+| **P1-2 用户链路冒烟测试纳入 CI**：现有测试均为系统性单点/组合 API，P0-1 正因缺此测试长期潜伏 | — | ⛔ 待处理 |
 
 ### FIX-P0（第三轮修复，已完成）
 

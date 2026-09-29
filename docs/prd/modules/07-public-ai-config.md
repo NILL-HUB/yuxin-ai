@@ -128,6 +128,8 @@
 
 > **deprecated 字段**：`public_ai_feature_config` 表的 `deprecated` 字段（v5.2 新增）标记被指挥官替代的旧路由 feature_key，运行时不再调用。当前仅 `task_decomposition`（已删除）适用该语义；`assistant_agent` 等历史记录的 deprecated 取值以 DB 实际为准。
 
+> **能力声明一致性（2026-09-29）**：绑定给这些 feature 的模型必须如实声明 `capabilities`。`assistant_agent` / `conductor` / `direct_answer` 等若绑定到未声明 `tool_call` 的模型，`FunctionCallAgent` 会跳过 `bind_tools`——工具装配了却下发给模型为空，模型转而在正文里编造伪工具调用（对齐 [01-agent-tool-pool.md §10.5.3](./01-agent-tool-pool.md)）。后台能力标签**中英文均可**（`工具调用` == `tool_call`，归一化见 `language_model_manager._normalize_capability_to_feature`）。本次修复核查：`assistant_agent` / `conductor` / `task_classification` / `tool_selection` / `pool_intent_resolution` / `public_agent_router` 统一绑定到已声明 `tool_call` 的 chat 模型。
+
 ### 24.3.4 助手类（5 个，其中 4 个 billable=true，model_type=chat）
 
 | feature_key | billable | 说明 |
