@@ -279,8 +279,13 @@ def _persist_remote_asset(
     folder: str,
     kind: str,
     storage_port: ObjectStoragePort | None = None,
+    account_id=None,
 ) -> str:
-    """下载 Atlas Cloud 生成的远程资源并保存到 COS。"""
+    """下载 Atlas Cloud 生成的远程资源并保存。
+
+    提供 ``account_id`` 时建 UploadFile 记录并入文件中心（`产物/`，计配额）；
+    未提供时维持原行为（只落对象、不建记录）。
+    """
     if not asset_url:
         raise FailException("Atlas Cloud 生成失败：未返回资源 URL")
 
@@ -293,6 +298,16 @@ def _persist_remote_asset(
         kind=kind,
     )
     filename = f"{source}_{uuid.uuid4().hex}.{extension}"
+    if account_id:
+        from app.http.module import injector
+        from internal.service.file_center_service import FileCenterService
+
+        return injector.get(FileCenterService).save_generated_asset(
+            account_id,
+            filename=filename,
+            content=response.content,
+            folder=folder,
+        )["url"]
     if storage_port is not None:
         return storage_port.upload_bytes_without_record(
             filename=filename,
@@ -308,7 +323,13 @@ def _persist_remote_asset(
     )
 
 
-def persist_remote_image(image_url: str, *, source: str, storage_port: ObjectStoragePort | None = None) -> str:
+def persist_remote_image(
+    image_url: str,
+    *,
+    source: str,
+    storage_port: ObjectStoragePort | None = None,
+    account_id=None,
+) -> str:
     """下载图像并保存到 COS。"""
     return _persist_remote_asset(
         image_url,
@@ -316,10 +337,17 @@ def persist_remote_image(image_url: str, *, source: str, storage_port: ObjectSto
         folder="generated-images",
         kind="image",
         storage_port=storage_port,
+        account_id=account_id,
     )
 
 
-def persist_remote_video(video_url: str, *, source: str, storage_port: ObjectStoragePort | None = None) -> str:
+def persist_remote_video(
+    video_url: str,
+    *,
+    source: str,
+    storage_port: ObjectStoragePort | None = None,
+    account_id=None,
+) -> str:
     """下载视频并保存到 COS。"""
     return _persist_remote_asset(
         video_url,
@@ -327,4 +355,5 @@ def persist_remote_video(video_url: str, *, source: str, storage_port: ObjectSto
         folder="generated-videos",
         kind="video",
         storage_port=storage_port,
+        account_id=account_id,
     )

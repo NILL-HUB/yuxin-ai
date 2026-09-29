@@ -85,6 +85,7 @@ def _edit_image(
         persisted_url = persist_remote_image(
             image_url,
             source="atlascloud-gpt-image-2-edit",
+            account_id=kwargs.get("account_id"),
         )
         result_lines.append(f"结果图片 {idx}:")
         result_lines.append(f"  URL: {persisted_url}")

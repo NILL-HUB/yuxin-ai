@@ -64,6 +64,7 @@ def _generate_image(prompt: str, size: str = "1024x1024", quality: str = "medium
         persisted_url = persist_remote_image(
             image_url,
             source="atlascloud-gpt-image-2-text-to-image",
+            account_id=kwargs.get("account_id"),
         )
         result_lines.append(f"图片 {idx}:")
         result_lines.append(f"  URL: {persisted_url}")

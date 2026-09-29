@@ -205,13 +205,17 @@ def test_qwen_image_tool_should_persist_generated_image_url(monkeypatch):
     monkeypatch.setattr(
         qwen_module,
         "persist_remote_image",
-        lambda image_url, source: captured.update({"url": image_url, "source": source}) or "https://cos.example.com/generated.png",
+        lambda image_url, source, account_id=None: captured.update(
+            {"url": image_url, "source": source, "account_id": account_id}
+        )
+        or "https://cos.example.com/generated.png",
     )
 
-    result = _generate_image("上海初夏旅行穿搭")
+    result = _generate_image("上海初夏旅行穿搭", account_id="acc-1")
 
     assert captured["url"].startswith("https://temporary.example.com/output.png")
     assert captured["source"] == "qwen-image"
+    assert captured["account_id"] == "acc-1"
     assert "https://cos.example.com/generated.png" in result
     assert "图片已持久化保存" in result
 

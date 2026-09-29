@@ -73,7 +73,11 @@ def _generate_image(prompt: str, **kwargs) -> str:
 
         # 添加图片信息
         for idx, img in enumerate(data["images"], 1):
-            img_url = persist_remote_image(img.get("url", ""), source="qwen-image")
+            img_url = persist_remote_image(
+                img.get("url", ""),
+                source="qwen-image",
+                account_id=kwargs.get("account_id"),
+            )
             result_lines.append(f"图片 {idx}:")
             result_lines.append(f"  URL: {img_url}")
             result_lines.append("  提示: 图片已持久化保存，可直接访问和引用")

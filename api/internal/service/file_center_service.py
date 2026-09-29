@@ -255,6 +255,43 @@ class FileCenterService:
             "name": entry.name,
         }
 
+    def save_generated_asset(
+        self,
+        account_id,
+        *,
+        filename: str,
+        content: bytes,
+        folder: str = "generated-images",
+        asset_folder: str = "产物",
+    ) -> dict:
+        """把生成的媒体资产落库并挂入文件中心，返回 upload_file / entry / url。
+
+        供图片、视频等产物写入点**统一调用**：避免各处各写一套「建记录 + 入树」。
+        """
+        if self.storage is None:
+            raise ValidateErrorException("存储服务不可用")
+        upload_file = self.storage.upload_bytes(
+            filename=filename,
+            content=content,
+            account_id=account_id,
+            folder=folder,
+        )
+        parent_id = ensure_path(account_id, [asset_folder])
+        entry = self.import_upload_file(
+            account_id,
+            upload_file_id=upload_file.id,
+            parent_id=parent_id,
+            name=upload_file.name,
+            source="artifact",
+        )
+        return {
+            "upload_file": upload_file,
+            "entry": entry,
+            "url": self.storage.get_file_url(
+                upload_file.key, download_name=upload_file.name
+            ),
+        }
+
     # ------------------------------------------------------------------ #
     #  内部工具
     # ------------------------------------------------------------------ #

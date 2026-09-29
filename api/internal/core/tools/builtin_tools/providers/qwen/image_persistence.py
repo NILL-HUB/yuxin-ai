@@ -36,8 +36,13 @@ def persist_remote_image(
     *,
     source: str,
     storage_port: ObjectStoragePort | None = None,
+    account_id=None,
 ) -> str:
-    """下载第三方图片并上传到 COS，返回稳定 URL。"""
+    """下载第三方图片并上传到存储，返回稳定 URL。
+
+    提供 ``account_id`` 时建 UploadFile 记录并入文件中心（`产物/`，计配额）；
+    未提供时维持原行为（只落对象、不建记录）。
+    """
     if not image_url:
         raise ValueError("image_url is required")
 
@@ -49,6 +54,16 @@ def persist_remote_image(
         content_type=response.headers.get("Content-Type", ""),
     )
     filename = f"{source}_{uuid.uuid4()}.{extension}"
+    if account_id:
+        from app.http.module import injector
+        from internal.service.file_center_service import FileCenterService
+
+        return injector.get(FileCenterService).save_generated_asset(
+            account_id,
+            filename=filename,
+            content=response.content,
+            folder="generated-images",
+        )["url"]
     if storage_port is not None:
         return storage_port.upload_bytes_without_record(
             filename=filename,

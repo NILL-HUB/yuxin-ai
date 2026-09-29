@@ -1225,6 +1225,23 @@ class DeepThinkingAgent(FunctionCallAgent):
                 mime_type=mime_type,
                 folder="artifacts",
             )
+            # 入文件中心（默认落「产物/」目录；失败不影响产物返回）
+            try:
+                from internal.service.file_center_paths import ensure_path  # noqa: PLC0415
+                from internal.service.file_center_service import (  # noqa: PLC0415
+                    FileCenterService,
+                )
+
+                parent_id = ensure_path(self.agent_config.user_id, ["产物"])
+                injector.get(FileCenterService).import_upload_file(
+                    self.agent_config.user_id,
+                    upload_file_id=upload_file.id,
+                    parent_id=parent_id,
+                    name=upload_file.name,
+                    source="artifact",
+                )
+            except Exception:
+                logger.warning("文本产物入文件中心失败，不影响返回", exc_info=True)
             return {
                 "id": str(upload_file.id),
                 "name": upload_file.name,

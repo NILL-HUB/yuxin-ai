@@ -31,6 +31,7 @@ class _FakeUploadFile:
         self.id = uuid.uuid4()
         self.name = name
         self.size = size
+        self.key = f"generated-images/{uuid.uuid4().hex}.png"
 
 
 class _FakeStorage:
@@ -108,3 +109,25 @@ def test_read_file_rejects_folder(env):
     folder = svc.mkdir(acc, parent_id=None, name="F")
     with pytest.raises(ValidateErrorException):
         svc.read_file(acc, folder.id)
+
+
+def test_save_generated_asset_records_and_organizes(env):
+    class _FakeStorageWithUrl(_FakeStorage):
+        def get_file_url(self, key, download_name=None, backend=None):
+            return f"https://cdn.example.com/{key}"
+
+    svc = FileCenterService()
+    fake = _FakeStorageWithUrl()
+    svc.storage = fake
+    acc = uuid.uuid4()
+    env.append(acc)
+    result = svc.save_generated_asset(
+        acc, filename="gen.png", content=b"img-bytes", folder="generated-images"
+    )
+    assert result["url"].startswith("https://cdn.example.com/")
+    assert fake.uploaded[0]["filename"] == "gen.png"
+    roots = [e for e in svc.list_children(acc, parent_id=None) if e.is_folder]
+    assert [e.name for e in roots] == ["产物"]
+    children = svc.list_children(acc, parent_id=roots[0].id)
+    assert [c.name for c in children] == ["gen.png"]
+    assert children[0].source == "artifact"
