@@ -35,6 +35,7 @@ export default  {
         auditLogs: '审计日志',
         recycleBin: '回收站',
         storage: '内容存储',
+        sandbox: '沙箱配置',
         systemConfig: '系统配置',
         orchestrationControl: '功能控制',
         orchestrationFlags: '功能开关',

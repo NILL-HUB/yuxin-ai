@@ -5,6 +5,7 @@ import datasetsAdmin from './datasetsAdmin'
 import systemKnowledge from './systemKnowledge'
 import recycleBin from './recycleBin'
 import storage from './storage'
+import sandbox from './sandbox'
 import datasetDocuments from './datasetDocuments'
 import datasetDocumentImport from './datasetDocumentImport'
 import datasetSegments from './datasetSegments'
@@ -47,6 +48,7 @@ export default {
   systemKnowledge,
   recycleBin,
   storage,
+  sandbox,
   datasetDocuments,
   datasetDocumentImport,
   datasetSegments,

@@ -1536,6 +1536,107 @@ def register_routes(quart_app):
         resp = StorageConfigItemSchema()
         return a._ok(resp.dump(config))
 
+    # ------------------------------------------------------------------
+    # admin_sandbox_handler -> SandboxConfigService
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/sandbox/overview")
+    async def admin_sandbox_overview():
+        from app.http import asgi_app as a
+        from internal.service.sandbox.sandbox_config_service import SandboxConfigService
+
+        items = await a._to_thread(a._get_service(SandboxConfigService).overview)
+        return a._ok({"items": items})
+
+    @quart_app.get("/admin/sandbox/configs")
+    async def admin_sandbox_list_configs():
+        from app.http import asgi_app as a
+        from internal.service.sandbox.sandbox_config_service import SandboxConfigService
+
+        capability = (request.args.get("capability") or "").strip() or None
+        items = await a._to_thread(
+            a._get_service(SandboxConfigService).list_configs_view, capability
+        )
+        return a._ok({"items": items})
+
+    @quart_app.post("/admin/sandbox/configs/<string:capability>/<string:backend>")
+    async def admin_sandbox_upsert_config(capability, backend):
+        from app.http import asgi_app as a
+        from internal.exception import ValidateErrorException
+        from internal.service.sandbox.sandbox_config_service import SandboxConfigService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        configs = payload.get("configs") or {}
+        if isinstance(configs, str):
+            try:
+                configs = _json.loads(configs)
+            except (ValueError, TypeError):
+                configs = {}
+        # 凭证（键=env 名）；值加密入库，空值表示清除。未传该字段则保持既有凭证不变。
+        credentials = payload.get("credentials") or {}
+        if isinstance(credentials, str):
+            try:
+                credentials = _json.loads(credentials)
+            except (ValueError, TypeError):
+                credentials = {}
+        try:
+            config = await a._to_thread(
+                a._get_service(SandboxConfigService).upsert_config,
+                capability,
+                backend,
+                configs,
+                credentials,
+            )
+        except ValidateErrorException as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data=None, status=400)
+        return a._ok({"item": SandboxConfigService.serialize_config(config)})
+
+    @quart_app.post("/admin/sandbox/activate")
+    async def admin_sandbox_activate():
+        from app.http import asgi_app as a
+        from internal.exception import ValidateErrorException
+        from internal.service.sandbox.sandbox_config_service import SandboxConfigService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        capability = str(payload.get("capability") or "").strip()
+        backend = str(payload.get("backend") or "").strip()
+        if not capability or not backend:
+            return a._json_resp(
+                code="validate_error",
+                message="capability 与 backend 均为必填",
+                data={"capability": ["必填"], "backend": ["必填"]},
+                status=400,
+            )
+        try:
+            config = await a._to_thread(
+                a._get_service(SandboxConfigService).set_active_backend, capability, backend
+            )
+        except ValidateErrorException as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data=None, status=400)
+        return a._ok({"item": SandboxConfigService.serialize_config(config)})
+
+    @quart_app.post("/admin/sandbox/probe")
+    async def admin_sandbox_probe():
+        from app.http import asgi_app as a
+        from internal.exception import ValidateErrorException
+        from internal.service.sandbox.sandbox_config_service import SandboxConfigService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        capability = str(payload.get("capability") or "").strip()
+        if not capability:
+            return a._json_resp(
+                code="validate_error",
+                message="capability 为必填",
+                data={"capability": ["必填"]},
+                status=400,
+            )
+        try:
+            result = await a._to_thread(
+                a._get_service(SandboxConfigService).probe, capability
+            )
+        except ValidateErrorException as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data=None, status=400)
+        return a._ok(result)
+
     @quart_app.get("/admin/storage/migration/files")
     async def admin_storage_migration_files():
         from app.http import asgi_app as a

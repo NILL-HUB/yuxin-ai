@@ -1,5 +1,6 @@
 import json
 import importlib
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 from internal.core.tools.builtin_tools.providers.code_execution_tool.execute_code import (
@@ -8,23 +9,50 @@ from internal.core.tools.builtin_tools.providers.code_execution_tool.execute_cod
 )
 
 
+@contextmanager
+def _code_interpreter_runtime(enabled=True):
+    """注册一个确定性的 code_interpreter 运行时（替代真实 service/DB）。"""
+    from internal.core.agent import sandbox_runtime_registry as registry
+    from internal.core.agent.entities.sandbox_runtime_entity import (
+        BACKEND_BAIDU_CFC,
+        BACKEND_DISABLED,
+        CAPABILITY_CODE_INTERPRETER,
+        SandboxRuntime,
+    )
+
+    def _loader(capability):
+        if capability != CAPABILITY_CODE_INTERPRETER:
+            return SandboxRuntime(capability=capability, enabled=False)
+        return SandboxRuntime(
+            capability=capability,
+            backend=BACKEND_BAIDU_CFC if enabled else BACKEND_DISABLED,
+            enabled=enabled,
+        )
+
+    registry.register_sandbox_runtime_loader(_loader)
+    registry.invalidate_sandbox_runtime_cache()
+    try:
+        yield registry
+    finally:
+        registry._loader = None
+        registry.invalidate_sandbox_runtime_cache()
+
+
 def test_disabled_by_default(monkeypatch):
     monkeypatch.delenv("ENABLE_CODE_EXECUTION_TOOL", raising=False)
     assert _enabled() is False
 
 
-def test_disabled_without_credentials(monkeypatch):
+def test_disabled_without_runtime(monkeypatch):
     monkeypatch.setenv("ENABLE_CODE_EXECUTION_TOOL", "1")
-    monkeypatch.delenv("E2B_API_KEY", raising=False)
-    monkeypatch.delenv("E2B_DOMAIN", raising=False)
-    assert _enabled() is False
+    with _code_interpreter_runtime(enabled=False):
+        assert _enabled() is False
 
 
-def test_enabled_with_credentials(monkeypatch):
+def test_enabled_when_runtime_enabled(monkeypatch):
     monkeypatch.setenv("ENABLE_CODE_EXECUTION_TOOL", "1")
-    monkeypatch.setenv("E2B_API_KEY", "e2b_test")
-    monkeypatch.setenv("E2B_DOMAIN", "sandbox.example.com")
-    assert _enabled() is True
+    with _code_interpreter_runtime(enabled=True):
+        assert _enabled() is True
 
 
 def test_tool_returns_disabled_message(monkeypatch):
@@ -36,8 +64,6 @@ def test_tool_returns_disabled_message(monkeypatch):
 
 def test_tool_executes_via_backend(monkeypatch):
     monkeypatch.setenv("ENABLE_CODE_EXECUTION_TOOL", "1")
-    monkeypatch.setenv("E2B_API_KEY", "e2b_test")
-    monkeypatch.setenv("E2B_DOMAIN", "sandbox.example.com")
 
     class _FakeBackend:
         def __init__(self, *args, **kwargs):
@@ -51,19 +77,14 @@ def test_tool_executes_via_backend(monkeypatch):
         "internal.core.tools.builtin_tools.providers.code_execution_tool.execute_code"
     )
     monkeypatch.setattr(module, "_BACKEND_CLS", _FakeBackend)
-    result = json.loads(ExecuteCodeTool()._run(command="python3 -c 'print(1+1)'"))
+    with _code_interpreter_runtime(enabled=True):
+        result = json.loads(ExecuteCodeTool()._run(command="python3 -c 'print(1+1)'"))
     assert result["ok"] is True
     assert result["output"] == "2\n"
 
 
-def _enabled_env(monkeypatch):
-    monkeypatch.setenv("ENABLE_CODE_EXECUTION_TOOL", "1")
-    monkeypatch.setenv("E2B_API_KEY", "e2b_test")
-    monkeypatch.setenv("E2B_DOMAIN", "sandbox.example.com")
-
-
 def test_tool_prefetches_tool_calls_into_env(monkeypatch):
-    _enabled_env(monkeypatch)
+    monkeypatch.setenv("ENABLE_CODE_EXECUTION_TOOL", "1")
     captured = {}
 
     class _FakeBackend:
@@ -85,12 +106,13 @@ def test_tool_prefetches_tool_calls_into_env(monkeypatch):
     )
     tool = ExecuteCodeTool(tool_registry={"web_search": fake_tool})
 
-    result = json.loads(
-        tool._run(
-            command="python3 -c 'import os; print(os.environ.get(\"TOOL_RESULTS_JSON\"))'",
-            tool_calls=[{"name": "web_search", "arguments": {"query": "测试"}}],
+    with _code_interpreter_runtime(enabled=True):
+        result = json.loads(
+            tool._run(
+                command="python3 -c 'import os; print(os.environ.get(\"TOOL_RESULTS_JSON\"))'",
+                tool_calls=[{"name": "web_search", "arguments": {"query": "测试"}}],
+            )
         )
-    )
 
     assert result["ok"] is True
     assert result["tool_results"][0]["ok"] is True
@@ -99,7 +121,7 @@ def test_tool_prefetches_tool_calls_into_env(monkeypatch):
 
 
 def test_tool_reports_missing_prefetched_tool(monkeypatch):
-    _enabled_env(monkeypatch)
+    monkeypatch.setenv("ENABLE_CODE_EXECUTION_TOOL", "1")
 
     class _FakeBackend:
         def __init__(self, *args, **kwargs):
@@ -113,12 +135,13 @@ def test_tool_reports_missing_prefetched_tool(monkeypatch):
     )
     monkeypatch.setattr(module, "_BACKEND_CLS", _FakeBackend)
 
-    result = json.loads(
-        ExecuteCodeTool()._run(
-            command="echo done",
-            tool_calls=[{"name": "missing_tool", "arguments": {}}],
+    with _code_interpreter_runtime(enabled=True):
+        result = json.loads(
+            ExecuteCodeTool()._run(
+                command="echo done",
+                tool_calls=[{"name": "missing_tool", "arguments": {}}],
+            )
         )
-    )
 
     assert result["tool_results"][0]["ok"] is False
     assert result["tool_results"][0]["error"] == "tool_not_available"

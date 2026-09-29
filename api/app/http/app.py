@@ -189,6 +189,23 @@ def run_startup_sync_initialization() -> None:
         except Exception:
             logging.exception("启动时初始化全局控制配置失败")
 
+    # 启动时确保沙箱配置存在（依当前 env 幂等补齐激活后端，保证升级期行为零变化）
+    # 并注册运行时加载器：core 侧经注册表读取，admin 热切换后 TTL 内自动生效
+    if os.getenv("MODE", "api") != "celery":
+        try:
+            from internal.core.agent.sandbox_runtime_registry import (
+                register_sandbox_runtime_loader,
+            )
+            from internal.service.sandbox.sandbox_config_service import (
+                SandboxConfigService,
+            )
+
+            sandbox_service = injector.get(SandboxConfigService)
+            sandbox_service.ensure_default_config()
+            register_sandbox_runtime_loader(sandbox_service.resolve_runtime)
+        except Exception:
+            logging.exception("启动时初始化沙箱配置失败")
+
     # 初始化记忆系统降级管理器
     try:
         from internal.service.memory.degradation_manager import init_degradation_manager

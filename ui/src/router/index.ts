@@ -308,6 +308,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['storage:read'] },
             },
             {
+              path: 'sandbox',
+              name: 'admin-sandbox',
+              component: () => import('@/views/admin/AdminSandboxView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['sandbox:read'] },
+            },
+            {
               path: 'routing-logs',
               name: 'admin-routing-logs',
               component: () => import('@/views/admin/RoutingLogsView.vue'),

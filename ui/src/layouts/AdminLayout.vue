@@ -136,6 +136,7 @@ const menuGroups = computed(() => ([
     icon: 'M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12',
     items: [
       { to: '/admin/storage', label: t('admin.adminLayout.menu.storage'), permission: 'storage:read' },
+      { to: '/admin/sandbox', label: t('admin.adminLayout.menu.sandbox'), permission: 'sandbox:read' },
       { to: '/admin/payment-config', label: t('admin.adminLayout.menu.paymentConfig'), permission: 'payment_config:read' },
       { to: '/admin/mail-config', label: t('admin.adminLayout.menu.mailConfig'), permission: 'system_config:manage' },
       { to: '/admin/sms-config', label: t('admin.adminLayout.menu.smsConfig'), permission: 'system_config:manage' },

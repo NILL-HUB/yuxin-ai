@@ -85,8 +85,8 @@ class BaiduCfcSandboxBackend(BaseSandbox):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
-        domain: str | None = None,
+        api_key: str,
+        domain: str,
         template_alias: str | None = None,
         fallback_template_alias: str | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
@@ -95,23 +95,20 @@ class BaiduCfcSandboxBackend(BaseSandbox):
         """初始化并创建百度 CFC 沙箱实例。
 
         Args:
-            api_key:        百度 CFC API Key。None 时从 E2B_API_KEY 环境变量读取。
-            domain:         百度 CFC 域名。None 时从 E2B_DOMAIN 环境变量读取。
-            template_alias: 沙箱模板名。None 时从 SANDBOX_TEMPLATE_ALIAS 环境变量读取。
+            api_key:        百度 CFC API Key（BCE v3 格式）。**必填**。
+            domain:         百度 CFC 域名。**必填**。
+            template_alias: 沙箱模板名（默认模板由 SandboxConfigService 提供）。
             fallback_template_alias:
-                            模板创建失败时的备用模板名。None 时从
-                            SANDBOX_FALLBACK_TEMPLATE_ALIAS 环境变量读取。
-            timeout:        单次命令执行超时（秒），默认 60。
-            sandbox_timeout:沙箱最长存活时间（秒），默认 300。
+                            模板创建失败时的备用模板名。
+            timeout:        单次命令执行超时（秒）。
+            sandbox_timeout:沙箱最长存活时间（秒）。
         """
-        self._api_key = (api_key or os.environ.get("E2B_API_KEY", "")).strip()
-        self._domain = (domain or os.environ.get("E2B_DOMAIN", "")).strip()
-        self._template_alias = _normalize_optional_string(
-            template_alias or os.environ.get("SANDBOX_TEMPLATE_ALIAS")
-        )
-        self._fallback_template_alias = _normalize_optional_string(
-            fallback_template_alias or os.environ.get("SANDBOX_FALLBACK_TEMPLATE_ALIAS")
-        )
+        # 凭证与模板一律由调用方显式传入（经 SandboxConfigService.resolve_runtime →
+        # backends.factory），本类**不再读 env**：避免"多处散读 env"导致配置源分裂。
+        self._api_key = str(api_key or "").strip()
+        self._domain = str(domain or "").strip()
+        self._template_alias = _normalize_optional_string(template_alias)
+        self._fallback_template_alias = _normalize_optional_string(fallback_template_alias)
         self._timeout = timeout
         self._sandbox_timeout = sandbox_timeout
         self._sandbox_id_val = f"baidu-cfc-{uuid.uuid4().hex[:8]}"
@@ -119,9 +116,9 @@ class BaiduCfcSandboxBackend(BaseSandbox):
         self._sbx = None  # e2b Sandbox 实例，延迟创建
 
         if not self._api_key:
-            raise ValueError("E2B_API_KEY 未配置，请在 .env 中设置")
+            raise ValueError("沙箱凭证缺失：api_key 必须由调用方显式传入")
         if not self._domain:
-            raise ValueError("E2B_DOMAIN 未配置，请在 .env 中设置")
+            raise ValueError("沙箱凭证缺失：domain 必须由调用方显式传入")
 
     # ------------------------------------------------------------------ #
     #  内部：懒加载沙箱实例                                               #
@@ -190,14 +187,34 @@ class BaiduCfcSandboxBackend(BaseSandbox):
         finally:
             e2b_api.validate_api_key = original_validate_api_key
 
+    @contextmanager
+    def _scoped_e2b_env(self):
+        """临时为 e2b SDK 注入凭证环境变量，退出时严格恢复（不污染父进程）。
+
+        e2b-code-interpreter SDK 内部通过 os.environ 读取 E2B_API_KEY / E2B_DOMAIN，
+        本类已不再从 env 读取凭证，因此这里仅在创建沙箱的作用域内注入，作用域结束
+        后无论成功失败都还原原值（原值不存在则删除），避免凭证泄漏到进程全局环境。
+        """
+        api_key = self._api_key.strip()
+        domain = self._domain.strip()
+        original_key = os.environ.get("E2B_API_KEY")
+        original_domain = os.environ.get("E2B_DOMAIN")
+        os.environ["E2B_API_KEY"] = api_key
+        os.environ["E2B_DOMAIN"] = domain
+        try:
+            yield True
+        finally:
+            os.environ.pop("E2B_API_KEY", None)
+            os.environ.pop("E2B_DOMAIN", None)
+            if original_key is not None:
+                os.environ["E2B_API_KEY"] = original_key
+            if original_domain is not None:
+                os.environ["E2B_DOMAIN"] = original_domain
+
     def _create_sandbox(self):
         """创建 e2b_code_interpreter Sandbox 实例（指向百度 CFC）。"""
-        # 设置 E2B SDK 所需的环境变量（SDK 从 env 读取配置）
-        os.environ["E2B_API_KEY"] = self._api_key.strip()
-        os.environ["E2B_DOMAIN"] = self._domain.strip()
-
         try:
-            with self._patched_upstream_api_key_validation():
+            with self._scoped_e2b_env(), self._patched_upstream_api_key_validation():
                 from e2b_code_interpreter import Sandbox  # noqa: PLC0415
                 template_candidates = self._get_template_candidates()
 

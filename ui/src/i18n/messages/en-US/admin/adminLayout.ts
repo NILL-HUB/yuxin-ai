@@ -35,6 +35,7 @@ export default  {
         auditLogs: 'Audit Logs',
         recycleBin: 'Recycle Bin',
         storage: 'Content Storage',
+        sandbox: 'Sandbox Config',
         systemConfig: 'System Config',
         orchestrationControl: 'Feature Control',
         orchestrationFlags: 'Feature Flags',

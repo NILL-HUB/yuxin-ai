@@ -1,10 +1,9 @@
-import os
-import re
 import time
-import json
-import requests
-from typing import Optional, ClassVar
+from typing import Optional
 from langchain_core.runnables import RunnableConfig
+from internal.core.agent.backends import HttpSandboxHandle, build_sandbox_backend
+from internal.core.agent.entities.sandbox_runtime_entity import CAPABILITY_WORKFLOW_CODE
+from internal.core.agent.sandbox_runtime_registry import get_sandbox_runtime
 from internal.core.workflow.entities.node_entity import NodeResult, NodeStatus
 from internal.core.workflow.entities.variable_entity import VARIABLE_TYPE_DEFAULT_VALUE_MAP
 from internal.core.workflow.entities.workflow_entity import WorkflowState
@@ -14,37 +13,20 @@ from internal.exception import FailException
 from .code_entity import CodeNodeData
 
 
-# 占位符 URL 检测：以 your-/example-/placeholder- 开头或包含 -here/your-scf 等子串
-_PLACEHOLDER_PREFIXES = ("your-", "example-", "placeholder-")
-_PLACEHOLDER_SUBSTRINGS = ("-here", "your-scf", "your-url", "your-domain")
+def _resolve_http_sandbox_handle() -> HttpSandboxHandle | None:
+    """解析工作流代码能力域当前激活的 HTTP 沙箱句柄。
 
-
-def _is_placeholder_url(url: str) -> bool:
-    """检测 URL 是否为占位符（如 https://your-scf-url.tencentscf.com）。"""
-    if not url:
-        return True
-    stripped = re.sub(r"^https?://", "", url).lower()
-    if any(stripped.startswith(prefix) for prefix in _PLACEHOLDER_PREFIXES):
-        return True
-    if any(sub in stripped for sub in _PLACEHOLDER_SUBSTRINGS):
-        return True
-    return False
-
-
-def _resolve_sandbox_url() -> str:
-    """读取 SANDBOX_URL 环境变量，占位符视为未配置返回空字符串。"""
-    raw = (os.getenv("SANDBOX_URL") or "").strip().rstrip("/")
-    if _is_placeholder_url(raw):
-        return ""
-    return raw
+    沙箱配置的**唯一权威入口**：经注册表读取运行时快照（由 `SandboxConfigService
+    .resolve_runtime` 解析，admin 热切换后生效），再经工厂构造 HTTP 传输句柄。
+    本模块**不再读 env、不再自己发请求**。
+    """
+    handle = build_sandbox_backend(get_sandbox_runtime(CAPABILITY_WORKFLOW_CODE))
+    return handle if isinstance(handle, HttpSandboxHandle) else None
 
 
 class CodeNode(BaseNode):
     """Python代码运行节点"""
     node_data: CodeNodeData
-
-    # 腾讯云函数沙箱地址（占位符 URL 视为未配置，避免请求无效地址）
-    Sandbox_URL: ClassVar[str] = _resolve_sandbox_url()
 
     def invoke(self, state: WorkflowState, config: Optional[RunnableConfig] = None) -> WorkflowState:
         """Python代码运行节点，执行的代码函数名字必须为main，并且参数名为params，有且只有一个参数，通过腾讯云函数沙箱执行"""
@@ -84,11 +66,12 @@ class CodeNode(BaseNode):
 
     @classmethod
     def _execute_function(cls, code: str, *args, **kwargs):
-        """通过腾讯云函数沙箱执行Python代码"""
+        """通过远端沙箱服务执行Python代码（句柄经沙箱配置中心解析，统一传输入口）。"""
         try:
-            # 1.检查沙箱URL是否配置
-            if not cls.Sandbox_URL:
-                raise FailException("SANDBOX_URL环境变量未配置")
+            # 1.解析该能力域当前激活的 HTTP 沙箱句柄（admin 可配、热切换）
+            handle = _resolve_http_sandbox_handle()
+            if handle is None:
+                raise FailException("工作流代码沙箱未配置：请在 admin 沙箱配置中启用并填写 endpoint")
 
             # 2.构建请求参数
             # 优先支持传入 params=... 的场景（你的 invoke 会传 params=inputs_dict）
@@ -114,50 +97,23 @@ class CodeNode(BaseNode):
                 "kwargs": payload_kwargs,
             }
 
-            # 3.发送POST请求到腾讯云函数
-            response = requests.post(
-                cls.Sandbox_URL.rstrip("/"),
-                data=json.dumps(payload),
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
+            # 3.经统一 HTTP 句柄发送（endpoint 校验/超时/状态码/非JSON/网络异常由句柄收敛）
+            response_data = handle.execute(payload, timeout=30)
 
-            # 4.检查HTTP响应状态
-            # 若非 200，尝试解析 body 中的错误信息并返回更友好的异常
-            if response.status_code != 200:
-                # 尝试解析 json body（若能解析）
-                try:
-                    resp_json = response.json()
-                except Exception:
-                    resp_json = {"raw_text": response.text}
-                raise FailException(f"云函数执行失败，状态码: {response.status_code}，响应: {resp_json}")
-
-            # 5.解析响应结果
-            try:
-                response_data = response.json()
-            except Exception as e:
-                raise FailException(f"云函数返回非JSON内容: {str(e)}，原文: {response.text}")
-
-            # 6.检查是否有错误信息
-            if "error" in response_data:
+            # 4.检查是否有错误信息
+            if isinstance(response_data, dict) and "error" in response_data:
                 # 如果 trace 可用也带上
                 tb = response_data.get("traceback")
                 if tb:
                     raise FailException(f"代码执行出错: {response_data['error']}\n{tb}")
-                else:
-                    raise FailException(f"代码执行出错: {response_data['error']}")
+                raise FailException(f"代码执行出错: {response_data['error']}")
 
-            # 7.返回执行结果（期望 cloud 返回 {"result": ...}）
-            if "result" in response_data:
+            # 5.返回执行结果（期望 cloud 返回 {"result": ...}）
+            if isinstance(response_data, dict) and "result" in response_data:
                 return response_data["result"]
-            else:
-                raise FailException(f"云函数返回数据格式错误: {response_data}")
+            raise FailException(f"云函数返回数据格式错误: {response_data}")
 
         except FailException:
             raise
-        except requests.exceptions.Timeout:
-            raise FailException("云函数执行超时")
-        except requests.exceptions.RequestException as e:
-            raise FailException(f"网络请求失败: {str(e)}")
         except Exception as e:
             raise FailException(f"Python代码执行出错: {str(e)}")

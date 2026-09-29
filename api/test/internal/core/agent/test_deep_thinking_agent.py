@@ -17,7 +17,7 @@ import asyncio
 import os
 import sys
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from uuid import uuid4
@@ -36,7 +36,6 @@ from internal.core.agent.backends.baidu_cfc_sandbox_backend import BaiduCfcSandb
 from internal.core.agent.entities.artifact_policy_entity import ArtifactPolicy
 from internal.core.agent.entities.agent_entity import AgentConfig, get_agent_system_prompt_template
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
-from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.middleware import DeepTimelineMiddleware
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
 from langchain_openai import ChatOpenAI as OpenAIChat
@@ -109,6 +108,52 @@ def _make_agent_config(enable_deep_thinking=True, **kwargs):
     )
 
 
+@contextmanager
+def _sandbox_runtime(enabled=True, backend=None, configs=None, credentials=None):
+    """给 core 侧注册一个确定性的沙箱运行时加载器（替代真实 service/DB）。
+
+    沙箱配置的唯一权威入口已收敛为 `get_sandbox_runtime`；单测通过注册表注入
+    一个固定的 `SandboxRuntime`，从而不再依赖 env → 配置的隐式映射。
+
+    凭证同理：自 2026-09-29 起由 service 层解析后放入 `runtime.credentials`（DB 优先 → env 兜底），
+    core 不再读 env。enabled=True 时默认注入一套 E2B 凭证，保持既有用例语义。
+    """
+    from internal.core.agent import sandbox_runtime_registry as registry
+    from internal.core.agent.entities.sandbox_runtime_entity import (
+        BACKEND_BAIDU_CFC,
+        BACKEND_DISABLED,
+        CAPABILITY_CODE_INTERPRETER,
+        SandboxRuntime,
+    )
+
+    resolved_backend = backend or (BACKEND_BAIDU_CFC if enabled else BACKEND_DISABLED)
+    resolved_configs = dict(configs or {})
+    resolved_credentials = (
+        dict(credentials)
+        if credentials is not None
+        else ({"E2B_API_KEY": "test-key", "E2B_DOMAIN": "sandbox.example.com"} if enabled else {})
+    )
+
+    def _loader(capability):
+        if capability != CAPABILITY_CODE_INTERPRETER:
+            return SandboxRuntime(capability=capability, enabled=False)
+        return SandboxRuntime(
+            capability=capability,
+            backend=resolved_backend,
+            configs=dict(resolved_configs),
+            credentials=dict(resolved_credentials),
+            enabled=enabled,
+        )
+
+    registry.register_sandbox_runtime_loader(_loader)
+    registry.invalidate_sandbox_runtime_cache()
+    try:
+        yield registry
+    finally:
+        registry._loader = None
+        registry.invalidate_sandbox_runtime_cache()
+
+
 # ============================================================
 #  Unit Tests: BaiduCfcSandboxBackend
 # ============================================================
@@ -117,41 +162,35 @@ class TestBaiduCfcSandboxBackend:
     """百度 CFC 沙箱后端单元测试（全部 Mock，无需网络）。"""
 
     def test_init_requires_api_key(self):
-        """缺少 API Key 时应抛出 ValueError。"""
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("E2B_API_KEY", None)
-            os.environ.pop("E2B_DOMAIN", None)
-            with pytest.raises(ValueError, match="E2B_API_KEY"):
-                BaiduCfcSandboxBackend(domain="test.example.com")
+        """缺少 API Key（空串）时应抛出 ValueError。"""
+        with pytest.raises(ValueError, match="api_key"):
+            BaiduCfcSandboxBackend(api_key="", domain="test.example.com")
 
     def test_init_requires_domain(self):
-        """缺少 Domain 时应抛出 ValueError。"""
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("E2B_DOMAIN", None)
-            with pytest.raises(ValueError, match="E2B_DOMAIN"):
-                BaiduCfcSandboxBackend(api_key="test-key")
+        """缺少 Domain（空串）时应抛出 ValueError。"""
+        with pytest.raises(ValueError, match="domain"):
+            BaiduCfcSandboxBackend(api_key="test-key", domain="")
 
-    def test_init_reads_env_vars(self):
-        """应从环境变量读取配置。"""
+    def test_init_uses_explicit_credentials(self):
+        """凭证一律由调用方显式传入（不再读 env）。"""
         with patch.dict(os.environ, {
             "E2B_API_KEY": "env-key-123",
-            "E2B_DOMAIN":  "env-domain.example.com",
+            "E2B_DOMAIN": "env-domain.example.com",
         }):
-            backend = BaiduCfcSandboxBackend()
-            assert backend._api_key == "env-key-123"
-            assert backend._domain  == "env-domain.example.com"
+            backend = BaiduCfcSandboxBackend(api_key="explicit-key", domain="explicit.example.com")
+            assert backend._api_key == "explicit-key"
+            assert backend._domain == "explicit.example.com"
 
-    def test_init_reads_template_env_vars(self):
-        """应从环境变量读取模板名和 fallback 模板名。"""
-        with patch.dict(os.environ, {
-            "E2B_API_KEY": "env-key-123",
-            "E2B_DOMAIN":  "env-domain.example.com",
-            "SANDBOX_TEMPLATE_ALIAS": "lite-template",
-            "SANDBOX_FALLBACK_TEMPLATE_ALIAS": "fallback-template",
-        }):
-            backend = BaiduCfcSandboxBackend()
-            assert backend._template_alias == "lite-template"
-            assert backend._fallback_template_alias == "fallback-template"
+    def test_init_uses_explicit_template_args(self):
+        """模板名与 fallback 模板名由调用方显式传入（不再读 env）。"""
+        backend = BaiduCfcSandboxBackend(
+            api_key="k",
+            domain="d",
+            template_alias="lite-template",
+            fallback_template_alias="fallback-template",
+        )
+        assert backend._template_alias == "lite-template"
+        assert backend._fallback_template_alias == "fallback-template"
 
     def test_id_property(self):
         """id 属性应返回非空字符串。"""
@@ -2425,8 +2464,8 @@ IPO招股说明书草案
         assert complete_event.total_token_count > 0
         assert complete_event.total_price > 0
 
-    def test_build_deep_agent_uses_sandbox_when_env_set(self):
-        """配置完整且路由要求沙箱时，应构建 BaiduCfcSandboxBackend。"""
+    def test_build_deep_agent_uses_sandbox_when_runtime_enabled(self):
+        """能力域已启用且路由要求沙箱时，应构建 BaiduCfcSandboxBackend。"""
         captured = {}
         agent = self._build_agent()
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda *_: None)
@@ -2442,7 +2481,8 @@ IPO招股说明书草案
             captured["middleware"] = kwargs.get("middleware")
             return MagicMock()
 
-        with patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
+        with _sandbox_runtime(configs={"template_alias": "llmops-code-interpreter-lite"}), \
+             patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
              patch.object(BaiduCfcSandboxBackend, "ensure_ready", return_value=None), \
              patch.object(
                  BaiduCfcSandboxBackend,
@@ -2487,13 +2527,12 @@ IPO招股说明书草案
             captured["model"] = kwargs.get("model")
             return MagicMock()
 
-        with patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
+        with _sandbox_runtime(), \
+             patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
              patch.object(BaiduCfcSandboxBackend, "execute", return_value=SimpleNamespace(exit_code=0, output="/home/user/artifacts/test-task")), \
              patch.dict(os.environ, {
                 "E2B_API_KEY": "test-key",
                 "E2B_DOMAIN": "sandbox.example.com",
-                "SANDBOX_TEMPLATE_ALIAS": "",
-                "SANDBOX_FALLBACK_TEMPLATE_ALIAS": "",
              }, clear=False):
             agent._build_deep_agent(
                 task_id=uuid4(),
@@ -2506,7 +2545,7 @@ IPO招股说明书草案
         assert captured["model"] is not proxy
 
     def test_build_deep_agent_fallback_to_state_backend(self):
-        """未请求沙箱时，应使用 StateBackend。"""
+        """能力域未启用时，应使用 StateBackend。"""
         captured = {}
         agent = self._build_agent()
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda *_: None)
@@ -2516,8 +2555,8 @@ IPO招股说明书草案
             captured["backend"] = kwargs.get("backend")
             return MagicMock()
 
-        with patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
-             patch.dict(os.environ, {}, clear=True):
+        with _sandbox_runtime(enabled=False), \
+             patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent):
             _, backend, _, used_sandbox = agent._build_deep_agent(
                 task_id=uuid4(),
                 route_decision=route,
@@ -2528,8 +2567,8 @@ IPO招股说明书草案
         assert type(captured["backend"]).__name__ == "StateBackend"
         assert used_sandbox is False
 
-    def test_build_deep_agent_uses_template_config_from_env(self):
-        """SANDBOX_* 环境变量应正确映射到沙箱模板配置。"""
+    def test_build_deep_agent_uses_runtime_template_config(self):
+        """运行时快照中的模板与超时应正确映射到沙箱后端。"""
         captured_backend = {}
         agent = self._build_agent()
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda *_: None)
@@ -2544,7 +2583,13 @@ IPO招股说明书草案
             captured_backend["backend"] = kwargs.get("backend")
             return MagicMock()
 
-        with patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
+        with _sandbox_runtime(configs={
+                "template_alias": "lite-template",
+                "fallback_template_alias": "fallback-template",
+                "sandbox_timeout_seconds": 86401,
+                "execute_timeout_seconds": 3601,
+             }), \
+             patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
              patch.object(BaiduCfcSandboxBackend, "ensure_ready", return_value=None) as ensure_ready_mock, \
              patch.object(
                  BaiduCfcSandboxBackend,
@@ -2554,10 +2599,6 @@ IPO招股说明书草案
              patch.dict(os.environ, {
                 "E2B_API_KEY": "test-key",
                 "E2B_DOMAIN": "sandbox.example.com",
-                "SANDBOX_TEMPLATE_ALIAS": "lite-template",
-                "SANDBOX_FALLBACK_TEMPLATE_ALIAS": "fallback-template",
-                "SANDBOX_TIMEOUT_SECONDS": "86401",
-                "SANDBOX_EXECUTE_TIMEOUT_SECONDS": "3601",
              }, clear=False):
             _, backend, artifact_root, used_sandbox = agent._build_deep_agent(
                 task_id=task_id,
@@ -2575,48 +2616,6 @@ IPO招股说明书草案
         ensure_ready_mock.assert_called_once()
         assert captured_backend["backend"] is backend
 
-    def test_build_deep_agent_clamps_timeout_env_values_to_minimums(self):
-        """较低的 SANDBOX_* 环境变量应被抬升到安全下限。"""
-        captured_backend = {}
-        agent = self._build_agent()
-        timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda *_: None)
-        task_id = uuid4()
-        route = self._route(
-            need_sandbox=True,
-            need_execute=True,
-            summary="需要沙箱执行",
-        )
-
-        def capture_create_deep_agent(*args, **kwargs):
-            captured_backend["backend"] = kwargs.get("backend")
-            return MagicMock()
-
-        with patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
-             patch.object(BaiduCfcSandboxBackend, "ensure_ready", return_value=None), \
-             patch.object(
-                 BaiduCfcSandboxBackend,
-                 "execute",
-                 return_value=SimpleNamespace(exit_code=0, output=f"/home/user/artifacts/{task_id}"),
-             ), \
-             patch.dict(os.environ, {
-                "E2B_API_KEY": "test-key",
-                "E2B_DOMAIN": "sandbox.example.com",
-                "SANDBOX_TIMEOUT_SECONDS": "123",
-                "SANDBOX_EXECUTE_TIMEOUT_SECONDS": "45",
-             }, clear=False):
-            _, backend, artifact_root, used_sandbox = agent._build_deep_agent(
-                task_id=task_id,
-                route_decision=route,
-                timeline=timeline,
-            )
-
-        assert isinstance(backend, BaiduCfcSandboxBackend)
-        assert backend._sandbox_timeout == SandboxPolicy.default_sandbox_timeout_seconds
-        assert backend._timeout == SandboxPolicy.default_execute_timeout_seconds
-        assert used_sandbox is True
-        assert artifact_root == f"/home/user/artifacts/{task_id}"
-        assert captured_backend["backend"] is backend
-
     def test_build_deep_agent_falls_back_to_state_backend_when_sandbox_validation_fails(self):
         """模板验证失败时，应自动回退到 StateBackend。"""
         agent = self._build_agent()
@@ -2627,12 +2626,12 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
 
-        with patch("deepagents.create_deep_agent", return_value=MagicMock()), \
+        with _sandbox_runtime(configs={"template_alias": "lite-template"}), \
+             patch("deepagents.create_deep_agent", return_value=MagicMock()), \
              patch.object(BaiduCfcSandboxBackend, "ensure_ready", side_effect=RuntimeError("template invalid")), \
              patch.dict(os.environ, {
                 "E2B_API_KEY": "test-key",
                 "E2B_DOMAIN": "sandbox.example.com",
-                "SANDBOX_TEMPLATE_ALIAS": "lite-template",
              }, clear=False):
             _, backend, _, used_sandbox = agent._build_deep_agent(
                 task_id=uuid4(),

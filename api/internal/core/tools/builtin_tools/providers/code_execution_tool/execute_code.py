@@ -2,7 +2,7 @@
 
 复用深思考链路的 Baidu CFC / E2B 沙箱后端，让普通 Agent 也能执行受隔离的
 Python/Shell 命令。默认不启用：需要 `ENABLE_CODE_EXECUTION_TOOL=1` 且
-配置 `E2B_API_KEY` / `E2B_DOMAIN`。
+`code_interpreter` 能力域的沙箱已在 admin 端启用（后端与凭证由沙箱配置中心解析）。
 
 工具 RPC 桥：调用方可通过 `tool_calls` 声明需要预取的平台工具结果，平台先按
 已挂载工具执行，再把结果 JSON 以 `TOOL_RESULTS_JSON` 环境变量注入沙箱，脚本
@@ -19,7 +19,10 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from internal.service.tool_credential_resolver import get_tool_credential, get_tool_setting
+from internal.core.agent.backends import build_sandbox_backend
+from internal.core.agent.entities.sandbox_runtime_entity import CAPABILITY_CODE_INTERPRETER
+from internal.core.agent.sandbox_runtime_registry import get_sandbox_runtime
+from internal.service.tool_credential_resolver import get_tool_setting
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,8 @@ def _enabled() -> bool:
     flag = get_tool_setting("ENABLE_CODE_EXECUTION_TOOL").lower()
     if flag not in {"1", "true", "yes", "on"}:
         return False
-    return bool(get_tool_credential("E2B_API_KEY") and get_tool_credential("E2B_DOMAIN"))
+    # 沙箱可用性以 admin 沙箱配置中心的运行时快照为准（唯一权威入口）
+    return get_sandbox_runtime(CAPABILITY_CODE_INTERPRETER).enabled
 
 
 class ExecuteCodeInput(BaseModel):
@@ -58,7 +62,7 @@ class ExecuteCodeTool(BaseTool):
             return json.dumps(
                 {
                     "ok": False,
-                    "error": "代码执行工具未启用：需要 ENABLE_CODE_EXECUTION_TOOL=1 且配置 E2B_API_KEY/E2B_DOMAIN",
+                    "error": "代码执行工具未启用：需要 ENABLE_CODE_EXECUTION_TOOL=1 且 code_interpreter 沙箱已在 admin 端启用",
                 },
                 ensure_ascii=False,
             )
@@ -71,15 +75,17 @@ class ExecuteCodeTool(BaseTool):
                 + "; "
             )
         try:
-            from internal.core.agent.backends import BaiduCfcSandboxBackend
-
-            backend_cls = globals().get("_BACKEND_CLS") or BaiduCfcSandboxBackend
-            backend = backend_cls(
-                api_key=get_tool_credential("E2B_API_KEY"),
-                domain=get_tool_credential("E2B_DOMAIN"),
-                template_alias=get_tool_setting("SANDBOX_TEMPLATE_ALIAS") or None,
-                fallback_template_alias=get_tool_setting("SANDBOX_FALLBACK_TEMPLATE_ALIAS") or None,
+            runtime = get_sandbox_runtime(CAPABILITY_CODE_INTERPRETER)
+            backend_cls = globals().get("_BACKEND_CLS")
+            backend = (
+                backend_cls(runtime)
+                if backend_cls is not None
+                else build_sandbox_backend(runtime)
             )
+            if backend is None:
+                raise RuntimeError(
+                    f"沙箱后端不可用：backend={runtime.backend} reason={runtime.reason}"
+                )
             result = backend.execute(env_prefix + normalized)
             return json.dumps(
                 {

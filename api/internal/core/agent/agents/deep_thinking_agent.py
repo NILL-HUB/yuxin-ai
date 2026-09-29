@@ -32,7 +32,6 @@ from internal.core.agent.agents.deep_thinking_utils import (
     extract_query,
     extract_tagged_block_content,
     normalize_outline_title,
-    read_positive_int_env,
     render_document_front_matter,
     render_document_section_block,
     sanitize_deep_answer,
@@ -1886,46 +1885,31 @@ class DeepThinkingAgent(FunctionCallAgent):
         from deepagents import create_deep_agent  # noqa: PLC0415
         from deepagents.backends import StateBackend  # noqa: PLC0415
 
-        e2b_key = os.environ.get("E2B_API_KEY", "")
-        e2b_domain = os.environ.get("E2B_DOMAIN", "")
-        sandbox_enabled = bool(route_decision.need_sandbox and e2b_key and e2b_domain)
-        sandbox_profile = (os.getenv("SANDBOX_PROFILE") or "").strip().lower()
-        sandbox_template_alias = (os.getenv("SANDBOX_TEMPLATE_ALIAS") or "").strip()
-        sandbox_fallback_template_alias = (os.getenv("SANDBOX_FALLBACK_TEMPLATE_ALIAS") or "").strip()
-        sandbox_timeout = read_positive_int_env(
-            "SANDBOX_TIMEOUT_SECONDS",
-            SandboxPolicy.default_sandbox_timeout_seconds,
-            minimum=SandboxPolicy.default_sandbox_timeout_seconds,
+        from internal.core.agent.backends import build_sandbox_backend  # noqa: PLC0415
+        from internal.core.agent.entities.sandbox_runtime_entity import (  # noqa: PLC0415
+            CAPABILITY_CODE_INTERPRETER,
         )
-        execute_timeout = read_positive_int_env(
-            "SANDBOX_EXECUTE_TIMEOUT_SECONDS",
-            SandboxPolicy.default_execute_timeout_seconds,
-            minimum=SandboxPolicy.default_execute_timeout_seconds,
+        from internal.core.agent.sandbox_runtime_registry import (  # noqa: PLC0415
+            get_sandbox_runtime,
         )
 
-        sandbox_template_alias = SandboxPolicy.resolve_sandbox_template_alias(
-            sandbox_profile,
-            sandbox_template_alias,
-        )
-        sandbox_fallback_template_alias = SandboxPolicy.resolve_sandbox_fallback_template_alias(
-            sandbox_fallback_template_alias,
-            sandbox_template_alias=sandbox_template_alias,
-        )
+        # 沙箱配置的唯一权威入口：经注册表读取运行时快照（由 SandboxConfigService
+        # .resolve_runtime 解析并注入）。本处**不再读 env**，admin 热切换后
+        # 由注册表 TTL 自动生效（新会话绑定新后端）。
+        sandbox_runtime = get_sandbox_runtime(CAPABILITY_CODE_INTERPRETER)
+        sandbox_enabled = bool(route_decision.need_sandbox and sandbox_runtime.enabled)
+        sandbox_template_alias = sandbox_runtime.get("template_alias")
 
         artifact_root = SandboxPolicy.build_default_artifact_root(task_id)
         used_sandbox = False
         if sandbox_enabled:
             try:
-                from internal.core.agent.backends import BaiduCfcSandboxBackend  # noqa: PLC0415
-
-                backend = BaiduCfcSandboxBackend(
-                    api_key=e2b_key,
-                    domain=e2b_domain,
-                    timeout=execute_timeout,
-                    sandbox_timeout=sandbox_timeout,
-                    template_alias=sandbox_template_alias or None,
-                    fallback_template_alias=sandbox_fallback_template_alias or None,
-                )
+                backend = build_sandbox_backend(sandbox_runtime)
+                if backend is None:
+                    raise RuntimeError(
+                        f"沙箱后端不可用：backend={sandbox_runtime.backend} "
+                        f"reason={sandbox_runtime.reason}"
+                    )
                 if sandbox_template_alias:
                     backend.ensure_ready()
                 artifact_root = self._resolve_sandbox_artifact_root(

@@ -636,6 +636,10 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     if _admin_match(segments, ("admin", "storage")):
         return "storage:read" if method == "GET" else "storage:update"
 
+    # 沙箱。
+    if _admin_match(segments, ("admin", "sandbox")):
+        return "sandbox:read" if method == "GET" else "sandbox:update"
+
     # 模型池治理之外的池治理。
     if _admin_match(segments, ("admin", "agent-pool")) or _admin_match(
         segments, ("admin", "sub-pool-definitions")
