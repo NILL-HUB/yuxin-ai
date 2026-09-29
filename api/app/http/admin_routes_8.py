@@ -626,6 +626,74 @@ def register_routes(quart_app):
         return a._ok(result)
 
     # ------------------------------------------------------------------
+    # 内置工具凭证（第三方密钥，如搜索类）——体检：搜索密钥收编 admin
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/builtin-tools/credential-providers")
+    async def admin_builtin_tool_credential_providers():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.service.builtin_tool_credential_service import (
+            BuiltinToolCredentialService,
+        )
+
+        result = await a._to_thread(
+            a._get_service(BuiltinToolCredentialService).list_providers
+        )
+        return a._ok({"list": result})
+
+    @quart_app.put("/admin/builtin-tools/credential-providers/<string:provider_name>")
+    async def admin_builtin_tool_credential_update(provider_name):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.exception import NotFoundException, ValidateErrorException
+        from internal.service.builtin_tool_credential_service import (
+            BuiltinToolCredentialService,
+        )
+
+        data = await request.get_json(force=True, silent=True) or {}
+        try:
+            result = await a._to_thread(
+                a._get_service(BuiltinToolCredentialService).update_provider_credentials,
+                provider_name,
+                data.get("credentials") or {},
+            )
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+        except ValidateErrorException as exc:
+            return a._json_resp(code="validate_error", message=str(exc), status=400)
+        return a._ok(result)
+
+    @quart_app.post("/admin/builtin-tools/credential-providers/<string:provider_name>/probe")
+    async def admin_builtin_tool_credential_probe(provider_name):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.exception import NotFoundException
+        from internal.service.builtin_tool_credential_service import (
+            BuiltinToolCredentialService,
+        )
+
+        try:
+            result = await a._to_thread(
+                a._get_service(BuiltinToolCredentialService).probe_provider,
+                provider_name,
+            )
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+        return a._ok(result)
+
+    # ------------------------------------------------------------------
     # admin_public_ai_feature_handler -> PublicAIFeatureService（models/update 走模块级 DB helper）
     # ------------------------------------------------------------------
     @quart_app.get("/admin/public-ai-features")

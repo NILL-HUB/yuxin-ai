@@ -1152,19 +1152,25 @@ MCP 工具同步此前**失败被两层静默吞掉**：`McpToolFactory.list_rem
 
 判据**不是**「模型 vs 工具」，而是**「该凭证是否需要在多个候选之间路由」**：
 
-| 维度 | 可路由池（`model_key_config`） | 具名凭证（env + 统一入口） |
+| 维度 | 可路由池（`model_key_config`） | 具名凭证（`builtin_tool_provider.credentials` + env 兜底） |
 | --- | --- | --- |
 | 归属 | 多个 Key 为一个 provider/模型提供服务 | 一把部署一把 Key，一一对应 |
 | 是否需要轮换 | 是（按 `used_credits`/`created_at` 排序轮换） | 否 |
 | 是否需要配额 | 是（`tenant_quota`，用尽转 `disabled`） | 否 |
 | 是否需要熔断 | 是（`failure_count` → `circuit_open`，冷却恢复） | 否 |
-| 存储 | DB（`model_key_config.key_value_encrypted`，Fernet 加密） | env（**不入库**） |
-| 读取入口 | `RuntimeModelPoolService.get_keys_for_model()` → `FallbackLLMWrapper` | `internal/service/tool_credential_resolver.get_tool_credential()` |
+| 存储 | DB（`model_key_config.key_value_encrypted`，Fernet 加密） | DB（`builtin_tool_provider.credentials`，Fernet 加密）**优先** → env 兜底 |
+| 读取入口 | `RuntimeModelPoolService.get_keys_for_model()` → `FallbackLLMWrapper` | `internal/service/tool_credential_resolver.get_tool_credential()`（DB 解密优先 → env） |
 
 - `model_key_config.model_id IS NULL` 表示 **provider 级共享 Key**（该 provider 下所有模型可用）；
   非空表示绑定到具体模型。此语义由 `get_keys_for_model` 的过滤条件实现，勿改成「模型专属才可用」。
-- 工具凭证（gaode/newsapi/github/stability/atlascloud/xai/baidu/tavily 等 builtin provider）
-  一律走 env + `get_tool_credential()`；**不给工具凭证加熔断/配额**——无轮换需求，加了是过度设计。
+- 工具凭证（gaode / newsapi / github / stability / atlascloud / xai / baidu / tavily / web_tools 等 builtin provider）
+  **2026-09-29 起收编为 admin 可配**：管理员在 `/admin/tools`「凭证配置」页签填写，加密入库
+  `builtin_tool_provider.credentials`（键=env 名），运行时统一经 `get_tool_credential()`
+  「DB 解密优先 → env 兜底」读取（DB 为空时行为与升级前逐字节一致）。
+  - 「某 provider 需要哪些键」由 `BuiltinToolCredentialService.PROVIDER_CREDENTIAL_KEYS` **代码声明**
+    （等于工具实现读取的 env 名），不入库，避免冗余与漂移。
+  - **仍不给工具凭证加熔断/配额**——无轮换需求，加了是过度设计。
+  - 详见 [工具凭证收编 admin 设计](../superpowers/specs/2026-09-29-tool-provider-credential-admin-design.md)。
 - 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
   **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。
 

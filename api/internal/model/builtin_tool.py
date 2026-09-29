@@ -49,6 +49,9 @@ class BuiltinToolProvider(Base):
     source = Column(String(32), nullable=False, server_default=text("'catalog'::character varying"))
     # YAML 文件路径（用于回退和同步校验）
     source_path = Column(String(1024), nullable=True)
+    # 第三方工具凭证（加密存储，键=env 名，如 TAVILY_API_KEY；值经 tool_credential_encryptor 加密）
+    # 运行时经 ToolCredentialResolver「DB 优先 → env 兜底」读取（体检：搜索密钥收编 admin）
+    credentials = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     updated_at = Column(
         DateTime,
         nullable=False,

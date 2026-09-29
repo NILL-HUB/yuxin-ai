@@ -52,13 +52,13 @@
 
 ```
 builtin_tool_provider（既有表）
-  + credentials        jsonb    not null default '{}'   -- 值经 tool_credential_encryptor 加密；键=env 名（如 TAVILY_API_KEY）
-  + credential_keys    jsonb    not null default '[]'   -- 该 provider 需要的凭证键清单（供 admin 渲染表单 + 缺失判定）
+  + credentials   jsonb   not null default '{}'   -- 值经 tool_credential_encryptor 加密；键=env 名（如 TAVILY_API_KEY）
 ```
 
-- 键用 **env 名**（`TAVILY_API_KEY`）而非自定义名：这样 `get_tool_credential("TAVILY_API_KEY")` 的调用点**无需修改**，resolver 内部按 env 名反查 DB。
-- `credentials` 中每个值单独加密（复用 `encrypt_*` 幂等语义：已加密值跳过）。
-- 不落明文；读接口只回 `mask` 后的值 + `configured: bool`。
+- 键用 **env 名**（`TAVILY_API_KEY`）而非自定义名：`get_tool_credential("TAVILY_API_KEY")` 的调用点**无需修改**，resolver 内部按 env 名反查 DB。
+- 值单独加密（复用 `encrypt_env` 幂等语义）；读接口只回 `mask` 后的值 + `source`（db/env/未配置）。
+- **实现取舍（相对初稿）**：初稿拟另加 `credential_keys` 列，落地时改为**代码声明**
+  （`BuiltinToolCredentialService.PROVIDER_CREDENTIAL_KEYS`）——"某 provider 需要哪些键"由工具实现决定（读哪个 env），属开发者定义而非管理员配置，入库会造成冗余与漂移。故只加 `credentials` 一列。
 
 ### 4.2 单一解析入口：`tool_credential_resolver`（升级，不改签名）
 
@@ -142,3 +142,23 @@ def get_tool_credential(*env_names: str) -> str:
 | 直接读 DB 让 core 层耦合 DB | resolver 保持在 service 层，core 只调 resolver（既有注入范式） |
 | `credential_keys` 与 YAML 漂移 | 启动同步补齐 + `config-inventory.md` 登记，测试断言覆盖 |
 | 多 key/轮换诉求 | 本次不支持；后续可在 `credentials` 内扩展为 key 列表而不改表结构 |
+
+---
+
+## 8. 落地状态（2026-09-29 已完成）
+
+| 步骤 | 产出 | 现状 |
+|---|---|---|
+| S1 | 迁移 `m7c8d9e0f1a2`（`builtin_tool_provider.credentials`）+ 模型列 | ✅ |
+| S2 | `tool_credential_resolver.get_tool_credential` 升级为 **DB 解密优先 → env 兜底**（签名/缺失语义不变） | ✅（DB 为空时行为逐字节一致） |
+| S3 | `BuiltinToolCredentialService`（读取/列表/更新/探测）+ 3 个 admin 端点（`/admin/builtin-tools/credential-providers[...]`）+ `ToolsView.vue`「凭证配置」页签 + i18n | ✅ |
+| S4 | `PROVIDER_CREDENTIAL_KEYS` 声明 16 个 provider 的键（搜索类/生活服务类/设备类） | ✅ |
+| S5 | P1-1 工具 enabled × 依赖联动（用凭证齐备性标记 `not_configured`） | ⏳ 未做（后续） |
+| S6 | 文档同步（本节 + `01-agent-tool-pool.md` 工具凭证章节） | ✅ |
+
+**实测（容器内真实往返）**：`update_provider_credentials("tavily", ...)` → 落库密文（`gAAAAA…`）、返回掩码（`tvly****cdef`）；
+`resolver.get_tool_credential("TAVILY_API_KEY")` 返回 DB 明文（优先级 > env）；`list_providers` 报 `source=db`；`probe` 返回齐备；
+清空后解析器回退（返回空串，回落 env）。
+
+**说明（相对初稿的收窄）**：`probe` 落地为**凭证齐备性检查**（逐键判断 DB/env 是否有值并返回缺失清单，不发起外网调用）；
+真正的端到端连通性由管理员在对话中实际调用工具验证。初稿的"实探一次轻量调用"未做，列为后续增量。

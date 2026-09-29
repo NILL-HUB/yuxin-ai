@@ -117,3 +117,51 @@ export const getAdminBuiltinTools = () => {
 export const getAdminBuiltinCategories = () => {
   return get<GetCategoriesResponse>('/admin/builtin-tools/categories')
 }
+
+/**
+ * 内置工具凭证键的配置状态（admin 凭证页签）。
+ * - source: 'db'=admin 已配置、'env'=env 兜底、''=未配置
+ */
+export type BuiltinCredentialKey = {
+  key: string
+  configured: boolean
+  source: '' | 'db' | 'env'
+  masked: string
+}
+
+export type BuiltinCredentialProvider = {
+  provider: string
+  label: string
+  keys: BuiltinCredentialKey[]
+}
+
+/**
+ * 列出"有凭证需求"的内置工具 provider 及其各键配置状态（掩码，不回明文）。
+ */
+export const listBuiltinToolCredentialProviders = () => {
+  return get<BaseResponse<{ list: BuiltinCredentialProvider[] }>>(
+    '/admin/builtin-tools/credential-providers',
+  )
+}
+
+/**
+ * 设置/更新某内置工具 provider 的凭证（加密入库）；空字符串表示清除该键。
+ */
+export const updateBuiltinToolCredential = (
+  provider: string,
+  credentials: Record<string, string>,
+) => {
+  return request<BaseResponse<{ provider: string; credentials: Record<string, string> }>>(
+    `/admin/builtin-tools/credential-providers/${encodeURIComponent(provider)}`,
+    { method: 'PUT', body: { credentials } },
+  )
+}
+
+/**
+ * 凭证齐备性检查（不发起外网调用）；返回缺失的凭证键清单。
+ */
+export const probeBuiltinToolCredential = (provider: string) => {
+  return post<BaseResponse<{ ok: boolean; provider: string; missing: string[]; note: string }>>(
+    `/admin/builtin-tools/credential-providers/${encodeURIComponent(provider)}/probe`,
+  )
+}

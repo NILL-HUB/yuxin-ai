@@ -11,8 +11,12 @@ import {
   deleteAdminApiTool,
   getAdminApiTool,
   listAdminApiTools,
+  listBuiltinToolCredentialProviders,
+  probeBuiltinToolCredential,
   updateAdminApiTool,
+  updateBuiltinToolCredential,
 } from '@/services/admin-tools'
+import type { BuiltinCredentialProvider } from '@/services/admin-tools'
 import type { CreateApiToolProviderRequest, UpdateApiToolProviderRequest } from '@/models/api-tool'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
@@ -376,10 +380,88 @@ const confirmDelete = async (retentionDays: number) => {
   }
 }
 
+// ---- 内置工具凭证页签（第三方密钥，如搜索类）----
+const credentialLoading = ref(false)
+const credentialProviders = ref<BuiltinCredentialProvider[]>([])
+const credentialDrafts = ref<Record<string, Record<string, string>>>({})
+const credentialTouched = ref<Set<string>>(new Set())
+const credentialSaving = ref<Set<string>>(new Set())
+
+const credentialTouchKey = (provider: string, key: string) => `${provider}::${key}`
+
+const loadCredentialProviders = async () => {
+  credentialLoading.value = true
+  try {
+    const response = await listBuiltinToolCredentialProviders()
+    credentialProviders.value = response.data?.list || []
+    const drafts: Record<string, Record<string, string>> = {}
+    for (const provider of credentialProviders.value) {
+      drafts[provider.provider] = {}
+      for (const item of provider.keys) drafts[provider.provider][item.key] = ''
+    }
+    credentialDrafts.value = drafts
+    credentialTouched.value = new Set()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.toolsAdmin.credentialLoadFailed')))
+  } finally {
+    credentialLoading.value = false
+  }
+}
+
+const onCredentialInput = (provider: string, key: string, value: string) => {
+  if (!credentialDrafts.value[provider]) credentialDrafts.value[provider] = {}
+  credentialDrafts.value[provider][key] = value ?? ''
+  credentialTouched.value.add(credentialTouchKey(provider, key))
+}
+
+const handleSaveCredential = async (provider: string) => {
+  // 仅提交**被编辑过**的键（含显式清空的空值），避免误清空未触碰的既有凭证
+  const touched = credentialTouched.value
+  const payload: Record<string, string> = {}
+  for (const key of Object.keys(credentialDrafts.value[provider] || {})) {
+    if (touched.has(credentialTouchKey(provider, key))) {
+      payload[key] = credentialDrafts.value[provider][key] || ''
+    }
+  }
+  if (Object.keys(payload).length === 0) {
+    Message.warning(t('admin.toolsAdmin.credentialNothingToSave'))
+    return
+  }
+  credentialSaving.value.add(provider)
+  try {
+    await updateBuiltinToolCredential(provider, payload)
+    Message.success(t('admin.toolsAdmin.credentialSaved'))
+    await loadCredentialProviders()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.toolsAdmin.credentialSaveFailed')))
+  } finally {
+    credentialSaving.value.delete(provider)
+  }
+}
+
+const handleProbeCredential = async (provider: string) => {
+  try {
+    const response = await probeBuiltinToolCredential(provider)
+    const result = response.data
+    if (result?.ok) {
+      Message.success(t('admin.toolsAdmin.credentialProbeOk'))
+    } else {
+      Message.warning(
+        t('admin.toolsAdmin.credentialProbeMissing', {
+          keys: (result?.missing || []).join(', '),
+        }),
+      )
+    }
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.toolsAdmin.credentialProbeFailed')))
+  }
+}
+
 onMounted(() => {
   void loadProviders()
   loadCategories()
   loadBuiltinTools()
+  void loadCredentialProviders()
 })
 </script>
 
@@ -682,6 +764,87 @@ onMounted(() => {
             </div>
           </div>
         </a-drawer>
+      </a-tab-pane>
+
+      <a-tab-pane key="credentials" :title="t('admin.toolsAdmin.tabCredentials')">
+        <div class="space-y-4">
+          <div class="text-xs text-gray-500 leading-5">
+            {{ t('admin.toolsAdmin.credentialHint') }}
+          </div>
+          <a-spin :loading="credentialLoading" class="block">
+            <div class="space-y-3">
+              <a-card
+                v-for="provider in credentialProviders"
+                :key="provider.provider"
+                class="rounded-xl"
+                :bordered="false"
+              >
+                <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                  <div class="flex items-center gap-2">
+                    <div class="text-sm font-bold text-gray-900">{{ provider.label }}</div>
+                    <code class="text-[11px] text-gray-400">{{ provider.provider }}</code>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <a-button
+                      size="mini"
+                      type="outline"
+                      @click="handleProbeCredential(provider.provider)"
+                    >
+                      {{ t('admin.toolsAdmin.credentialProbe') }}
+                    </a-button>
+                    <a-button
+                      size="mini"
+                      type="primary"
+                      :loading="credentialSaving.has(provider.provider)"
+                      @click="handleSaveCredential(provider.provider)"
+                    >
+                      {{ t('admin.toolsAdmin.credentialSave') }}
+                    </a-button>
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <div
+                    v-for="item in provider.keys"
+                    :key="item.key"
+                    class="flex items-center gap-3 flex-wrap"
+                  >
+                    <div class="w-72 shrink-0 font-mono text-xs text-gray-600">
+                      {{ item.key }}
+                    </div>
+                    <a-input
+                      :model-value="credentialDrafts[provider.provider]?.[item.key] || ''"
+                      :placeholder="
+                        item.configured
+                          ? item.masked || t('admin.toolsAdmin.credentialConfigured')
+                          : t('admin.toolsAdmin.credentialEmpty')
+                      "
+                      size="small"
+                      allow-clear
+                      class="!w-80"
+                      @update:model-value="
+                        (v: string) => onCredentialInput(provider.provider, item.key, v)
+                      "
+                    />
+                    <a-tag
+                      size="small"
+                      :color="
+                        item.source === 'db' ? 'green' : item.source === 'env' ? 'arcoblue' : 'gray'
+                      "
+                    >
+                      {{
+                        item.source === 'db'
+                          ? t('admin.toolsAdmin.credentialSourceDb')
+                          : item.source === 'env'
+                            ? t('admin.toolsAdmin.credentialSourceEnv')
+                            : t('admin.toolsAdmin.credentialSourceNone')
+                      }}
+                    </a-tag>
+                  </div>
+                </div>
+              </a-card>
+            </div>
+          </a-spin>
+        </div>
       </a-tab-pane>
     </a-tabs>
 
