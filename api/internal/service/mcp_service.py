@@ -190,10 +190,11 @@ class McpService(BaseService):
                 })
         return inputs
 
-    def _build_tool_list(self, provider_dict: dict[str, Any]) -> list[dict[str, Any]]:
-        tool_definitions = self._tool_factory.list_remote_tool_definitions(provider_dict)
+    def _build_tool_list(self, provider_dict: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+        """构建工具清单，并返回同步错误（区分"无工具"与"探测失败"）。"""
+        result = self._tool_factory.probe_remote_tool_definitions(provider_dict)
         tools: list[dict[str, Any]] = []
-        for tool_definition in tool_definitions:
+        for tool_definition in result.tools:
             tool_name = _normalize_text(tool_definition.get("name"))
             if not tool_name:
                 continue
@@ -205,7 +206,7 @@ class McpService(BaseService):
                     tool_definition.get("inputSchema") or tool_definition.get("input_schema"),
                 ),
             })
-        return tools
+        return tools, result.error
 
     # NOTE(2026-09-25): 本方法无调用方（binding 已由 _build_provider_payload 直接构造）。
     # 保留仅为最小改动；如需删除请单独提交并跑 MCP 全量测试。
@@ -262,6 +263,9 @@ class McpService(BaseService):
         include_tools: bool = False,
         task_keywords: list[str] | None = None,
         tool_schema: dict[str, Any] | None = None,
+        sync_status: str = "",
+        sync_error: str = "",
+        last_synced_at=None,
     ) -> dict[str, Any]:
         normalized_category = normalize_mcp_category(category, name=name, description=description)
         category_meta = get_mcp_category_meta(normalized_category)
@@ -322,8 +326,12 @@ class McpService(BaseService):
             "tools": [],
             "binding": binding,
             "task_keywords": list(task_keywords or []),
+            "sync_status": sync_status or "",
+            "sync_error": sync_error or "",
+            "last_synced_at": datetime_to_timestamp(last_synced_at),
         }
 
+        tool_sync_error = ""
         if include_tools:
             # 工具发现需要真实 headers/env，构造解密后的临时 binding 用于调用 MCP 远端
             runtime_binding = dict(binding)
@@ -331,9 +339,13 @@ class McpService(BaseService):
                 runtime_binding["headers"] = decrypt_headers(runtime_binding.get("headers") or [])
             if isinstance(runtime_binding.get("env"), dict):
                 runtime_binding["env"] = decrypt_env(runtime_binding.get("env") or {})
-            tools = self._build_tool_list(runtime_binding) if is_bindable else []
+            if is_bindable:
+                tools, tool_sync_error = self._build_tool_list(runtime_binding)
+            else:
+                tools, tool_sync_error = [], bind_reason
             provider_dict["tools"] = tools
             provider_dict["tool_count"] = len(tools)
+        provider_dict["tool_sync_error"] = tool_sync_error
         # 顶级 headers/env 字段对外展示需脱敏（已加密值会先解密再脱敏）
         provider_dict["headers"] = mask_headers(provider_dict.get("headers") or [])
         provider_dict["env"] = mask_env(provider_dict.get("env") or {})
@@ -377,6 +389,9 @@ class McpService(BaseService):
             include_tools=include_tools,
             task_keywords=list(provider.task_keywords or []),
             tool_schema=dict(provider.tool_schema or {}),
+            sync_status=getattr(provider, "sync_status", "") or "",
+            sync_error=getattr(provider, "sync_error", "") or "",
+            last_synced_at=getattr(provider, "last_synced_at", None),
         )
 
     def _build_catalog_provider_payload(self, catalog_provider: McpCatalogProvider, *, include_tools: bool = False) -> dict[str, Any]:
@@ -433,15 +448,60 @@ class McpService(BaseService):
             raise NotFoundException("MCP 不存在")
 
         binding = self._provider_to_binding(provider)
-        try:
-            tool_definitions = self._tool_factory.list_remote_tool_definitions(binding)
-        except Exception as exc:
-            logging.exception("同步 MCP 工具失败 provider=%s: %s", provider_id, exc)
-            self._mark_tools_sync_status(provider_id, "stale")
-            return {"synced": 0, "status": "failed", "error": str(exc)}
+        result = self._tool_factory.probe_remote_tool_definitions(binding)
 
-        synced = self._upsert_mcp_tools(provider, tool_definitions)
-        return {"synced": synced, "status": "ready" if tool_definitions else "empty"}
+        if result.error:
+            status = (
+                "not_configured"
+                if result.reason_code in {"not_configured", "unsupported_transport", "missing_runtime"}
+                else "failed"
+            )
+            logging.warning(
+                "同步 MCP 工具失败 provider=%s reason=%s status=%s: %s",
+                provider_id,
+                result.reason_code,
+                status,
+                result.error,
+            )
+            self._mark_tools_sync_status(provider_id, "stale")
+            self._set_provider_sync(provider, status, result.error)
+            return {"synced": 0, "status": status, "error": result.error}
+
+        synced = self._upsert_mcp_tools(provider, result.tools)
+        status = "ready" if result.tools else "empty"
+        self._set_provider_sync(provider, status, "")
+        return {"synced": synced, "status": status, "error": ""}
+
+    def _set_provider_sync(self, provider: McpProvider, status: str, error: str) -> None:
+        """写入 MCP 提供者的同步状态（使失败可见、可排查，体检 P0-5）。"""
+        try:
+            provider.sync_status = status or ""
+            provider.sync_error = (error or "")[:2000]
+            provider.last_synced_at = utc_now_naive()
+            self.db.session.commit()
+        except Exception:
+            logging.exception("写入 MCP 同步状态失败 provider=%s", getattr(provider, "id", ""))
+            self.db.session.rollback()
+
+    def probe_mcp_provider(self, provider_id: UUID) -> dict[str, Any]:
+        """管理员「测试连通性」：探测工具列表，不写库、不改状态。"""
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+        result = self._tool_factory.probe_remote_tool_definitions(self._provider_to_binding(provider))
+        return {
+            "ok": not result.error,
+            "error": result.error,
+            "reason_code": result.reason_code,
+            "tool_count": len(result.tools),
+            "tools": [
+                {
+                    "name": _normalize_text(tool.get("name")),
+                    "description": _normalize_text(tool.get("description")),
+                }
+                for tool in result.tools
+            ][:50],
+        }
 
     def _provider_to_binding(self, provider: McpProvider) -> dict[str, Any]:
         """将 McpProvider 实体转换为 McpToolFactory 期望的 binding dict。"""

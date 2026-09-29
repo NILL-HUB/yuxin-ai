@@ -55,6 +55,11 @@ class McpProvider(Base):
     # MCP 协议走 tools/list 自描述，不需要本列；纯 CLI 无自描述能力，必须显式声明
     tool_schema = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     task_keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 任务关键词列表，用于 ToolSelector 关键词快速匹配
+    # 工具同步状态（对齐 skill_package.sync_status）：ready/empty/failed/not_configured/''（未同步）
+    # 使"同步失败被静默吞掉"可见（体检 P0-5）。
+    sync_status = Column(String(64), nullable=False, server_default=text("''::character varying"))
+    sync_error = Column(Text, nullable=False, server_default=text("''::text"))
+    last_synced_at = Column(DateTime, nullable=True)
     timeout_seconds = Column(Integer, nullable=False, server_default=text("30"))
     is_public = Column(Boolean, nullable=False, server_default=text("false"))
     source_type = Column(String(255), nullable=False, server_default=text("''::character varying"))

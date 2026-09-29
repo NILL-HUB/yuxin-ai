@@ -77,6 +77,14 @@ export type McpProvider = {
   tools: McpTool[]
   binding: McpBinding
   task_keywords: string[]
+  /** 工具同步状态：ready/empty/failed/not_configured/''（未同步） */
+  sync_status: string
+  /** 工具同步失败原因（sync_status=failed/not_configured 时有值） */
+  sync_error: string
+  /** 最近一次同步时间戳（秒） */
+  last_synced_at: number | null
+  /** 详情页实时探测工具时的错误（区分"无工具"与"探测失败"） */
+  tool_sync_error: string
 }
 
 export type GetMcpProvidersWithPageRequest = BasePaginatorRequest & {

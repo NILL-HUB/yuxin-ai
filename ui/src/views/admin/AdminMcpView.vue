@@ -13,8 +13,10 @@ import {
   getAdminMcpCategories,
   listAdminMcpProviders,
   publishAdminMcp,
+  syncAdminMcp,
   unpublishAdminMcp,
 } from '@/services/admin-mcp'
+import { resolveMcpSyncDescriptor, resolveMcpSyncNotice } from '@/utils/admin-mcp-sync'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
@@ -310,6 +312,44 @@ const handleUnpublish = async (provider: McpProvider) => {
   })
 }
 
+/**
+ * 工具同步状态徽标的展示语义（颜色 + i18n 文案）。
+ */
+const getMcpSyncBadge = (provider: McpProvider) =>
+  resolveMcpSyncDescriptor(provider.sync_status)
+
+/** 正在同步的 provider id 集合（用于按钮 loading 态）。 */
+const syncingIds = ref<Set<string>>(new Set())
+
+/**
+ * 手动同步 MCP 工具：依据接口返回的**真实** sync_status 如实提示，
+ * 不得把"接口 200"等同于"已同步"（体检 P0-5）。
+ */
+const handleSyncMcp = async (provider: McpProvider) => {
+  if (syncingIds.value.has(provider.id)) return
+  syncingIds.value.add(provider.id)
+  try {
+    const response = await syncAdminMcp(provider.id)
+    const result = response.data
+    const notice = resolveMcpSyncNotice(result?.sync_status)
+    const params = { count: result?.synced ?? 0, reason: result?.sync_error || '' }
+    if (notice.level === 'success') {
+      Message.success(t(notice.messageKey, params))
+    } else if (notice.level === 'error') {
+      Message.error(t(notice.messageKey, params))
+    } else if (notice.level === 'warning') {
+      Message.warning(t(notice.messageKey, params))
+    } else {
+      Message.info(t(notice.messageKey, params))
+    }
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.mcpAdmin.syncFailed')))
+  } finally {
+    syncingIds.value.delete(provider.id)
+    void loadProviders()
+  }
+}
+
 onMounted(async () => {
   await loadCategories()
   await loadProviders()
@@ -442,6 +482,13 @@ onMounted(async () => {
               {{ getCategoryName(provider.category) }}
             </a-tag>
             <a-tag size="small" color="arcoblue">{{ provider.transport }}</a-tag>
+            <a-tag
+              size="small"
+              :color="getMcpSyncBadge(provider).color"
+              :title="provider.sync_error || ''"
+            >
+              {{ t(getMcpSyncBadge(provider).labelKey) }}
+            </a-tag>
           </div>
 
           <div class="flex items-center gap-1.5 mt-2.5">
@@ -479,6 +526,14 @@ onMounted(async () => {
                 @click="handleUnpublish(provider)"
               >
                 {{ t('admin.mcpAdmin.unpublishButton') }}
+              </a-button>
+              <a-button
+                size="mini"
+                type="outline"
+                :loading="syncingIds.has(provider.id)"
+                @click="handleSyncMcp(provider)"
+              >
+                {{ t('admin.mcpAdmin.syncButton') }}
               </a-button>
               <a-button size="mini" type="outline" @click="openEditModal(provider)">
                 {{ t('admin.mcpAdmin.editButton') }}

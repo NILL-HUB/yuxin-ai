@@ -644,6 +644,42 @@ def register_routes(quart_app):
         )
         return a._ok_msg("更新MCP成功")
 
+    @quart_app.post("/admin/mcp/<uuid:provider_id>/sync")
+    async def admin_sync_mcp_provider(provider_id):
+        """手动同步 MCP 工具，并回传真实同步结果（失败不再被吞，体检 P0-5）。"""
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.mcp_service import McpService
+
+        result = await a._to_thread(a._get_service(McpService).sync_mcp_tools, provider_id)
+        await _record_mutation_audit(
+            action="mcp.sync",
+            resource_type="mcp",
+            resource_id=str(provider_id),
+        )
+        return a._json_resp(
+            {
+                "sync_status": (result or {}).get("status", ""),
+                "sync_error": (result or {}).get("error", ""),
+                "synced": (result or {}).get("synced", 0),
+            },
+            message="同步 MCP 工具完成",
+        )
+
+    @quart_app.post("/admin/mcp/<uuid:provider_id>/probe")
+    async def admin_probe_mcp_provider(provider_id):
+        """测试 MCP 连通性：返回是否可达、工具数量与失败原因（不写库）。"""
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.mcp_service import McpService
+
+        result = await a._to_thread(a._get_service(McpService).probe_mcp_provider, provider_id)
+        return a._ok(result)
+
     @quart_app.post("/admin/mcp/<uuid:provider_id>/regenerate-icon")
     async def admin_regenerate_mcp_icon(provider_id):
         from app.http import asgi_app as a

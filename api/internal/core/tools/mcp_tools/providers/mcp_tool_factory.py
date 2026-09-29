@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import hashlib
+import shutil
 from dataclasses import dataclass, field
 from functools import lru_cache
 from datetime import UTC, datetime
@@ -19,6 +20,19 @@ DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 30
 SUPPORTED_HTTP_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http"}
 SUPPORTED_STDIO_TRANSPORTS = {"stdio"}
 SUPPORTED_CLI_TRANSPORTS = {"cli"}
+
+
+@dataclass(slots=True)
+class McpToolListResult:
+    """MCP 工具探测结果：区分「无工具」与「请求失败/前置缺失」。
+
+    历史缺陷：`list_remote_tool_definitions` 在异常时返回 `[]`，调用方无法区分
+    「服务端真的没有工具」与「连接/鉴权失败」，导致同步失败被静默吞掉（体检 P0-5）。
+    """
+
+    tools: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
+    reason_code: str = ""  # "" | not_configured | unsupported_transport | missing_runtime | request_failed
 
 
 def _normalize_text(value: Any) -> str:
@@ -512,30 +526,53 @@ class McpToolFactory:
         return tools
 
     def list_remote_tool_definitions(self, binding: dict[str, Any]) -> list[dict[str, Any]]:
-        """读取远程 MCP 的工具定义，用于广场详情和绑定选择。"""
+        """读取远程 MCP 的工具定义，用于广场详情和绑定选择。
+
+        **注意**：为兼容既有调用方，异常时返回空列表（错误被吞）。若需要区分
+        「服务端无工具」与「连接/鉴权失败」，请改用 :meth:`probe_remote_tool_definitions`。
+        """
+        result = self.probe_remote_tool_definitions(binding)
+        if result.error:
+            logging.warning("读取 MCP 工具列表失败（已吞，reason=%s）: %s", result.reason_code, result.error)
+        return result.tools
+
+    def probe_remote_tool_definitions(self, binding: dict[str, Any]) -> McpToolListResult:
+        """探测远程 MCP 工具定义，**不吞异常**：区分"无工具"与"失败/前置缺失"。"""
         if not isinstance(binding, dict):
-            return []
+            return McpToolListResult(error="绑定格式无效", reason_code="not_configured")
 
         if not self._is_binding_enabled(binding):
-            return []
+            return McpToolListResult(error="绑定未启用或缺少 url/command", reason_code="not_configured")
 
         transport = self._normalize_transport(binding.get("transport"))
         if not self._is_supported_transport(transport):
-            logging.warning("不支持的 MCP transport，已跳过: %s", transport)
-            return []
+            return McpToolListResult(
+                error=f"不支持的 transport: {transport}",
+                reason_code="unsupported_transport",
+            )
+
+        if transport in SUPPORTED_STDIO_TRANSPORTS or transport in SUPPORTED_CLI_TRANSPORTS:
+            raw_command = _normalize_text(binding.get("command"))
+            command = raw_command.split(" ")[0] if raw_command else ""
+            if command and shutil.which(command) is None:
+                return McpToolListResult(
+                    error=f"运行时缺失：容器内找不到命令 {command!r}（stdio/cli 型 MCP 需可执行该命令）",
+                    reason_code="missing_runtime",
+                )
 
         try:
             tool_definitions = self._list_remote_tools(binding)
         except Exception as exc:
-            logging.exception("读取 MCP 工具列表失败，已跳过该绑定: %s", exc)
-            return []
+            return McpToolListResult(
+                error=f"{type(exc).__name__}: {exc}"[:500],
+                reason_code="request_failed",
+            )
 
         allow_tool_names = {
             _normalize_text(tool_name)
             for tool_name in (binding.get("tool_names") or [])
             if _normalize_text(tool_name)
         }
-
         if allow_tool_names:
             tool_definitions = [
                 tool_definition
@@ -543,7 +580,7 @@ class McpToolFactory:
                 if _normalize_text(tool_definition.get("name")) in allow_tool_names
             ]
 
-        return tool_definitions
+        return McpToolListResult(tools=list(tool_definitions))
 
     def _is_binding_enabled(self, binding: dict[str, Any]) -> bool:
         if "enabled" in binding and not bool(binding.get("enabled")):

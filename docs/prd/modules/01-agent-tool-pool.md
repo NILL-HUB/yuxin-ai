@@ -1139,6 +1139,15 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 - **防御（伪工具调用剥离）**：当模型未真正绑定工具却按 system prompt 编造 XML 工具调用时，`internal/core/agent/entities/agent_text_sanitizer.py` 在唯一权威输出口剥离 `<tool>…</tool>`（标签名 ∈ 实际工具名 ∪ 通用工具标签）；流式经 `PseudoToolCallStreamFilter` 前缀回撤缓冲，避免跨 chunk 标签泄漏（`<`、`search`、`_knowledge_base>` 分片）。
 - **提示词一致性**：模型无法绑定工具时，`_long_term_memory_recall_node` 选用 `agent_system_prompt_template_no_tools`（不注入任何"调用某工具"指令），避免"提示词承诺工具、运行时没有工具"的错配。
 
+#### 10.5.4 MCP 工具同步失败可见（`mcp_provider.sync_status`）
+
+MCP 工具同步此前**失败被两层静默吞掉**：`McpToolFactory.list_remote_tool_definitions` 异常时返回 `[]`（无法区分"服务端无工具"与"连接失败"），且 create/update 调用方丢弃 `sync_tools` 返回值 → 管理员误以为 MCP 配置成功（体检 P0-5）。
+
+- **探测（不吞异常）**：`McpToolFactory.probe_remote_tool_definitions(binding) -> McpToolListResult(tools, error, reason_code)`；`reason_code ∈ {not_configured, unsupported_transport, missing_runtime, request_failed}`。旧 `list_remote_tool_definitions` 保留并委托其（异常时仍返回 `[]`，兼容既有调用方）。
+- **状态落库**：`mcp_provider` 新增 `sync_status` / `sync_error` / `last_synced_at`（迁移 `l6b7c8d9e0f1`）。`McpService.sync_mcp_tools` 写入 `ready`（≥1 工具）/ `empty`（连接成功但无工具）/ `failed`（请求/鉴权失败）/ `not_configured`（前置缺失）。
+- **管理入口**：`POST /admin/mcp/<id>/sync`（回传真实 `sync_status`/`sync_error`/`synced`）与 `POST /admin/mcp/<id>/probe`（测连通性，不写库）；列表/详情 payload 暴露状态；前端 `AdminMcpView` 加状态徽标 + 「同步工具」按钮（`resolveMcpSyncDescriptor`/`resolveMcpSyncNotice`）。
+- **接线自检**：`mcp_provider.sync_status` 写入 = `McpService.sync_mcp_tools`；读取 = 列表/详情 payload + 前端徽标；入口 = `/admin/mcp/<id>/sync`。
+
 ### 10.6 凭证与 Key 池的分区判据
 
 判据**不是**「模型 vs 工具」，而是**「该凭证是否需要在多个候选之间路由」**：

@@ -78,6 +78,27 @@ export const unpublishAdminMcp = (id: string) => {
 }
 
 /**
+ * 手动同步 MCP 工具，并返回**真实**同步结果（sync_status / sync_error / synced）。
+ *
+ * 不得把「接口 200」等同于「已同步到远端」——远端不可达/鉴权失败时接口同样返回 200，
+ * 必须依据 data.sync_status 如实提示（体检 P0-5）。
+ */
+export const syncAdminMcp = (id: string) => {
+  return post<BaseResponse<{ sync_status: string; sync_error: string; synced: number }>>(
+    `/admin/mcp/${id}/sync`,
+  )
+}
+
+/**
+ * 测试 MCP 连通性（不写库）：返回是否可达、工具数量与失败原因。
+ */
+export const probeAdminMcp = (id: string) => {
+  return post<
+    BaseResponse<{ ok: boolean; error: string; reason_code: string; tool_count: number }>
+  >(`/admin/mcp/${id}/probe`)
+}
+
+/**
  * 删除后台 MCP Provider（进入回收站，可指定留存天数）。
  */
 export const deleteAdminMcp = async (
