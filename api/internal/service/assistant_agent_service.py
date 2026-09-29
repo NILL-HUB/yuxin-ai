@@ -374,6 +374,28 @@ class AssistantAgentService(BaseService):
         }
         yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
 
+    def _stream_reject_or_confirm(self, routing_decision):
+        """reject_or_confirm：输出拒绝原因或澄清问题，并**终止执行**（不再落到单智能体）。
+
+        历史缺陷：该分支仅打印 warning 后仍继续执行，等于指挥官拒绝/需澄清的决策不生效。
+        """
+        import json
+        summary = (routing_decision or {}).get("task_plan_summary") or {}
+        text = (
+            summary.get("clarification_question")
+            or summary.get("reject_reason")
+            or (routing_decision or {}).get("reason")
+            or "该请求需要你确认或补充信息后才能执行，请调整后重试。"
+        )
+        payload = {
+            "answer": text,
+            "thought": "",
+            "id": "",
+            "conversation_id": "",
+            "message_id": "",
+        }
+        yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
+
     def _stream_direct_answer(self, req, account, conversation, message, routing_decision=None, _chat_started_at: float = 0, llm=None, tools=None, user_memory_text: str = ""):
         """direct_answer 路径：真流式 LLM 调用，逐 token yield SSE 事件。
 
@@ -516,8 +538,17 @@ class AssistantAgentService(BaseService):
                     logger.warning("挂载 direct_answer collected_thoughts 到 message 失败（finally）", exc_info=True)
 
     def _build_plan_repairer(self):
-        """构造执行失败后的计划修复器，失败时交给 Conductor 重新规划。"""
+        """构造执行失败后的计划修复器，失败时交给 Conductor 重新规划。
+
+        与主路由保持同一门控语义：仅在 ENABLE_CONDUCTOR 开启时启用。否则关闭
+        conductor 后，失败重规划仍会绕过开关调用 conductor（旁路）。
+        """
         if self.conductor_service is None:
+            return None
+        if (
+            self.orchestration_feature_flag_service is None
+            or not self.orchestration_feature_flag_service.is_enabled("ENABLE_CONDUCTOR")
+        ):
             return None
 
         def _repair(original_query: str, failures: list[dict]):
@@ -1707,40 +1738,11 @@ class AssistantAgentService(BaseService):
                 "reason": "os_automation_request",
                 "cost_policy": {"allowed": True},
             }
-        # 指挥官模式：ENABLE_CONDUCTOR 开关启用时，由 LLM 指挥官替代规则编排
-        use_conductor = (
-            self.conductor_service is not None
-            and self.orchestration_feature_flag_service is not None
-            and self.orchestration_feature_flag_service.is_enabled("ENABLE_CONDUCTOR")
-        )
-        if routing_decision is None and use_conductor:
-            try:
-                conductor_plan = self.conductor_service.plan(
-                    req.query.data,
-                    image_url_count=len(req.image_urls.data or []),
-                )
-                routing_decision = self.conductor_service.to_routing_decision_dict(conductor_plan)
-                logger.info(
-                    "指挥官决策 intent=%s mode=%s complexity=%s agents=%d",
-                    conductor_plan.intent,
-                    conductor_plan.execution_mode,
-                    conductor_plan.complexity,
-                    len(conductor_plan.agents),
-                )
-            except Exception as exc:
-                logger.warning("指挥官决策失败，直接走 direct_answer 路径: %s", exc)
-                # 直接走 direct_answer，跳过 orchestrator（避免又调一次 LLM 烧 token）
-                if not os_automation_request:
-                    routing_decision = {
-                        "intent": "fallback",
-                        "execution_mode": "direct_answer",
-                        "complexity": "simple",
-                        "needs_tools": False,
-                        "needs_agent": False,
-                        "risk_level": "safe",
-                        "cost_policy": {"allowed": True},
-                    }
-
+        # 路由统一入口：不再在此直连 conductor.plan()。旧实现（直连 plan +
+        # to_routing_decision_dict）会丢失 tool_subset / 成本策略 / 深度思考增强 /
+        # 路由日志，构成与 OrchestratorService 并行的第二套实现（违反"禁止平行机制"）。
+        # 现统一交由 OrchestratorService.decide() 产出：其内部在 ENABLE_CONDUCTOR
+        # 开启时调用完整的 conductor.decide()（补齐工具子集、成本策略、深度思考增强与路由日志）。
         if routing_decision is None and self.orchestrator_service is not None:
             try:
                 # 深度思考是否启用完全交给入口指挥官（orchestrator/conductor）按请求本身
@@ -1881,6 +1883,22 @@ class AssistantAgentService(BaseService):
                         _chat_started_at, resolved_model_name=resolved_model_name,
                     )
                 return
+            if execution_mode == "reject_or_confirm":
+                # 指挥官判定该请求应拒绝或需用户澄清：输出文案并终止执行，不再落到单智能体。
+                logger.warning(
+                    "辅助 Agent 路由决策标记拒绝/需确认，终止执行: intent=%s",
+                    routing_decision.get("intent"),
+                )
+                yield from self._stream_reject_or_confirm(routing_decision)
+                yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+                if isinstance(routing_decision, dict):
+                    message.routing_log_id = routing_decision.get("routing_log_id")
+                    message.routing_decision = routing_decision
+                self._persist_assistant_thoughts(
+                    account, assistant_agent_id, conversation, message, {}, routing_decision,
+                    _chat_started_at, resolved_model_name=resolved_model_name,
+                )
+                return
 
         # 深度思考执行判定：仅当指挥官决策 execution_mode=deep_thinking 时启用。
         # 不再读取用户开关 confirm_deep_thinking（该字段已从 decide 输入移除，
@@ -1903,12 +1921,6 @@ class AssistantAgentService(BaseService):
                 "reason": "路由决策缺失，回退到默认单智能体执行",
             }
             execution_mode = "single_agent"
-
-        if execution_mode == "reject_or_confirm":
-            logger.warning(
-                "辅助 Agent 路由决策标记高风险任务，建议二次确认: intent=%s",
-                routing_decision.get("intent"),
-            )
 
         try:
             yield from self._stream_single_agent(

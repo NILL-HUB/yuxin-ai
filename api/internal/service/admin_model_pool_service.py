@@ -463,6 +463,9 @@ class AdminModelPoolService:
             ),
         )
         self.session.commit()
+        # 模型定义（能力/价格/类型等）变更后必须失效 LanguageModelManager 缓存，
+        # 否则运行时仍按旧的 ModelFeature 判定（曾导致修正 capabilities 后 60s 内不生效）。
+        self._invalidate_model_cache(model.provider, model.model_name)
         # embedding 模型维度变更时失效 EmbeddingsService 和 EmbeddingTableRouter 缓存
         self._invalidate_embedding_caches()
         return self._serialize_model(model)
