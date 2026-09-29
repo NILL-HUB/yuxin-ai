@@ -77,6 +77,23 @@ class BuiltinToolService:
                 tool.source = "custom"
         return tool
 
+    @staticmethod
+    def _credential_dependency(provider_name: str) -> dict:
+        """计算 provider 的凭证依赖状态（P1-1）。
+
+        失败时降级为「无要求 / 就绪」，绝不因依赖探测失败而打断工具列表。
+        """
+        try:
+            from app.http.module import injector
+            from internal.service.builtin_tool_credential_service import (
+                BuiltinToolCredentialService,
+            )
+
+            return injector.get(BuiltinToolCredentialService).dependency_status(provider_name)
+        except Exception:
+            logger.warning("计算工具凭证依赖状态失败 provider=%s", provider_name, exc_info=True)
+            return {"has_requirements": False, "status": "ready", "missing": []}
+
     def _get_builtin_tools_from_db(self) -> list:
         """从 DB 镜像表读取 builtin 工具信息（包含 task_keywords）"""
         from internal.extension.database_extension import db
@@ -93,6 +110,7 @@ class BuiltinToolService:
 
         builtin_tools: list[dict] = []
         for provider in providers:
+            dependency = self._credential_dependency(provider.name)
             provider_dict = {
                 "name": provider.name,
                 "label": provider.label,
@@ -101,6 +119,10 @@ class BuiltinToolService:
                 "category": provider.category,
                 "created_at": _to_timestamp(provider.created_at),
                 "tools": [],
+                # 依赖联动（P1-1）：工具 enabled=true 但凭证缺失时如实标记 not_configured
+                "credential_status": dependency["status"],
+                "credential_missing": dependency["missing"],
+                "has_credential_requirements": dependency["has_requirements"],
             }
 
             tools = (
@@ -147,9 +169,14 @@ class BuiltinToolService:
         builtin_tools = []
         for provider in providers:
             provider_entity = provider.provider_entity
+            dependency = self._credential_dependency(provider_entity.name)
             builtin_tool = {
                 **provider_entity.model_dump(exclude=["icon"]),
-                "tools":[]
+                "tools": [],
+                # 依赖联动（P1-1）：与 DB 路径同口径
+                "credential_status": dependency["status"],
+                "credential_missing": dependency["missing"],
+                "has_credential_requirements": dependency["has_requirements"],
             }
             # 循环遍历提取提供者的所有工具实体
             for tool_entity in provider.get_tool_entities():

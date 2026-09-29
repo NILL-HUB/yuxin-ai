@@ -138,3 +138,41 @@ def test_probe_web_tools_all_missing_is_ok(monkeypatch):
     result = svc.probe_provider("web_tools")
     # web_tools 允许全缺（免费 ddgs 兜底）
     assert result["ok"] is True
+
+
+# ----------------------------------------------------------------------
+# 依赖联动（P1-1）
+# ----------------------------------------------------------------------
+def test_dependency_status_without_requirements():
+    svc = _service([])
+    result = svc.dependency_status("time")
+    assert result == {"has_requirements": False, "status": "ready", "missing": []}
+
+
+def test_dependency_status_missing_required_key(monkeypatch):
+    svc = _service([_Provider("tavily")])
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    result = svc.dependency_status("tavily")
+    assert result["status"] == "not_configured"
+    assert result["missing"] == ["TAVILY_API_KEY"]
+
+
+def test_dependency_status_web_tools_always_ready(monkeypatch):
+    svc = _service([_Provider("web_tools")])
+    for key in ("TAVILY_API_KEY", "EXA_API_KEY", "SERPAPI_API_KEY", "BRAVE_SEARCH_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    result = svc.dependency_status("web_tools")
+    # 键"任一即可" + ddgs 兜底 → 恒 ready
+    assert result["status"] == "ready"
+    assert len(result["missing"]) == 4
+
+
+def test_placeholder_env_treated_as_not_configured(monkeypatch):
+    svc = _service([_Provider("tavily")])
+    # `.env.example` 风格占位符不算已配置
+    monkeypatch.setenv("TAVILY_API_KEY", "your-tavily-key-here")
+    result = svc.dependency_status("tavily")
+    assert result["status"] == "not_configured"
+    assert result["missing"] == ["TAVILY_API_KEY"]
+
+

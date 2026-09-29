@@ -20,6 +20,7 @@ export default  {
       credentialSourceDb: 'Admin config',
       credentialSourceEnv: 'Env var',
       credentialSourceNone: 'Not configured',
+      dependencyNotConfigured: 'Dependency missing',
       toolCountLabel: '{count} tools',
       builtinTotal: '{count} built-in tools in total',
       creator: 'Creator',

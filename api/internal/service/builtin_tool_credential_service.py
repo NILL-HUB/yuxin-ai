@@ -54,6 +54,18 @@ PROVIDER_CREDENTIAL_KEYS: dict[str, list[str]] = {
 }
 
 
+# 占位符标记：`.env.example` 的默认值（your-xxx-key-here 等）不是真实凭证
+_PLACEHOLDER_MARKERS = ("your-", "your_", "-here", "changeme", "placeholder", "example-", "<changeme")
+
+
+def _is_placeholder_secret(value: str) -> bool:
+    """判断凭证值是否为占位符或空（视为"未配置"）。"""
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    return any(marker in text for marker in _PLACEHOLDER_MARKERS)
+
+
 @inject
 @dataclass
 class BuiltinToolCredentialService(BaseService):
@@ -165,18 +177,42 @@ class BuiltinToolCredentialService(BaseService):
         if keys is None:
             raise NotFoundException(f"该 provider 无可用凭证键: {name}")
         missing = [key for key in keys if not self._is_configured(key)]
-        # web_tools 允许"全部缺失"（免费 DuckDuckGo 兜底），故不阻塞
-        optional_all_missing = name == "web_tools" and len(missing) == len(keys)
-        ok = not missing or optional_all_missing
+        # web_tools 的键"任一即可"且有免费 DuckDuckGo 兜底 → 恒 ok
+        optional_provider = name == "web_tools"
+        ok = optional_provider or not missing
         return {
             "ok": ok,
             "provider": name,
             "missing": missing,
-            "note": "web_tools 无任何 key 时回退免费 DuckDuckGo" if optional_all_missing else "",
+            "note": "web_tools 无任何 key 时回退免费 DuckDuckGo" if optional_provider else "",
         }
 
     def _is_configured(self, env_name: str) -> bool:
         row = self._find_provider_with_key(env_name)
         if row is not None and isinstance(row.credentials, dict) and row.credentials.get(env_name):
             return True
-        return bool(os.getenv(env_name, "").strip())
+        # env 兜底：占位符（`.env.example` 默认值，如 `your-tavily-key-here`）视为**未配置**，
+        # 否则会把"看起来有值实则 401"的占位符标成已配置，误导依赖判定与列表展示。
+        return not _is_placeholder_secret(os.getenv(env_name, ""))
+
+    # ------------------------------------------------------------------
+    # 依赖联动（P1-1）：工具 enabled=true 但依赖缺失时如实标记未配置
+    # ------------------------------------------------------------------
+    def dependency_status(self, provider_name: str) -> dict[str, Any]:
+        """计算某 provider 的凭证依赖状态（供内置工具列表标记 `not_configured`）。
+
+        - 未声明凭证需求的 provider → `has_requirements=False, status=ready`
+        - `web_tools` 允许全部缺失（免费 DuckDuckGo 兜底）→ 仍视为 ready，但保留 missing 供展示
+        - 其余任一必需键缺失 → `status=not_configured`
+        """
+        name = str(provider_name or "").strip()
+        keys = PROVIDER_CREDENTIAL_KEYS.get(name)
+        if not keys:
+            return {"has_requirements": False, "status": "ready", "missing": []}
+        missing = [key for key in keys if not self._is_configured(key)]
+        # web_tools 的键是"任一即可"的候选（且始终有免费 DuckDuckGo 兜底）→ 恒为 ready，
+        # missing 仅作信息展示，不得据此标 not_configured。
+        if name == "web_tools":
+            return {"has_requirements": True, "status": "ready", "missing": missing}
+        status = "not_configured" if missing else "ready"
+        return {"has_requirements": True, "status": status, "missing": missing}

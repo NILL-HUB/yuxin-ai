@@ -76,6 +76,10 @@ type BuiltinToolItem = {
   label: string
   name: string
   tools: ToolItem[]
+  /** 依赖联动（P1-1）：工具 enabled=true 但凭证缺失时为 not_configured */
+  credential_status?: string
+  credential_missing?: string[]
+  has_credential_requirements?: boolean
 }
 
 /**
@@ -667,6 +671,14 @@ onMounted(() => {
                   </a-tag>
                   <a-tag size="small" color="arcoblue">
                     {{ t('admin.toolsAdmin.toolCountLabel', { count: builtinTool.tools.length }) }}
+                  </a-tag>
+                  <a-tag
+                    v-if="builtinTool.credential_status === 'not_configured'"
+                    size="small"
+                    color="red"
+                    :title="(builtinTool.credential_missing || []).join(', ')"
+                  >
+                    {{ t('admin.toolsAdmin.dependencyNotConfigured') }}
                   </a-tag>
                 </div>
 

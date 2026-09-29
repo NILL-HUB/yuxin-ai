@@ -1170,6 +1170,10 @@ MCP 工具同步此前**失败被两层静默吞掉**：`McpToolFactory.list_rem
   - 「某 provider 需要哪些键」由 `BuiltinToolCredentialService.PROVIDER_CREDENTIAL_KEYS` **代码声明**
     （等于工具实现读取的 env 名），不入库，避免冗余与漂移。
   - **仍不给工具凭证加熔断/配额**——无轮换需求，加了是过度设计。
+  - **依赖联动（P1-1）**：`BuiltinToolCredentialService.dependency_status` 按上述代码声明计算"依赖是否齐备"，
+    内置工具列表（`BuiltinToolService.get_builtin_tools`）随之返回 `credential_status` / `credential_missing`，
+    前端在卡片标红「依赖未配置」——避免"工具 `enabled=true` 却根本跑不通"的静默失效。
+    **占位符 env（`.env.example` 默认值如 `your-tavily-key-here`）视为未配置**；`web_tools` 因键"任一即可"+免费 ddgs 兜底恒为 `ready`。
   - 详见 [工具凭证收编 admin 设计](../superpowers/specs/2026-09-29-tool-provider-credential-admin-design.md)。
 - 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
   **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。

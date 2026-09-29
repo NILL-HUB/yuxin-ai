@@ -153,8 +153,10 @@ def get_tool_credential(*env_names: str) -> str:
 | S2 | `tool_credential_resolver.get_tool_credential` 升级为 **DB 解密优先 → env 兜底**（签名/缺失语义不变） | ✅（DB 为空时行为逐字节一致） |
 | S3 | `BuiltinToolCredentialService`（读取/列表/更新/探测）+ 3 个 admin 端点（`/admin/builtin-tools/credential-providers[...]`）+ `ToolsView.vue`「凭证配置」页签 + i18n | ✅ |
 | S4 | `PROVIDER_CREDENTIAL_KEYS` 声明 16 个 provider 的键（搜索类/生活服务类/设备类） | ✅ |
-| S5 | P1-1 工具 enabled × 依赖联动（用凭证齐备性标记 `not_configured`） | ⏳ 未做（后续） |
+| S5 | P1-1 工具 enabled × 依赖联动（用凭证齐备性标记 `not_configured`） | ✅ `BuiltinToolCredentialService.dependency_status` + `BuiltinToolService` 列表带 `credential_status/credential_missing` + 前端红标；占位符 env 视为未配置 |
 | S6 | 文档同步（本节 + `01-agent-tool-pool.md` 工具凭证章节） | ✅ |
+
+**S5 实测（容器内 36 个 provider）**：`time`→`ready`（无要求）；`web_tools`→`ready`（键"任一即可"+ddgs 兜底，missing 仅信息展示）；`tavily/google/gaode/newsapi/x_search/baidu…` 共 **13 个** →`not_configured`（其 env 仅 `.env.example` 占位符）——即"工具 `enabled=true` 但依赖缺失"如实可见。
 
 **实测（容器内真实往返）**：`update_provider_credentials("tavily", ...)` → 落库密文（`gAAAAA…`）、返回掩码（`tvly****cdef`）；
 `resolver.get_tool_credential("TAVILY_API_KEY")` 返回 DB 明文（优先级 > env）；`list_providers` 报 `source=db`；`probe` 返回齐备；

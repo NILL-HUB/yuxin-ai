@@ -20,6 +20,7 @@ export default  {
       credentialSourceDb: '后台配置',
       credentialSourceEnv: '环境变量',
       credentialSourceNone: '未配置',
+      dependencyNotConfigured: '依赖未配置',
       toolCountLabel: '{count} 个工具',
       builtinTotal: '共 {count} 个内置工具',
       creator: '创建者',
