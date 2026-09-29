@@ -20,6 +20,7 @@ from internal.service.orchestrator_service import OrchestratorService
 from internal.service.conductor_service import ConductorService
 from internal.service.prompt_sync_service import PromptSyncService
 from internal.service.recycle_bin_service import RecycleBinService
+from internal.service.file_center_service import FileCenterService
 from internal.service.orchestration_feature_flag_service import OrchestrationFeatureFlagService
 from internal.service.task_classifier_service import TaskClassifierService
 from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
@@ -146,6 +147,7 @@ class ExtensionModule(Module):
         binder.bind(ConductorService, to=ConductorService)
         binder.bind(PromptSyncService, to=PromptSyncService)
         binder.bind(RecycleBinService, to=RecycleBinService)
+        binder.bind(FileCenterService, to=FileCenterService)
 
         # 注册结果汇总层依赖（激活 L7 结果合成与质量检查）
         binder.bind(ResultQualityCheckerService, to=ResultQualityCheckerService)
