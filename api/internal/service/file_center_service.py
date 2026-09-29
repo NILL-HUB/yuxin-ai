@@ -6,9 +6,11 @@ from dataclasses import dataclass, field
 
 from injector import inject
 
+from internal.core.ports.storage_port import ObjectStoragePort
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.extension.database_extension import db
-from internal.model import FileCenterEntry
+from internal.model import FileCenterEntry, UploadFile
+from internal.service.file_center_paths import ensure_path
 from internal.service.recycle_bin_service import RecycleBinService
 
 _MAX_NAME_LEN = 512
@@ -20,6 +22,7 @@ class FileCenterService:
     """文件中心虚拟目录树服务。"""
 
     recycle_bin_service: RecycleBinService = field(default=None)
+    storage: ObjectStoragePort = field(default=None)
 
     # ------------------------------------------------------------------ #
     #  读取
@@ -182,6 +185,75 @@ class FileCenterService:
                 FileCenterEntry.id == entry.id
             ).delete(synchronize_session=False)
             db.session.commit()
+
+    # ------------------------------------------------------------------ #
+    #  文件内容（读 / 存）
+    # ------------------------------------------------------------------ #
+    def read_file(self, account_id, entry_id, *, limit: int = 0) -> dict:
+        """读取文件节点对应的文本内容（UTF-8 尽力解码；超长按 limit 截断行数）。"""
+        import os
+        import tempfile
+
+        entry = self._get_owned_entry(account_id, entry_id)
+        if entry.is_folder or not entry.upload_file_id:
+            raise ValidateErrorException("不是可读取的文件")
+        if self.storage is None:
+            raise ValidateErrorException("存储服务不可用")
+        upload_file = (
+            db.session.query(UploadFile)
+            .filter(UploadFile.id == entry.upload_file_id)
+            .one_or_none()
+        )
+        if upload_file is None:
+            raise NotFoundException("文件不存在")
+        fd, tmp_path = tempfile.mkstemp()
+        os.close(fd)
+        try:
+            self.storage.download_file(upload_file.key, tmp_path)
+            with open(tmp_path, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        if limit and limit > 0:
+            text = "\n".join(text.splitlines()[:limit])
+        return {"ok": True, "name": upload_file.name, "content": text}
+
+    def save_artifact(
+        self,
+        account_id,
+        *,
+        name: str,
+        content: str,
+        parent_id=None,
+        folder: str = "产物",
+    ) -> dict:
+        """把一段文本保存为文件中心的产物（默认落 `产物/` 目录，不存在则创建）。"""
+        if self.storage is None:
+            raise ValidateErrorException("存储服务不可用")
+        if parent_id is None:
+            parent_id = ensure_path(account_id, [folder])
+        upload_file = self.storage.upload_bytes(
+            filename=self._validate_name(name),
+            content=str(content).encode("utf-8"),
+            account_id=account_id,
+            folder="artifacts",
+        )
+        entry = self.import_upload_file(
+            account_id,
+            upload_file_id=upload_file.id,
+            parent_id=parent_id,
+            name=upload_file.name,
+            source="artifact",
+        )
+        return {
+            "ok": True,
+            "entry_id": str(entry.id),
+            "upload_file_id": str(upload_file.id),
+            "name": entry.name,
+        }
 
     # ------------------------------------------------------------------ #
     #  内部工具
