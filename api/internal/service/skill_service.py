@@ -71,6 +71,20 @@ def _derive_local_task_keywords(local_package: LocalSkillPackage) -> list[str]:
     return keywords
 
 
+# 技能包同步状态取值（skill_package.sync_status / skill_package_version.sync_status）：
+#   pending         已创建/已变更，尚未成功同步（瞬态，随后写入下面之一）
+#   synced          已成功同步到远端 SCF
+#   failed          已尝试同步但失败（原因见 sync_error）
+#   skipped         无需远端同步（非 scf 类型，或 scf 但无工具定义）
+#   not_configured  远端 SCF 未配置（SKILL_SCF_URL / SANDBOX_URL 缺失或为占位符），
+#                   未发起同步，原因见 sync_error
+#
+# 终态集合见 `_sync_local_package` 的去重判断：{synced, skipped, failed}。
+# `not_configured` **刻意不作为终态**——远端一旦配好，下次同步应自动补推，
+# 否则会永久停在"未配置"。`pending` 同理（尚未得到结果）。
+SKILL_SYNC_STATUS_NOT_CONFIGURED = "not_configured"
+
+
 @inject
 @dataclass
 class SkillService(BaseService):
@@ -138,6 +152,9 @@ class SkillService(BaseService):
                 SkillPackageVersion.skill_package_id == package.id,
                 SkillPackageVersion.version == local_package.version,
             ).one_or_none()
+            # 终态判定：仅 {synced, skipped, failed} 视为"已得到结果、无需重推"。
+            # not_configured / pending 刻意不在此列——远端配置变化或尚未拿到结果时，
+            # 应继续尝试同步（否则会永久停在"未配置/待同步"）。
             if (
                 not force
                 and package.source_checksum == local_package.checksum
@@ -1294,8 +1311,12 @@ class SkillService(BaseService):
         try:
             result = self.scf_client.sync_package(payload)
             if isinstance(result, dict) and result.get("skipped"):
-                sync_status = "pending"
-                sync_error = ""
+                # 远端未配置：这不是"进行中"，而是"未执行"。写成明确的 not_configured
+                # 并保留原因，供前端如实展示。
+                # 历史缺陷：此处曾写成 "pending"，而 pending 在前端渲染为"同步中"，
+                # 又没有任务会把它推进到终态，于是永远卡在"同步中"。
+                sync_status = SKILL_SYNC_STATUS_NOT_CONFIGURED
+                sync_error = str(result.get("reason") or "远端 SCF 未配置，未执行同步")
             else:
                 sync_status = "synced"
                 sync_error = ""

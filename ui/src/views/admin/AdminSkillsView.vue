@@ -23,6 +23,7 @@ import {
   type SkillVersion,
 } from '@/services/admin-skills'
 import { getSkillCategoryDisplayName } from '@/utils/store-display'
+import { resolveSkillSyncDescriptor, resolveSkillSyncNotice } from '@/utils/admin-skill-sync'
 import CreateOrUpdateSkillModal from './skills/CreateOrUpdateSkillModal.vue'
 import ImportCatalogSkillModal from './skills/ImportCatalogSkillModal.vue'
 import ImportExternalSkillModal from './skills/ImportExternalSkillModal.vue'
@@ -309,11 +310,27 @@ const getExecutorTypeLabel = (value: string) => {
 }
 
 const getSyncStatusTag = (status?: string) => {
-  const normalized = String(status || '').trim()
-  if (normalized === 'ready' || normalized === 'synced') return { color: 'green', label: t('admin.skillsAdmin.syncReady') }
-  if (normalized === 'pending' || normalized === 'warming') return { color: 'orange', label: t('admin.skillsAdmin.syncPending') }
-  if (normalized === 'failed' || normalized === 'error') return { color: 'red', label: t('admin.skillsAdmin.syncFailed') }
-  return { color: 'gray', label: normalized || '-' }
+  const descriptor = resolveSkillSyncDescriptor(status)
+  return { color: descriptor.color, label: t(descriptor.labelKey) }
+}
+
+/**
+ * 同步说明的呈现样式：失败=红、未配置=琥珀、其余=中性。
+ * 不再一律用红色——"未配置/已跳过"不是错误，红色会误导管理员。
+ */
+const syncReasonBoxClass = computed(() => {
+  const key = resolveSkillSyncDescriptor(activeSkill.value?.sync_status).key
+  if (key === 'failed') return 'rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700'
+  if (key === 'not_configured')
+    return 'rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700'
+  return 'rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600'
+})
+
+const syncReasonTextClass = (status?: string) => {
+  const key = resolveSkillSyncDescriptor(status).key
+  if (key === 'failed') return 'text-red-600'
+  if (key === 'not_configured') return 'text-amber-600'
+  return 'text-gray-500'
 }
 
 const detailMarkdown = computed(() =>
@@ -351,13 +368,22 @@ const handleToggleEnable = async (skill: SkillPackage) => {
 const handleSync = async (skill: SkillPackage) => {
   actionLoading.value = true
   try {
-    await syncAdminSkill(skill.id)
-    Message.success(t('admin.skillsAdmin.syncSuccess'))
+    const response = await syncAdminSkill(skill.id)
+    const syncStatus = response?.data?.sync_status || ''
+    const syncError = response?.data?.sync_error || ''
     await loadSkills()
     if (activeSkill.value && activeSkill.value.id === skill.id) {
       const detail = await getAdminSkill(skill.id)
       activeSkill.value = { ...activeSkill.value, ...detail }
     }
+    // 按真实同步结果提示：接口 200 不等于"已同步到远端"（远端未配置时接口同样成功）
+    const notice = resolveSkillSyncNotice(syncStatus)
+    const reason = syncError || t('admin.skillsAdmin.syncNoReason')
+    const text = t(notice.messageKey, { reason })
+    if (notice.level === 'success') Message.success(text)
+    else if (notice.level === 'warning') Message.warning(text)
+    else if (notice.level === 'error') Message.error(text)
+    else Message.info(text)
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.skillsAdmin.actionFailed')))
   } finally {
@@ -722,11 +748,8 @@ onMounted(() => {
           </div>
         </div>
 
-        <div
-          v-if="activeSkill.sync_error"
-          class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-        >
-          {{ activeSkill.sync_error }}
+        <div v-if="activeSkill.sync_error" :class="syncReasonBoxClass">
+          {{ t('admin.skillsAdmin.syncResultReason', { reason: activeSkill.sync_error }) }}
         </div>
 
         <div v-if="activeSkill.tools && activeSkill.tools.length > 0">
@@ -779,7 +802,9 @@ onMounted(() => {
                 · {{ t('admin.skillsAdmin.toolCountBadge', { count: ver.tool_count }) }}
               </template>
             </div>
-            <div v-if="ver.sync_error" class="text-xs text-red-500 mt-1">{{ ver.sync_error }}</div>
+            <div v-if="ver.sync_error" class="text-xs mt-1" :class="syncReasonTextClass(ver.sync_status)">
+              {{ ver.sync_error }}
+            </div>
           </div>
           <a-button
             v-if="!ver.is_current_version"

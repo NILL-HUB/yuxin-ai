@@ -6,6 +6,7 @@ import type {
   SkillPackage,
 } from '@/models/skill'
 import type { BaseResponse } from '@/models/base'
+import type { SkillSyncResponse } from '@/utils/admin-skill-sync'
 
 /**
  * 获取后台 Skills 分页列表，并解包接口返回的 data 字段。
@@ -63,9 +64,12 @@ export const disableAdminSkill = (id: string) => {
 
 /**
  * 强制同步技能包到 SCF（管理员视角）。
+ *
+ * 返回体携带真实同步结果（sync_status / sync_error），调用方据此如实提示；
+ * 不要用"接口 200"等同"已同步到远端"（远端未配置时接口同样返回 200）。
  */
 export const syncAdminSkill = (id: string) => {
-  return post<BaseResponse<null>>(`/admin/skills/${id}/sync`)
+  return post<SkillSyncResponse>(`/admin/skills/${id}/sync`)
 }
 
 /**

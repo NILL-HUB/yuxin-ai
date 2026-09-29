@@ -122,13 +122,21 @@ def register_routes(quart_app):
             return err
         from internal.service.skill_service import SkillService
 
-        await a._to_thread(a._get_service(SkillService).sync_skill_package, skill_id)
+        result = await a._to_thread(a._get_service(SkillService).sync_skill_package, skill_id)
         await _record_mutation_audit(
             action="skill.sync",
             resource_type="skill",
             resource_id=str(skill_id),
         )
-        return a._ok_msg("同步技能包成功")
+        # 回传真实同步结果：调用方据此如实提示（synced / not_configured / skipped / failed），
+        # 避免"接口成功"被误解为"已同步到远端"。
+        return a._json_resp(
+            {
+                "sync_status": (result or {}).get("sync_status", ""),
+                "sync_error": (result or {}).get("sync_error", ""),
+            },
+            message="同步技能包成功",
+        )
 
     @quart_app.post("/admin/skills/<uuid:skill_id>/rollback")
     async def admin_rollback_skill_package(skill_id):

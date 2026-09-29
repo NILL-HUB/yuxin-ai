@@ -79,6 +79,7 @@ class _FakeAdminSkillService:
 
     def sync_skill_package(self, skill_id):
         self.calls.append(("sync", skill_id))
+        return {"sync_status": "not_configured", "sync_error": "SKILL_SCF_URL 未配置"}
 
     def rollback_skill_package(self, skill_id, version):
         self.calls.append(("rollback", skill_id, version))
@@ -323,6 +324,11 @@ class TestAdminSkillsRoutes:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
         assert payload["message"] == "同步技能包成功"
+        # 接口必须回传真实同步结果，调用方据此如实提示（而非一律"成功"）
+        assert payload["data"] == {
+            "sync_status": "not_configured",
+            "sync_error": "SKILL_SCF_URL 未配置",
+        }
         assert skill_service.calls[0] == ("sync", skill_id)
 
     def test_rollback_skill_package(self, monkeypatch):

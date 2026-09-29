@@ -404,6 +404,125 @@ def test_sync_local_package_should_short_circuit_when_already_skipped():
     assert updates == []
 
 
+def test_sync_package_to_scf_should_mark_not_configured_when_remote_missing():
+    """远端未配置时不得写成 pending。
+
+    pending 在前端渲染为"同步中"，且没有任何任务会把它推进到终态，
+    因此历史缺陷会让技能永久卡在"同步中"。必须写成 not_configured 并保留原因。
+    """
+    package_id = uuid4()
+    package = _build_skill_package(package_id)
+    version_record = _build_version_record(package_id)
+
+    class _DB:
+        @contextmanager
+        def auto_commit(self):
+            yield
+
+    service = SkillService(
+        db=_DB(),
+        catalog_manager=SimpleNamespace(list_packages=lambda: []),
+        scf_client=SimpleNamespace(
+            sync_package=lambda _payload: {"skipped": True, "reason": "SKILL_SCF_URL 未配置"}
+        ),
+    )
+    service.update = lambda model, **kwargs: [
+        setattr(model, key, value) for key, value in kwargs.items()
+    ]
+
+    result = service._sync_package_to_scf(
+        package=package,
+        version_record=version_record,
+        local_package=None,
+        action="sync",
+        force=True,
+    )
+
+    assert result.get("skipped") is True
+    assert package.sync_status == "not_configured"
+    assert version_record.sync_status == "not_configured"
+    assert package.sync_status != "pending"
+    assert "未配置" in package.sync_error
+    assert version_record.sync_error == package.sync_error
+
+
+def test_sync_local_package_should_retry_when_status_is_not_configured():
+    """not_configured 刻意不是终态：远端配好后再次同步必须重新推送。"""
+    calls = []
+
+    class _QueryResult:
+        def __init__(self, value):
+            self._value = value
+
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def one_or_none(self):
+            return self._value
+
+    class _Session:
+        def __init__(self, package, version_record):
+            self.package = package
+            self.version_record = version_record
+
+        def query(self, model):
+            if model.__name__ == "SkillPackage":
+                return _QueryResult(self.package)
+            if model.__name__ == "SkillPackageVersion":
+                return _QueryResult(self.version_record)
+            raise AssertionError(f"unexpected model: {model}")
+
+    class _DB:
+        def __init__(self, package, version_record):
+            self.session = _Session(package, version_record)
+
+        @contextmanager
+        def auto_commit(self):
+            yield
+
+    package_id = uuid4()
+    package = _build_skill_package(package_id)
+    package.executor_type = "scf"
+    package.sync_status = "not_configured"
+    package.sync_error = "SKILL_SCF_URL 未配置"
+    package.source_checksum = "checksum"
+    package.latest_source_version = 2
+    version_record = _build_version_record(package_id)
+    version_record.sync_status = "not_configured"
+    local_package = SimpleNamespace(
+        source_key="code_workbench",
+        source_path="/tmp/code_workbench",
+        name="代码工坊",
+        label="代码工坊",
+        icon="",
+        description="scf skill",
+        category="开发",
+        tags=["代码"],
+        capabilities={},
+        executor_type="scf",
+        tools=[{"name": "analyze_request"}],
+        version=2,
+        checksum="checksum",
+        enabled=True,
+        manifest={"description": "scf skill", "tools": [{"name": "analyze_request"}]},
+        bundle={"manifest.yaml": "source", "skill.py": "# code"},
+    )
+
+    service = SkillService(
+        db=_DB(package, version_record),
+        catalog_manager=SimpleNamespace(list_packages=lambda: []),
+        scf_client=SimpleNamespace(),
+    )
+    service._has_skill_package_table = lambda: True
+    service.update = lambda *args, **kwargs: None
+    service._sync_package_to_scf = lambda **kwargs: calls.append(kwargs)
+
+    changed = service._sync_local_package(local_package)
+
+    assert changed is True
+    assert len(calls) == 1
+
+
 def test_derive_local_task_keywords_should_merge_tags_manifest_and_capabilities():
     local_package = SimpleNamespace(
         tags=["codex", "shell", "codex"],

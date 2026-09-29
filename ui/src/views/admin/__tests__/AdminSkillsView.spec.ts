@@ -1,9 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AdminSkillsView from '@/views/admin/AdminSkillsView.vue'
+import {
+  SKILL_SYNC_STATUSES,
+  resolveSkillSyncDescriptor,
+  resolveSkillSyncNotice,
+} from '@/utils/admin-skill-sync'
 
 const mocks = vi.hoisted(() => ({
   listAdminSkills: vi.fn(),
+  messageSuccess: vi.fn(),
+  messageWarning: vi.fn(),
+  messageInfo: vi.fn(),
   messageError: vi.fn(),
   routerPush: vi.fn(),
 }))
@@ -23,6 +31,9 @@ vi.mock('@arco-design/web-vue', async () => {
   return {
     ...actual,
     Message: {
+      success: mocks.messageSuccess,
+      warning: mocks.messageWarning,
+      info: mocks.messageInfo,
       error: mocks.messageError,
     },
   }
@@ -31,7 +42,7 @@ vi.mock('@arco-design/web-vue', async () => {
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     locale: { value: 'zh-CN' },
-    t: (key: string, params?: { count?: number }) =>
+    t: (key: string, params?: { count?: number; reason?: string }) =>
       (
         {
           'admin.skillsAdmin.title': 'Skills管理',
@@ -59,6 +70,20 @@ vi.mock('vue-i18n', () => ({
           'admin.skillsAdmin.executorTypes.scf': '可执行',
           'admin.skillsAdmin.executorTypes.tool': '工具',
           'admin.skillsAdmin.executorTypes.prompt': '仅提示词',
+          'admin.skillsAdmin.syncStatus': '同步状态',
+          'admin.skillsAdmin.syncReady': '已同步',
+          'admin.skillsAdmin.syncPending': '待同步',
+          'admin.skillsAdmin.syncSkipped': '已跳过',
+          'admin.skillsAdmin.syncNotConfigured': '未配置',
+          'admin.skillsAdmin.syncUnknown': '未知状态',
+          'admin.skillsAdmin.syncFailed': '同步失败',
+          'admin.skillsAdmin.syncResultReason': `同步说明：${params?.reason ?? ''}`,
+          'admin.skillsAdmin.syncNoReason': '未提供原因',
+          'admin.skillsAdmin.syncSucceeded': '同步完成',
+          'admin.skillsAdmin.syncSkippedNotice': '该技能无需同步到远端',
+          'admin.skillsAdmin.syncNotConfiguredNotice': `远端 SCF 未配置，已跳过同步：${params?.reason ?? ''}`,
+          'admin.skillsAdmin.syncFailedNotice': `同步失败：${params?.reason ?? ''}`,
+          'admin.skillsAdmin.syncUnknownNotice': '已提交同步，但未返回明确结果',
           'common.actions.search': '搜索',
           'common.actions.refresh': '刷新',
         } satisfies Record<string, string>
@@ -148,5 +173,49 @@ describe('AdminSkillsView', () => {
       page_size: 100,
       category: '',
     })
+  })
+})
+
+/**
+ * 结构性守卫：后端 sync_status 的**每一个**合法取值都必须映射到有语义的文案。
+ *
+ * 历史缺陷：`skipped` 漏映射 → 前端显示裸英文码；后端把"未配置"写成 `pending`
+ * → 前端显示"同步中"且永无终态。下面的用例专门锁死这两类回归。
+ */
+describe('admin skill sync status mapping', () => {
+  it('maps every backend status to a semantic label (never a raw code)', () => {
+    for (const status of SKILL_SYNC_STATUSES) {
+      const descriptor = resolveSkillSyncDescriptor(status)
+      expect(descriptor.key).not.toBe('unknown')
+      expect(descriptor.labelKey).toMatch(/^admin\.skillsAdmin\./)
+      expect(descriptor.labelKey).not.toBe('admin.skillsAdmin.syncUnknown')
+    }
+  })
+
+  it('does not collapse two distinct statuses onto the same semantic key', () => {
+    const keys = SKILL_SYNC_STATUSES.map((status) => resolveSkillSyncDescriptor(status).key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('maps not_configured to a dedicated, non-green descriptor', () => {
+    const descriptor = resolveSkillSyncDescriptor('not_configured')
+    expect(descriptor.key).toBe('not_configured')
+    expect(descriptor.labelKey).toBe('admin.skillsAdmin.syncNotConfigured')
+    expect(descriptor.color).not.toBe('green')
+  })
+
+  it('renders unknown statuses as a generic label, keeping the raw value for diagnostics', () => {
+    const descriptor = resolveSkillSyncDescriptor('weird_value')
+    expect(descriptor.key).toBe('unknown')
+    expect(descriptor.labelKey).toBe('admin.skillsAdmin.syncUnknown')
+    expect(descriptor.raw).toBe('weird_value')
+  })
+
+  it('never reports a non-completed sync as success', () => {
+    expect(resolveSkillSyncNotice('synced').level).toBe('success')
+    expect(resolveSkillSyncNotice('failed').level).toBe('error')
+    expect(resolveSkillSyncNotice('not_configured').level).toBe('warning')
+    expect(resolveSkillSyncNotice('skipped').level).toBe('info')
+    expect(resolveSkillSyncNotice('').level).toBe('info')
   })
 })
