@@ -743,8 +743,11 @@ class TestDeepThinkingAgentGraph:
             key="artifacts/SpaceX_IPO_Prospectus_Draft.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -795,7 +798,7 @@ class TestDeepThinkingAgentGraph:
         final_message = result["messages"][0].content
         assert "已生成可下载附件：SpaceX_IPO_Prospectus_Draft.txt" in final_message
         assert "当前没有可下载附件" not in final_message
-        assert mock_cos_service.upload_bytes.call_count == 1
+        assert mock_cos_service.save_generated_asset.call_count == 1
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
         artifact_idx = next(i for i, event in enumerate(published) if event.event == QueueEvent.DEEP_ARTIFACT_CREATED)
         end_idx = next(i for i, event in enumerate(published) if event.event == QueueEvent.AGENT_END)
@@ -822,8 +825,11 @@ class TestDeepThinkingAgentGraph:
             key="artifacts/SpaceX_IPO_Prospectus_Draft.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -875,8 +881,8 @@ class TestDeepThinkingAgentGraph:
 
         final_message = result["messages"][0].content
         assert "已生成可下载附件：SpaceX_IPO_Prospectus_Draft.txt" in final_message
-        assert mock_cos_service.upload_bytes.call_count == 1
-        uploaded_content = mock_cos_service.upload_bytes.call_args.kwargs["content"].decode("utf-8")
+        assert mock_cos_service.save_generated_asset.call_count == 1
+        uploaded_content = mock_cos_service.save_generated_asset.call_args.kwargs["content"].decode("utf-8")
         assert "PROSPECTUS SUMMARY" in uploaded_content
         assert "BUSINESS OVERVIEW" in uploaded_content
         assert "RISK FACTORS" in uploaded_content
@@ -939,7 +945,7 @@ class TestDeepThinkingAgentGraph:
                 "iteration_count": 0,
             }))
 
-        assert mock_cos_service.upload_bytes.call_count == 0
+        assert mock_cos_service.save_generated_asset.call_count == 0
         assert "PROSPECTUS SUMMARY" in result["messages"][0].content
         assert "已生成可下载附件" not in result["messages"][0].content
 
@@ -1850,15 +1856,18 @@ IPO招股说明书草案
         )
 
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = SimpleNamespace(
-            id=uuid4(),
-            name="北京旅行规划.md",
-            size=len(assembled_content.encode("utf-8")),
-            extension="md",
-            mime_type="text/markdown",
-            key="artifacts/北京旅行规划.md",
-        )
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/北京旅行规划.md"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": SimpleNamespace(
+                id=uuid4(),
+                name="北京旅行规划.md",
+                size=len(assembled_content.encode("utf-8")),
+                extension="md",
+                mime_type="text/markdown",
+                key="artifacts/北京旅行规划.md",
+            ),
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/北京旅行规划.md",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -1884,9 +1893,8 @@ IPO招股说明书草案
         assert "# 北京旅行规划".encode("utf-8") in uploaded_fragment_content
         assert mock_build_deep.called
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
-        assert mock_cos_service.upload_bytes.call_count == 1
-        assert mock_cos_service.upload_bytes.call_args.kwargs["filename"] == "北京旅行规划.md"
-        assert mock_cos_service.get_file_url.call_count == 1
+        assert mock_cos_service.save_generated_asset.call_count == 1
+        assert mock_cos_service.save_generated_asset.call_args.kwargs["filename"] == "北京旅行规划.md"
         assert "北京旅行规划.md" in result["messages"][0].content
 
     def test_recover_missing_artifact_should_fallback_plain_text_for_markdown(self):
@@ -2112,8 +2120,11 @@ IPO招股说明书草案
             key="artifacts/SpaceX_IPO_Prospectus_Draft.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -2292,8 +2303,11 @@ IPO招股说明书草案
             key="artifacts/SpaceX_IPO_Prospectus_Draft.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -2318,8 +2332,8 @@ IPO招股说明书草案
         assert any(path.endswith("02_") or "业务概览" in path for path in uploaded_fragment_paths)
         assert backend.execute.call_count == 3
         assert uploaded_fragment_content.decode("utf-8").count("确认不会回退到本地模板") >= 6
-        assert mock_cos_service.upload_bytes.call_count == 1
-        uploaded_content = mock_cos_service.upload_bytes.call_args.kwargs["content"].decode("utf-8")
+        assert mock_cos_service.save_generated_asset.call_count == 1
+        uploaded_content = mock_cos_service.save_generated_asset.call_args.kwargs["content"].decode("utf-8")
         assert "PROSPECTUS SUMMARY" in uploaded_content
         assert "BUSINESS OVERVIEW" in uploaded_content
         assert "RISK FACTORS" in uploaded_content
@@ -2666,8 +2680,11 @@ IPO招股说明书草案
             key="artifacts/plan.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/plan.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/plan.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -2706,8 +2723,11 @@ IPO招股说明书草案
             key="artifacts/plan.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/plan.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/plan.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -2752,8 +2772,11 @@ IPO招股说明书草案
             key="artifacts/plan.txt",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/plan.txt"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/plan.txt",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -2800,8 +2823,11 @@ IPO招股说明书草案
             key="artifacts/shanghai_travel_outfits.svg",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/shanghai_travel_outfits.svg"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/shanghai_travel_outfits.svg",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 
@@ -2852,8 +2878,11 @@ IPO招股说明书草案
             key="artifacts/SpaceX_IPO_Prospectus_Draft.md",
         )
         mock_cos_service = MagicMock()
-        mock_cos_service.upload_bytes.return_value = mock_upload_file
-        mock_cos_service.get_file_url.return_value = "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.md"
+        mock_cos_service.save_generated_asset.return_value = {
+            "upload_file": mock_upload_file,
+            "entry": None,
+            "url": "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.md",
+        }
         mock_injector = MagicMock()
         mock_injector.get.return_value = mock_cos_service
 

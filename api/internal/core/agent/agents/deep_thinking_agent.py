@@ -1214,41 +1214,27 @@ class DeepThinkingAgent(FunctionCallAgent):
 
         with app_context, session_scope():
             from app.http.module import injector  # noqa: PLC0415
-            from internal.service import CosService  # noqa: PLC0415
+            from internal.service.file_center_service import (  # noqa: PLC0415
+                FileCenterService,
+            )
 
-            cos_service = injector.get(CosService)
             mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-            upload_file = cos_service.upload_bytes(
+            # 统一产物入口：建 UploadFile 记录 + 入文件中心（`产物/`，计配额）
+            result = injector.get(FileCenterService).save_generated_asset(
+                self.agent_config.user_id,
                 filename=filename,
                 content=content.encode("utf-8"),
-                account_id=self.agent_config.user_id,
                 mime_type=mime_type,
                 folder="artifacts",
             )
-            # 入文件中心（默认落「产物/」目录；失败不影响产物返回）
-            try:
-                from internal.service.file_center_paths import ensure_path  # noqa: PLC0415
-                from internal.service.file_center_service import (  # noqa: PLC0415
-                    FileCenterService,
-                )
-
-                parent_id = ensure_path(self.agent_config.user_id, ["产物"])
-                injector.get(FileCenterService).import_upload_file(
-                    self.agent_config.user_id,
-                    upload_file_id=upload_file.id,
-                    parent_id=parent_id,
-                    name=upload_file.name,
-                    source="artifact",
-                )
-            except Exception:
-                logger.warning("文本产物入文件中心失败，不影响返回", exc_info=True)
+            upload_file = result["upload_file"]
             return {
                 "id": str(upload_file.id),
                 "name": upload_file.name,
                 "size": upload_file.size,
                 "extension": upload_file.extension,
                 "mime_type": upload_file.mime_type,
-                "url": cos_service.get_file_url(upload_file.key, download_name=upload_file.name),
+                "url": result["url"],
             }
 
     def _recover_missing_artifact_from_deep_answer(
@@ -2112,9 +2098,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
         with app_context, session_scope():
             from app.http.module import injector  # noqa: PLC0415
-            from internal.service import CosService  # noqa: PLC0415
 
-            cos_service = injector.get(CosService)
             for response in responses:
                 if getattr(response, "error", None) or getattr(response, "content", None) is None:
                     timeline.publish_step(
@@ -2132,13 +2116,18 @@ class DeepThinkingAgent(FunctionCallAgent):
                 artifact_name = os.path.basename(artifact_path)
                 mime_type = mimetypes.guess_type(artifact_name)[0] or "application/octet-stream"
                 try:
-                    upload_file = cos_service.upload_bytes(
+                    from internal.service.file_center_service import (  # noqa: PLC0415
+                        FileCenterService,
+                    )
+
+                    saved = injector.get(FileCenterService).save_generated_asset(
+                        self.agent_config.user_id,
                         filename=artifact_name,
                         content=response.content,
-                        account_id=self.agent_config.user_id,
                         mime_type=mime_type,
                         folder="artifacts",
                     )
+                    upload_file = saved["upload_file"]
                     artifact = {
                         "id": str(upload_file.id),
                         "name": upload_file.name,
@@ -2146,7 +2135,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                         "size": upload_file.size,
                         "extension": upload_file.extension,
                         "mime_type": upload_file.mime_type,
-                        "url": cos_service.get_file_url(upload_file.key, download_name=upload_file.name),
+                        "url": saved["url"],
                     }
                     artifacts.append(artifact)
                     timeline.publish_artifact(artifact_id=uuid.uuid4(), artifact=artifact)

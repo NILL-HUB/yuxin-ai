@@ -34,6 +34,21 @@ class _FakeFileCenterService:
         self.calls.append(("list_children", parent_id))
         return [_FakeEntry("Docs")]
 
+    def list_children_view(self, account_id, parent_id=None):
+        self.calls.append(("list_children_view", parent_id))
+        return [
+            {
+                "id": uuid4(),
+                "parent_id": None,
+                "name": "Docs",
+                "is_folder": True,
+                "upload_file_id": None,
+                "source": "upload",
+                "origin": None,
+                "url": None,
+            }
+        ]
+
     def mkdir(self, account_id, *, parent_id=None, name=""):
         self.calls.append(("mkdir", name))
         if name == "dup":

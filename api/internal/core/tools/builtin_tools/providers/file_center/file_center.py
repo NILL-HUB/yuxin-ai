@@ -122,5 +122,10 @@ class FileCenterTool(BaseTool):
 
 
 def file_center(**kwargs: Any) -> BaseTool:
-    """工厂函数：返回文件中心工具实例（注入 requester=账号 ID）。"""
-    return FileCenterTool(requester=str(kwargs.get("requester") or ""))
+    """工厂函数：返回文件中心工具实例。
+
+    兼容两种账号注入命名：显式挂载走 `requester`（与 host_os 同范式），
+    通用工具池加载走 `account_id`——两者取其一即可。
+    """
+    requester = str(kwargs.get("requester") or kwargs.get("account_id") or "")
+    return FileCenterTool(requester=requester)

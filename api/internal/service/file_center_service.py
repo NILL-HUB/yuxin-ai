@@ -2,6 +2,7 @@
 
 只做「组织层」：物理对象归 RuntimeStorageProxy，删除/恢复归 RecycleBinService。
 """
+import logging
 from dataclasses import dataclass, field
 
 from injector import inject
@@ -12,6 +13,8 @@ from internal.extension.database_extension import db
 from internal.model import FileCenterEntry, UploadFile
 from internal.service.file_center_paths import ensure_path
 from internal.service.recycle_bin_service import RecycleBinService
+
+logger = logging.getLogger(__name__)
 
 _MAX_NAME_LEN = 512
 
@@ -39,6 +42,41 @@ class FileCenterService:
         return query.order_by(
             FileCenterEntry.is_folder.desc(), FileCenterEntry.name.asc()
         ).all()
+
+    def list_children_view(self, account_id, parent_id=None) -> list[dict]:
+        """列目录（面向接口/前端）：在节点字段上补充文件可访问 URL。
+
+        `list_children` 保留纯 ORM 语义供 Agent 工具使用；本方法供 HTTP 层使用。
+        """
+        entries = self.list_children(account_id, parent_id=parent_id)
+        file_ids = [e.upload_file_id for e in entries if e.upload_file_id]
+        url_map: dict = {}
+        if file_ids and self.storage is not None:
+            rows = (
+                db.session.query(UploadFile)
+                .filter(UploadFile.id.in_(file_ids))
+                .all()
+            )
+            for row in rows:
+                try:
+                    url_map[str(row.id)] = self.storage.get_file_url(
+                        row.key, download_name=row.name
+                    )
+                except Exception:
+                    url_map[str(row.id)] = None
+        return [
+            {
+                "id": e.id,
+                "parent_id": e.parent_id,
+                "name": e.name,
+                "is_folder": bool(e.is_folder),
+                "upload_file_id": e.upload_file_id,
+                "source": e.source,
+                "origin": e.origin,
+                "url": url_map.get(str(e.upload_file_id)) if e.upload_file_id else None,
+            }
+            for e in entries
+        ]
 
     def list_all_files(self, *, account_id, page: int = 1, page_size: int = 20) -> dict:
         """「全部文件」视图：账号下已入树的文件节点（分页）。"""
@@ -261,12 +299,13 @@ class FileCenterService:
         *,
         filename: str,
         content: bytes,
+        mime_type: str | None = None,
         folder: str = "generated-images",
         asset_folder: str = "产物",
     ) -> dict:
         """把生成的媒体资产落库并挂入文件中心，返回 upload_file / entry / url。
 
-        供图片、视频等产物写入点**统一调用**：避免各处各写一套「建记录 + 入树」。
+        供图片、视频、文本等产物写入点**统一调用**：避免各处各写一套「建记录 + 入树」。
         """
         if self.storage is None:
             raise ValidateErrorException("存储服务不可用")
@@ -274,16 +313,22 @@ class FileCenterService:
             filename=filename,
             content=content,
             account_id=account_id,
+            mime_type=mime_type,
             folder=folder,
         )
         parent_id = ensure_path(account_id, [asset_folder])
-        entry = self.import_upload_file(
-            account_id,
-            upload_file_id=upload_file.id,
-            parent_id=parent_id,
-            name=upload_file.name,
-            source="artifact",
-        )
+        try:
+            entry = self.import_upload_file(
+                account_id,
+                upload_file_id=upload_file.id,
+                parent_id=parent_id,
+                name=upload_file.name,
+                source="artifact",
+            )
+        except Exception:
+            # 入树失败不影响产物本身返回（对象与记录已落库，可在「全部文件」中导入）
+            logger.warning("生成产物入文件中心失败", exc_info=True)
+            entry = None
         return {
             "upload_file": upload_file,
             "entry": entry,

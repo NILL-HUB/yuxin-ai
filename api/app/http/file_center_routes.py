@@ -30,7 +30,7 @@ def register_routes(quart_app):
             return err
         parent_id = _uuid_arg(request.args.get("parent_id"))
         items = await a._to_thread(
-            lambda: a._get_service(FileCenterService).list_children(
+            lambda: a._get_service(FileCenterService).list_children_view(
                 account.id, parent_id=parent_id
             )
         )

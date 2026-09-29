@@ -8,6 +8,8 @@ export interface FileCenterEntry {
   upload_file_id: string | null
   source: string
   origin: string | null
+  /** 文件的后端访问 URL（目录为 null） */
+  url: string | null
 }
 
 export interface FileCenterChildren {
