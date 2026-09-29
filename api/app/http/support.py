@@ -245,7 +245,10 @@ def _sse_response(generator):
 
     sse_response = Response(_stream(), mimetype="text/event-stream")
     sse_response.headers["Cache-Control"] = "no-cache"
-    sse_response.headers["Connection"] = "keep-alive"
+    # 不显式设置 Connection: HTTP/1.1 默认持久连接，显式写死 "keep-alive" 会与
+    # 请求端（如显式 Connection: close 的客户端）冲突，导致 uvicorn 在结束响应时
+    # 不回写分块终止符（0\r\n\r\n），客户端报 "incomplete chunked read"，服务端
+    # 报 "ASGI callable returned without completing response"。交由传输层按请求决定。
     sse_response.headers["X-Accel-Buffering"] = "no"
     return sse_response
 
