@@ -119,8 +119,21 @@ class FunctionCallAgent(BaseAgent):
 
         # 2.构建预设消息列表，并将preset_prompt+long_term_memory+user_memory填充到系统消息中
         user_memory = state.get("user_memory", "") or ""
+        # 工具可用性判定（与 _llm_node 的 bind_tools 闸门保持一致）：若模型不支持
+        # tool_call（features 无 tool_call）或本轮没有工具，则不注入任何"调用某工具"
+        # 的指令，避免"提示词承诺工具、运行时没有工具"造成模型编造伪工具调用文本。
+        tools_available = (
+            ModelFeature.TOOL_CALL.value in (getattr(self.llm, "features", None) or [])
+            and hasattr(self.llm, "bind_tools")
+            and len(self.agent_config.tools) > 0
+        )
+        prompt_template_key = (
+            "agent_system_prompt_template"
+            if tools_available
+            else "agent_system_prompt_template_no_tools"
+        )
         preset_messages = [
-            SystemMessage(get_agent_system_prompt_template("agent_system_prompt_template").format(
+            SystemMessage(get_agent_system_prompt_template(prompt_template_key).format(
                 preset_prompt=self.agent_config.preset_prompt,
                 long_term_memory=long_term_memory,
                 user_memory=user_memory,
@@ -216,6 +229,13 @@ class FunctionCallAgent(BaseAgent):
         gathered = None
         buffered_text_chunks: list[str] = []
         saw_tool_calls = False
+        # 伪工具调用剥离：当模型未真正绑定工具、却按 prompt 编造 XML 工具调用时，
+        # 避免其泄漏到用户可见文本。流式跨 chunk 由状态机做前缀回撤缓冲处理。
+        from internal.core.agent.entities.agent_text_sanitizer import (
+            PseudoToolCallStreamFilter,
+        )
+        tool_names = [getattr(tool, "name", "") for tool in self.agent_config.tools]
+        stream_filter = PseudoToolCallStreamFilter(tool_names)
         try:
             async for chunk in llm.astream(llm_messages):
                 if chunk is None:  # 跳过无效 chunk
@@ -232,19 +252,22 @@ class FunctionCallAgent(BaseAgent):
 
                 content = self._normalize_chunk_content(getattr(chunk, "content", ""))
                 if content:
-                    reviewed = self._apply_output_review(content)
-                    buffered_text_chunks.append(reviewed)
-                    # 实时推送流式 token，让前端能看到 LLM 正在逐字输出
-                    # 前端 chat-stream.ts 的 agentMessage 处理是 message.answer += answerChunk
-                    self.agent_queue_manager.publish(state["task_id"], AgentThought(
-                        id=id,
-                        task_id=state["task_id"],
-                        event=QueueEvent.AGENT_MESSAGE.value,
-                        thought=reviewed,
-                        message=messages_to_dict(state["messages"]),
-                        answer=reviewed,
-                        latency=0,
-                    ))
+                    safe_content = stream_filter.feed(content)
+                    if safe_content:
+                        reviewed = self._apply_output_review(safe_content)
+                        buffered_text_chunks.append(reviewed)
+                        # 实时推送流式 token，让前端能看到 LLM 正在逐字输出
+                        # 前端 chat-stream.ts 的 agentMessage 处理是 message.answer += answerChunk。
+                        # thought 置空：本事件只是回复增量，避免与 answer 重复渲染成两张卡片。
+                        self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                            id=id,
+                            task_id=state["task_id"],
+                            event=QueueEvent.AGENT_MESSAGE.value,
+                            thought="",
+                            message=messages_to_dict(state["messages"]),
+                            answer=reviewed,
+                            latency=0,
+                        ))
         except Exception as e:
             logging.exception(f"LLM节点发生错误, 错误信息: {str(e)}")
             self.agent_queue_manager.publish_failure(
@@ -253,6 +276,21 @@ class FunctionCallAgent(BaseAgent):
                 context="LLM节点发生错误",
             )
             raise
+
+        # 流结束：冲刷伪工具调用剥离缓冲的尾部
+        tail = stream_filter.flush()
+        if tail:
+            reviewed_tail = self._apply_output_review(tail)
+            buffered_text_chunks.append(reviewed_tail)
+            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                id=id,
+                task_id=state["task_id"],
+                event=QueueEvent.AGENT_MESSAGE.value,
+                thought="",
+                message=messages_to_dict(state["messages"]),
+                answer=reviewed_tail,
+                latency=0,
+            ))
 
         if gathered is None:
             if pending_skill_prompts:
@@ -360,7 +398,7 @@ class FunctionCallAgent(BaseAgent):
                 id=id,
                 task_id=state["task_id"],
                 event=QueueEvent.AGENT_MESSAGE.value,
-                thought=final_content,
+                thought="",
                 message=messages_to_dict(state["messages"]),
                 answer=final_content,
                 latency=(time.perf_counter() - start_at),
@@ -374,7 +412,12 @@ class FunctionCallAgent(BaseAgent):
 
     def _finalize_llm_output(self, state: AgentState, content: str) -> str:
         """把最终输出收口成用户可见文本。"""
-        return self._sanitize_sandbox_artifact_text(self._apply_output_review(content))
+        from internal.core.agent.entities.agent_text_sanitizer import (
+            strip_pseudo_tool_call_markup,
+        )
+        tool_names = [getattr(tool, "name", "") for tool in self.agent_config.tools]
+        stripped = strip_pseudo_tool_call_markup(content, tool_names)
+        return self._sanitize_sandbox_artifact_text(self._apply_output_review(stripped))
 
     def _postprocess_llm_output(self, state: AgentState, content: str) -> str:
         """给最终输出留一个可覆写的后处理钩子。"""

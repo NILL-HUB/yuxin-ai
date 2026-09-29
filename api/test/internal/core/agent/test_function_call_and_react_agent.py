@@ -395,7 +395,8 @@ def test_function_call_agent_llm_node_should_handle_message_and_thought_and_erro
     assert message_result["iteration_count"] == 1
     assert message_result["messages"][0].content == "hello **"
     assert QueueEvent.AGENT_END in events
-    assert any("**" in thought.thought for _, thought in agent_message.agent_queue_manager.published if thought.event == QueueEvent.AGENT_MESSAGE)
+    # 流式 token 事件只携带 answer（thought 置空），避免与 answer 重复渲染成两张卡片
+    assert any("**" in thought.answer for _, thought in agent_message.agent_queue_manager.published if thought.event == QueueEvent.AGENT_MESSAGE)
 
     llm_thought = _NodeLLM(
         features=[],
@@ -542,6 +543,41 @@ def test_function_call_agent_llm_node_should_buffer_text_when_tool_call_arrives_
     assert result["iteration_count"] == 1
     assert result["messages"][0].tool_calls[0]["name"] == "google_serper"
     assert events == [QueueEvent.AGENT_MESSAGE, QueueEvent.AGENT_THOUGHT]
+
+
+def test_function_call_agent_strips_pseudo_tool_call_from_stream(monkeypatch):
+    """模型未真正绑定工具（features 无 tool_call）却编造 XML 工具调用时，
+    该伪调用不得泄漏到用户可见文本（回归：jev 模型泄漏故障）。"""
+    monkeypatch.setattr(
+        "internal.core.agent.agents.function_call_agent.tiktoken.get_encoding",
+        lambda _name: _FakeEncoding(),
+    )
+    config = _build_agent_config(tools=[SimpleNamespace(name="search_knowledge_base")])
+    llm = _NodeLLM(
+        features=[],  # 无 tool_call：bind_tools 不生效，模拟故障现场
+        metadata={"pricing": {"input": 0.0, "output": 0.0, "unit": 0.001}},
+        stream_chunks=[
+            _Chunk("<"),
+            _Chunk("search_knowledge_base"),
+            _Chunk("><query>jev模型</query></search_knowledge_base>"),
+        ],
+    )
+    agent = _new_function_call_agent(llm, config)
+    result = _run_llm_node(
+        agent,
+        {"task_id": uuid4(), "messages": [HumanMessage(content="帮我查一下jev模型")], "iteration_count": 0},
+    )
+
+    assert result["messages"][0].content == ""
+    emitted = "".join(
+        t.answer
+        for _, t in agent.agent_queue_manager.published
+        if t.event == QueueEvent.AGENT_MESSAGE
+    )
+    assert "search_knowledge_base" not in emitted
+    assert "<query>" not in emitted
+
+
 def test_function_call_agent_tools_node_and_conditions_should_cover_branches():
     class _Tool:
         def __init__(self, name, result=None, error=None):
