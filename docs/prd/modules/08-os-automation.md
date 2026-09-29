@@ -23,7 +23,7 @@
      └─ 回退：DESKTOP_BRIDGE_URL/TOKEN 或 OS_AUTOMATION_URL/TOKEN（静态）
   → 桌面端本地能力桥 desktop/bridge.js（127.0.0.1:9876）
   → 宿主机 os_automation_worker.py（api/scripts/os_automation_worker.py，HTTP 8765）
-     ├─ /file      → read / search / V4A patch（preview 只读 dry-run；apply 写前快照）
+     ├─ /file      → read / list / search / V4A patch（preview 只读 dry-run；apply 写前快照）
      ├─ /recycle   → delete（移入回收站）/ list / restore / purge
      └─ /snapshot  → rollback_file / rollback_turn / list_snapshots
 ```
@@ -57,7 +57,8 @@
 > `resolve_desktop_bridge`。桌面端 token 是每次启动随机生成的
 > （`desktop/main.js` 的 `randomBytes(24)`），只有注册到 `desktop_device` 才能解析到；
 > 因此在**未配静态 env 的纯动态注册场景**下，「agent 删了本机文件 → 用户在平台回收站
-> 里恢复/销毁」必然失败（报 `OS_AUTOMATION_URL/TOKEN 或 DESKTOP_BRIDGE_URL/TOKEN 未配置`），
+> 里恢复/销毁」必然失败（统一报 `desktop_bridge_resolver.DESKTOP_UNAVAILABLE_MESSAGE`：
+> 「未找到可用的本机连接……请安装并登录桌面端」，见 `api/internal/service/desktop_bridge_resolver.py`），
 > 而同一账号的 Agent 工具却能正常工作。回归测试见
 > `api/test/internal/service/test_recycle_bin_handlers.py::TestWorkerRecycleEndpointResolution`。
 
@@ -123,7 +124,7 @@ curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/health
 
 > **命名说明**：该 provider 原名 `codex_os`，现目录与 provider name 均已更正为 `host_os`（`api/internal/core/tools/builtin_tools/providers/host_os/`，DB 侧由迁移 `q3d4e5f6a7b8` 迁移）。原 Codex CLI 链路（`run_os_task` 工具 + worker `/run` 端点 + `delete_guard`）已于 2026-09-08 **整体移除**，原因是 Codex 强依赖 OpenAI（ChatGPT 登录/API key + 地区限制），ToC 不可行且 Windows 沙箱为 experimental；DB 残留由迁移 `0a1b2c3d4e6f` 清理。现存三件套为**纯 Python 自研**（`os_automation_worker.py` 中已无任何 Codex 依赖），`providers.yaml` 描述即"纯 Python 实现，不依赖外部 CLI"。**不要把 `host_os` 理解为依赖 Codex。**
 
-- `os_file_task`：op=`read`（支持分页）/ `search`（ripgrep）/ `patch`（V4A）。
+- `os_file_task`：op=`read`（支持分页）/ `list`（枚举目录直接子项，目录在前，敏感项自动跳过）/ `search`（ripgrep）/ `patch`（V4A）。
   `patch` 默认 `mode=apply` 直接修改（写前自动快照）；`mode=preview` 只读 dry-run 预检查。
   `approval_token` 为历史兼容字段，apply 已不校验。`requester`/`session_id`/`conversation_turn`
   由平台注入，`conversation_turn` 随写前快照写入 manifest，供 `rollback_turn` 按消息轮回滚。

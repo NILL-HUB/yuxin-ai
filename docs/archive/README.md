@@ -14,7 +14,7 @@
 | [cleanup-reports/](./cleanup-reports/) | docs/cleanup-reports/ | 每日代码整洁度清理报告（一次性执行记录，2026-08-13 ~ 08-17） |
 | [research-completed/](./research-completed/) | docs/research/ | 已完成落地的调研/验证快照（执行历史，非当前参考；2026-09-11 归档） |
 | [2026-09-21-account-handoff.md](./2026-09-21-account-handoff.md) | 会话交接 | 跨账号切换的会话记忆摘要（仓库状态/验证基线/环境信息/待办）；新账号 Agent 接手必读 |
-| [superpowers-plans/](./superpowers-plans/) | docs/superpowers/plans/ | 已落地/已作废的实施计划（distribution / billing / pricing / auth / KB-P1~P6 / admin-agent P1a~P5 / UX 系列 / global-control-config / tool-credential / scrapling / user-tool-chain-routing-hardening 等），功能均已落地或方案已被取代；2026-09-24 归档，Scrapling 2026-09-27 归档，用户端工具链与路由硬化 2026-09-29 归档 |
+| [superpowers-plans/](./superpowers-plans/) | docs/superpowers/plans/ | 已落地/已作废的实施计划（distribution / billing / pricing / auth / KB-P1~P6 / admin-agent P1a~P5 / UX 系列 / global-control-config / tool-credential / scrapling / user-tool-chain-routing-hardening / user-file-center 系列（backend·recycle-restore·agent-tools·artifact-collection·frontend）等），功能均已落地或方案已被取代；2026-09-24 归档，Scrapling 2026-09-27 归档，用户端工具链与路由硬化 2026-09-29 归档，用户文件中心 2026-09-30 归档 |
 | [superpowers-specs/](./superpowers-specs/) | docs/superpowers/specs/ | **已落地**的设计规格（distribution / billing / auth / pricing / desktop-client / login-routing / external-data-source / my-apps / app-assignment / video-p4 / video-timeline / scrapling / user-tool-chain-routing-hardening），能力均已实现；2026-09-24 归档，Scrapling 2026-09-27 归档，用户端工具链与路由硬化 2026-09-29 归档 |
 
 > 说明：`docs/superpowers/plans/`、`docs/superpowers/specs/` 存放**尚未落地或仍在途**的计划与规格；已落地的计划/规格移入本目录（`2026-09-15-admin-agent-governance-design.md` 因仍含未闭合缺口——`apply_draft` 前端页、`verify_principal_token` 消费方、`EntityResolver` 接线——而留在原地）。

@@ -196,3 +196,33 @@
 
 - **回收站快照 meta**：`upload_file` 快照新增 `file_center` 字段，记录 `parent_path`（目录路径数组）与 `name`；兼容旧快照（缺该字段时恢复到账号根）。S3 落地。
 - **Agent `save_artifact` 默认落点**：账号根下 `产物/`（不存在则自动创建）；允许 Agent 通过参数指定目标目录。
+
+---
+
+## 10. 落地状态（2026-09-30）
+
+### 阶段 1（已完成，计划文档已归档至 `docs/archive/superpowers-plans/`）
+
+| 交付 | 关键入口 | 提交 |
+|---|---|---|
+| 目录树模型 + 迁移 | `file_center_entry`（迁移 `o9f0a1b2c3d4`） | `ee07efa4` / `6257a493` |
+| 服务（树操作 + 读存 + 全部文件） | `FileCenterService`（`mkdir/rename/move/delete_node/import_upload_file/list_children/list_children_view/list_all_files/read_file/save_artifact/save_generated_asset`） | `3e848ca6` / `56cb46d1` |
+| HTTP 路由 | `GET/POST/PATCH/DELETE /space/files/*`（6 端点，`api/app/http/file_center_routes.py`） | `d962ddfe` |
+| 回收站原目录恢复 | `snapshot_upload_file` 记路径 / `restore_upload_file` 重建父目录 / `purge_upload_file` 清残留 | `d60295b6` / `61269620` |
+| Agent 工具 | builtin provider `file_center`（7 op）+ `assistant_agent_service` 挂载注入 `requester` | `6a8071d1` / `9b01394c` |
+| 产物收编 | 文本产物入树；`persist_remote_image`/`persist_remote_video` 支持 `account_id`；通用 builtin 加载按签名注入账号 | `96eba10d` |
+| 前端 | `/files` 页面（面包屑 + 列表 + 建目录/重命名/移动/删除）+ 侧边栏顶级入口 + i18n（zh/en） | `9b096368` |
+| 文档 | `06-file-storage.md` §17.14、`08-os-automation.md` 工具清单 | `2b5d583b` 等 |
+
+### 阶段 2（部分完成）
+
+| 交付 | 状态 |
+|---|---|
+| `os_automation_worker.py` 目录枚举（`list` op：名称/类型/大小/修改时间，目录在前，**敏感项自动跳过**，安全根约束） | ✅ `d00fc22b` |
+| `os_file_task` 工具 `list` op（Agent 可列本机目录） | ✅ `d00fc22b` |
+| 桌面端 UI（Electron 内的本机文件浏览界面） | ❌ 未实现（愿景设计） |
+| 本机 ↔ 平台文件互传 | ❌ 未实现（愿景设计） |
+
+### 阶段 3（未实现）
+
+外部云盘连接器（阿里云盘 / OneDrive / Google Drive / WebDAV 等）**未实现**——需外部 OAuth 应用与真实账号，属愿景设计；后续可复用知识库 `external_data_source` 范式接入。
