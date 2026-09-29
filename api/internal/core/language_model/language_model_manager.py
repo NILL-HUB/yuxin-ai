@@ -21,23 +21,58 @@ from .entities.provider_entity import ProviderEntity
 
 
 # capabilities 标签归一化映射：将人类可读标签映射到 ModelFeature 枚举值
+# 说明：管理员在后台可用中文/英文混合标注能力，此处同时收录两种语言的常见写法，
+# 避免"配了能力却被静默丢弃"（历史缺陷：中文标签不识别，导致 bind_tools 闸门误判）。
 _CAPABILITY_LABEL_TO_FEATURE: dict[str, ModelFeature] = {
-    # tool_call 别名
+    # tool_call 别名（英文）
     "tool_call": ModelFeature.TOOL_CALL,
     "tool_calling": ModelFeature.TOOL_CALL,
     "tool": ModelFeature.TOOL_CALL,
     "tools": ModelFeature.TOOL_CALL,
     "function_calling": ModelFeature.TOOL_CALL,
     "function_call": ModelFeature.TOOL_CALL,
-    "function calling": ModelFeature.TOOL_CALL,
     "tools_call": ModelFeature.TOOL_CALL,
-    # agent_thought 别名
+    # tool_call 别名（中文）
+    "工具调用": ModelFeature.TOOL_CALL,
+    "函数调用": ModelFeature.TOOL_CALL,
+    "调用工具": ModelFeature.TOOL_CALL,
+    "工具能力": ModelFeature.TOOL_CALL,
+    "工具": ModelFeature.TOOL_CALL,
+    # agent_thought 别名（英文）
     "agent_thought": ModelFeature.AGENT_THOUGHT,
     "agent": ModelFeature.AGENT_THOUGHT,
     "thought": ModelFeature.AGENT_THOUGHT,
     "reasoning": ModelFeature.AGENT_THOUGHT,
     "reasoning_model": ModelFeature.AGENT_THOUGHT,
+    # agent_thought 别名（中文）
+    "深度推理": ModelFeature.AGENT_THOUGHT,
+    "深度思考": ModelFeature.AGENT_THOUGHT,
+    "智能体推理": ModelFeature.AGENT_THOUGHT,
+    "强推理": ModelFeature.AGENT_THOUGHT,
+    "推理": ModelFeature.AGENT_THOUGHT,
+    # image_input 别名（英文）
+    "image_input": ModelFeature.IMAGE_INPUT,
+    "vision": ModelFeature.IMAGE_INPUT,
+    "multimodal": ModelFeature.IMAGE_INPUT,
+    # image_input 别名（中文）
+    "图片输入": ModelFeature.IMAGE_INPUT,
+    "多模态": ModelFeature.IMAGE_INPUT,
+    "多模态理解": ModelFeature.IMAGE_INPUT,
+    "多模态视觉": ModelFeature.IMAGE_INPUT,
+    "多模态理解和识别": ModelFeature.IMAGE_INPUT,
+    "视觉": ModelFeature.IMAGE_INPUT,
+    "图像识别": ModelFeature.IMAGE_INPUT,
 }
+
+# 中文复合标签兜底：管理员常写"XX工具调用能力""多模态理解和识别"这类复合词，
+# 精确匹配命中不到，按高精度子串做定向兜底（仅在精确匹配失败后使用）。
+_CAPABILITY_SUBSTRING_HINTS: tuple[tuple[str, ModelFeature], ...] = (
+    ("工具调用", ModelFeature.TOOL_CALL),
+    ("函数调用", ModelFeature.TOOL_CALL),
+    ("深度推理", ModelFeature.AGENT_THOUGHT),
+    ("多模态", ModelFeature.IMAGE_INPUT),
+    ("图片输入", ModelFeature.IMAGE_INPUT),
+)
 
 
 def _normalize_capability_to_feature(raw: str) -> ModelFeature | None:
@@ -50,8 +85,15 @@ def _normalize_capability_to_feature(raw: str) -> ModelFeature | None:
         return ModelFeature(normalized)
     except ValueError:
         pass
-    # 2. 匹配别名映射
-    return _CAPABILITY_LABEL_TO_FEATURE.get(normalized)
+    # 2. 匹配别名映射（含中英文）
+    mapped = _CAPABILITY_LABEL_TO_FEATURE.get(normalized)
+    if mapped is not None:
+        return mapped
+    # 3. 中文复合标签兜底（高精度子串）
+    for token, feature in _CAPABILITY_SUBSTRING_HINTS:
+        if token in raw:
+            return feature
+    return None
 
 
 from pkg.sqlalchemy import SQLAlchemy
