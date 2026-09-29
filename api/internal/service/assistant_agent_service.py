@@ -1016,6 +1016,19 @@ class AssistantAgentService(BaseService):
             except Exception:
                 logger.warning("构建本机 OS 文件操作工具失败，不影响其他工具", exc_info=True)
 
+        # 文件中心：与用户同一命名空间（/space/files），注入当前账号
+        if self.app_config_service is not None:
+            try:
+                fc_tool_factory = (
+                    self.app_config_service.builtin_provider_manager.get_tool(
+                        "file_center", "file_center"
+                    )
+                )
+                if fc_tool_factory is not None:
+                    tools.append(fc_tool_factory(requester=str(account_id)))
+            except Exception:
+                logger.warning("构建文件中心工具失败，不影响其他工具", exc_info=True)
+
         # 计算机控制：按 requester（账号）动态解析该账号已注册的桌面设备 bridge，
         # 解决桌面端随机 token 无法静态配置到服务端的断链问题。未注册在线设备时
         # _call_worker 会回退静态环境变量并给出明确错误。高风险，仍需用户逐次确认。

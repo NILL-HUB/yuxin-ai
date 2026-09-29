@@ -250,3 +250,10 @@
   background: "#F2F7F2"
   category: tool
   created_at: 1789900000
+- name: file_center
+  label: 文件中心
+  description: 用户文件中心（虚拟目录树）的文件管理能力，与用户侧同一命名空间。
+  icon: ""
+  background: "#F3EEFF"
+  category: productivity
+  created_at: 1790700000
