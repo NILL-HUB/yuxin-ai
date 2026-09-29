@@ -10,7 +10,9 @@ from .knowledge_partition import KnowledgePartition
 from .knowledge_tag import KnowledgeBaseTag, KnowledgeDocumentTag
 from .end_user import EndUser
 from .upload_file import UploadFile
+from .sandbox_config import SandboxConfig
 from .storage_config import StorageConfig
+from .file_center_entry import FileCenterEntry
 from .workflow import Workflow, WorkflowResult, WorkflowVersion, WorkflowRun, WorkflowNodeExecution
 from .platform import WechatConfig, WechatEndUser, WechatMessage
 from .tag import Tag, AppTag, WorkflowTag
@@ -60,6 +62,8 @@ __all__ = [
     "ApiTool", "ApiToolProvider",
     "BuiltinTool", "BuiltinToolProvider",
     "UploadFile", "AccountStorageUsage",
+    "SandboxConfig",
+    "FileCenterEntry",
     "StorageConfig",
     "Conversation", "Message", "MessageAgentThought",
     "ConversationVariable",
