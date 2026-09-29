@@ -75,6 +75,13 @@ const navSections = computed<SidebarNavSection[]>(() => [
         active: route.path.startsWith('/my-apps'),
       },
       {
+        key: 'file-center',
+        label: t('layout.sidebar.fileCenter'),
+        to: '/files',
+        icon: 'icon-folder',
+        active: route.path.startsWith('/files'),
+      },
+      {
         key: 'recycle-bin',
         label: t('layout.sidebar.recycleBin'),
         to: '/recycle-bin',

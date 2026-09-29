@@ -16,6 +16,7 @@ export default  {
       memory: '记忆',
       myKnowledge: '知识库',
       myApps: '我的应用',
+      fileCenter: '文件中心',
       recycleBin: '回收站',
       studio: '创作工作室',
       store: '应用商店',

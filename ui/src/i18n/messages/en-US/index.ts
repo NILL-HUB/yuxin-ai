@@ -6,6 +6,7 @@ import layout from './layout'
 import settings from './settings'
 import space from './space'
 import userRecycleBin from './userRecycleBin'
+import fileCenter from './fileCenter'
 import myApps from './myApps'
 import home from './home'
 import studio from './studio'
@@ -35,6 +36,7 @@ export default {
   settings,
   space,
   userRecycleBin,
+  fileCenter,
   myApps,
   home,
   studio,

@@ -120,6 +120,12 @@ const router = createRouter({
           meta: { requiresAuth: true },
         },
         {
+          path: 'files',
+          name: 'space-files',
+          component: () => import('@/views/space/files/ListView.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
           path: 'recycle-bin',
           name: 'user-recycle-bin',
           component: () => import('@/views/space/recycle-bin/ListView.vue'),

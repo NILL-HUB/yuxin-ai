@@ -16,6 +16,7 @@ export default  {
       memory: 'Memory',
       myKnowledge: 'Knowledge',
       myApps: 'My Apps',
+      fileCenter: 'File Center',
       recycleBin: 'Recycle Bin',
       studio: 'Creation Studio',
       store: 'App Store',

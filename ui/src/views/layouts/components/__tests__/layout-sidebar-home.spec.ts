@@ -192,13 +192,14 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.find('[data-testid="sidebar-home-new-conversation"]').exists()).toBe(false)
 
     const navLinks = wrapper.findAll('a[data-to]')
-    expect(navLinks).toHaveLength(9)
+    expect(navLinks).toHaveLength(10)
 
     const tos = navLinks.map((link) => link.attributes('data-to'))
     expect(tos).toContain('/search')
     expect(tos).toContain('/memory')
     expect(tos).toContain('/my-knowledge')
     expect(tos).toContain('/my-apps')
+    expect(tos).toContain('/files')
     expect(tos).toContain('/recycle-bin')
     expect(tos).not.toContain('/external-data-sources')
     expect(tos).not.toContain('/showcase')
