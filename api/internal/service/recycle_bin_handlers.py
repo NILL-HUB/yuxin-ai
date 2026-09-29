@@ -26,6 +26,7 @@ from internal.model import (
     Conversation,
     ConversationVariable,
     ExternalDataSource,
+    FileCenterEntry,
     KnowledgeBase,
     KnowledgeDocument,
     KnowledgeSegment,
@@ -42,6 +43,13 @@ from internal.model import (
     Workflow,
     WorkflowVersion,
 )
+from internal.service.file_center_paths import (
+    build_parent_path_names as _build_parent_path_names,
+)
+from internal.service.file_center_paths import (
+    delete_entries_by_upload_file as _delete_entries_by_upload_file,
+)
+from internal.service.file_center_paths import ensure_path as _ensure_path
 
 logger = logging.getLogger(__name__)
 
@@ -618,7 +626,7 @@ def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
 
 
 def snapshot_upload_file(resource_id) -> dict[str, Any] | None:
-    """快照单个上传文件记录（底层对象在留存期内保留）。"""
+    """快照单个上传文件记录（底层对象在留存期内保留），并记录文件中心路径。"""
     upload_file = (
         db.session.query(UploadFile)
         .filter(UploadFile.id == resource_id)
@@ -626,7 +634,21 @@ def snapshot_upload_file(resource_id) -> dict[str, Any] | None:
     )
     if upload_file is None:
         return None
-    return {"main": _row_to_dict(upload_file)}
+    snapshot: dict[str, Any] = {"main": _row_to_dict(upload_file)}
+    entry = (
+        db.session.query(FileCenterEntry)
+        .filter(FileCenterEntry.upload_file_id == resource_id)
+        .one_or_none()
+    )
+    if entry is not None:
+        snapshot["file_center"] = {
+            "account_id": str(entry.account_id),
+            "parent_path": _build_parent_path_names(entry),
+            "name": entry.name,
+            "source": entry.source,
+            "origin": entry.origin,
+        }
+    return snapshot
 
 
 def physical_delete_upload_file(resource_id) -> None:
@@ -637,7 +659,7 @@ def physical_delete_upload_file(resource_id) -> None:
 
 
 def restore_upload_file(snapshot: dict[str, Any]) -> bool:
-    """按快照重建上传文件记录。"""
+    """按快照重建上传文件记录，并按记录的文件中心路径重建节点。"""
     main_data = snapshot.get("main") or {}
     if not main_data.get("id"):
         return False
@@ -649,20 +671,37 @@ def restore_upload_file(snapshot: dict[str, Any]) -> bool:
     for col_name, value in main_data.items():
         _apply_column_value(UploadFile, upload_file, col_name, value)
     db.session.add(upload_file)
+    db.session.flush()
+
+    fc = snapshot.get("file_center")
+    if isinstance(fc, dict) and fc.get("account_id"):
+        parent_id = _ensure_path(fc["account_id"], list(fc.get("parent_path") or []))
+        db.session.add(
+            FileCenterEntry(
+                account_id=fc["account_id"],
+                parent_id=parent_id,
+                name=fc.get("name") or main_data.get("name") or "未命名",
+                is_folder=False,
+                upload_file_id=main_data["id"],
+                source=fc.get("source") or "upload",
+                origin=fc.get("origin"),
+            )
+        )
     return True
 
 
 def purge_upload_file(snapshot: dict[str, Any]) -> None:
-    """留存期结束彻底销毁上传文件的底层存储对象（失败向上抛）。"""
+    """留存期结束彻底销毁上传文件的底层存储对象（失败向上抛），并清理文件中心残留节点。"""
     main_data = snapshot.get("main") or {}
     key = main_data.get("key")
-    if not key:
-        return
-    backend = (main_data.get("storage_backend") or "local").strip() or "local"
-    from internal.service.storage.storage_migration_service import _delete_object
-    _delete_object(backend, key)
-    _release_storage_quota(main_data)
-    logger.info("回收站销毁上传文件 key=%s backend=%s", key, backend)
+    if key:
+        backend = (main_data.get("storage_backend") or "local").strip() or "local"
+        from internal.service.storage.storage_migration_service import _delete_object
+        _delete_object(backend, key)
+        _release_storage_quota(main_data)
+        logger.info("回收站销毁上传文件 key=%s backend=%s", key, backend)
+    if main_data.get("id"):
+        _delete_entries_by_upload_file(main_data["id"])
 
 
 # ---------------------------------------------------------------------------
