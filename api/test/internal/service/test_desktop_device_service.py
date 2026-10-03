@@ -364,3 +364,126 @@ def test_effective_status_treats_missing_last_seen_as_offline():
     )
 
     assert DesktopDeviceService._effective_status(device) == "offline"
+
+
+# ---------------------------------------------------------------- update_device
+
+def test_update_device_renames_and_strips():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        name="旧名",
+        platform="win32",
+        bridge_origin="http://host.docker.internal:9876",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        is_default=False,
+        status="online",
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    result = _service(session).update_device(device.account_id, "dev-1", name="  新名  ")
+
+    assert result["name"] == "新名"
+    assert device.name == "新名"
+    assert device.is_default is False
+
+
+def test_update_device_sets_default_and_unsets_others():
+    account_id = uuid4()
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=account_id,
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9876",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        is_default=False,
+        status="online",
+    )
+    other = DesktopDevice(
+        device_id="dev-2",
+        account_id=account_id,
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9877",
+        bridge_token_encrypted=_encrypt_value("secret-token-2"),
+        is_default=True,
+        status="online",
+    )
+    session = _SessionStub([
+        _QueryStub(one_or_none_result=device),
+        _QueryStub(all_result=[other]),
+    ])
+
+    result = _service(session).update_device(account_id, "dev-1", is_default=True)
+
+    assert result["is_default"] is True
+    assert device.is_default is True
+    assert other.is_default is False
+
+
+def test_update_device_allows_unsetting_default():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9876",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        is_default=True,
+        status="online",
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    result = _service(session).update_device(device.account_id, "dev-1", is_default=False)
+
+    assert result["is_default"] is False
+    assert device.is_default is False
+
+
+def test_update_device_raises_when_device_missing():
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+
+    with pytest.raises(NotFoundException):
+        _service(session).update_device(uuid4(), "missing", name="x")
+
+
+def test_update_device_rejects_empty_payload():
+    session = _SessionStub()
+
+    with pytest.raises(ValidateErrorException):
+        _service(session).update_device(uuid4(), "dev-1")
+
+
+def test_update_device_rejects_overlong_name():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9876",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        is_default=False,
+        status="online",
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    with pytest.raises(ValidateErrorException):
+        _service(session).update_device(device.account_id, "dev-1", name="x" * 129)
+
+
+def test_update_device_rejects_default_for_revoked_device():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9876",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        is_default=False,
+        status="revoked",
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    with pytest.raises(ValidateErrorException):
+        _service(session).update_device(device.account_id, "dev-1", is_default=True)

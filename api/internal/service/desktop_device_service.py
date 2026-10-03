@@ -155,6 +155,64 @@ class DesktopDeviceService(BaseService):
         self.update(device, status="revoked")
         return True
 
+    def update_device(
+        self,
+        account_id: UUID,
+        device_id: str,
+        *,
+        name: str | None = None,
+        is_default: bool | None = None,
+    ) -> dict:
+        """更新设备展示名 / 默认标记（设备管理动作，仅限本人设备）。
+
+        - name：去除首尾空白后写入；超长拒绝；空串表示清空展示名。
+        - is_default=True：同账号其他设备一并置为非默认（互斥）；已解绑设备不允许设默认。
+        - 两个字段都为 None 时拒绝，避免静默 no-op。
+        """
+        device_id = str(device_id or "").strip()
+        if not device_id:
+            raise ValidateErrorException("device_id 不能为空")
+        if name is None and is_default is None:
+            raise ValidateErrorException("缺少需要更新的字段（name / is_default）")
+
+        device = (
+            self.db.session.query(DesktopDevice)
+            .filter(
+                DesktopDevice.account_id == account_id,
+                DesktopDevice.device_id == device_id,
+            )
+            .one_or_none()
+        )
+        if device is None:
+            raise NotFoundException("设备不存在")
+
+        updates: dict = {}
+        if name is not None:
+            normalized = str(name).strip()
+            if len(normalized) > 128:
+                raise ValidateErrorException("设备名称过长（最多 128 字符）")
+            updates["name"] = normalized
+        if is_default is not None:
+            if is_default and device.status == "revoked":
+                raise ValidateErrorException("已解绑的设备不能设为默认")
+            updates["is_default"] = bool(is_default)
+
+        if is_default:
+            others = (
+                self.db.session.query(DesktopDevice)
+                .filter(
+                    DesktopDevice.account_id == account_id,
+                    DesktopDevice.device_id != device_id,
+                    DesktopDevice.is_default.is_(True),
+                )
+                .all()
+            )
+            for other in others:
+                self.update(other, is_default=False)
+
+        self.update(device, **updates)
+        return self._to_dict(device)
+
     @staticmethod
     def _effective_status(device: DesktopDevice) -> str:
         """读时计算的展示态：revoked/offline 原样返回；online 但心跳超租约则显示 offline。

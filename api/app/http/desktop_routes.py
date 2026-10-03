@@ -3,6 +3,7 @@
 - GET /desktop-config：引导配置（公开、无鉴权）
 - POST /desktop/devices/register：设备注册（需登录）
 - GET /desktop/devices：设备列表（需登录）
+- PATCH /desktop/devices/<device_id>：更新设备展示名/默认标记（需登录）
 - POST /desktop/devices/<device_id>/revoke：吊销设备（需登录）
 
 设备注册用于打通「服务端 → 宿主机 worker」链路：桌面端上报 bridge 地址与
@@ -116,6 +117,37 @@ def register_routes(quart_app):
             a._get_service(DesktopDeviceService).list_devices, account.id
         )
         return a._ok(devices)
+
+    @quart_app.patch("/desktop/devices/<string:device_id>")
+    async def async_desktop_device_update(device_id: str) -> Response:
+        """更新设备展示名 / 默认标记（重命名、设为默认；仅限本人设备）。"""
+        from app.http import asgi_app as a
+        from internal.exception import NotFoundException
+        from internal.service.desktop_device_service import DesktopDeviceService
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        try:
+            device = await a._to_thread(
+                a._get_service(DesktopDeviceService).update_device,
+                account.id,
+                device_id,
+                name=payload.get("name") if "name" in payload else None,
+                is_default=payload.get("is_default") if "is_default" in payload else None,
+            )
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+        except Exception as exc:
+            from internal.exception import CustomException
+
+            if isinstance(exc, CustomException):
+                return a._json_resp(code="validate_error", message=str(exc.message), data={}, status=400)
+            logging.exception("设备更新失败")
+            return a._json_resp(code="fail", message="设备更新失败", data={}, status=500)
+        return a._ok(device)
 
     @quart_app.post("/desktop/devices/<string:device_id>/revoke")
     async def async_desktop_device_revoke(device_id: str) -> Response:
