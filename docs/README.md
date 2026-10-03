@@ -61,6 +61,7 @@
 
 > **归档判定**：计划/规格对应的功能已落地，或已被后续方案取代、或对应模块已下线，即移入 `docs/archive/superpowers-plans/`、`docs/archive/superpowers-specs/`，避免留在外面误导 Agent。当前仍留在 `superpowers/` 的均为未完成/在途项。
 > **2026-10-03 归档**：CLI 工具池（source_type=cli）、管理端 CLI 管理页相关 2 计划 + 2 规格，以及 MCP 配置表单化（批次 1）设计，均已落地并归档（见 `archive/superpowers-{plans,specs}/`）。
+> **2026-10-04 归档**：用户文件中心前端翻新 + 统一按钮组件（AppButton）与主题贯通修复（已落地；文件中心 spec 本身仍留在 `superpowers/specs/`，因阶段 2 桌面端 UI/互传、阶段 3 云盘未做）。
 
 ## 说明
 

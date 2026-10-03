@@ -226,3 +226,16 @@
 ### 阶段 3（未实现）
 
 外部云盘连接器（阿里云盘 / OneDrive / Google Drive / WebDAV 等）**未实现**——需外部 OAuth 应用与真实账号，属愿景设计；后续可复用知识库 `external_data_source` 范式接入。
+
+---
+
+## 11. 2026-10-04 前端翻新与补全（本轮）
+
+| 交付 | 关键入口 | 说明 |
+|---|---|---|
+| 前端页面翻新 | `ui/src/views/space/files/ListView.vue` | 网格卡片双视图（「我的文件」目录浏览 / 「全部文件」平铺分页）、图片缩略图（失败回退类型图标）、hover 操作（重命名/移动/删除）、引导式空状态；页面形态见 `docs/prd/modules/06-file-storage.md` §17.14 |
+| 「全部文件」视图接通 | `GET /space/files/all` | 前端此前未接入（有路由无调用方）；本轮由该视图接上，响应补 `url` 字段（`list_all_files` 复用新增的 `_file_url_map`，与 `list_children_view` 收敛到同一入口） |
+| service 解包缺陷修复 | `ui/src/services/file-center.ts` | 此前未解包 `BaseResponse.data`（直接返回响应体），页面自落地起读不到 `items` 长期空白；已修复并补契约测试 |
+| 统一按钮组件 | `ui/src/components/AppButton.vue` | 全站按钮单一入口（variant/status/size/iconOnly），颜色与圆角全部取主题 token；约定见根目录 `AGENTS.md` |
+| 主题贯通修复 | `ui/src/theme/theme.css` | `--arcoblue-*` 下沉 body 层：先前定义在 html 层被 arco.css 的 body 定义覆盖，全站 Arco primary 组件显示默认蓝；修复后按钮/标签等恢复主题联动（浅色 233,30,99 / 暗色 255,0,127） |
+| 需登录侧 500 修复 | `api/app/http/support.py` | 有效 JWT 但账号已注销时 `_resolve_account` 原返回 `(None, None)` 致调用方 500，现返回 404 `account_not_found`（两处调用点） |

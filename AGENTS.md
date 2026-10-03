@@ -186,6 +186,18 @@
 - **不硬编码语境文案的归属**：一个语义单位（如删除确认标题、表单 label + placeholder）归入其所属页面的板块命名空间下（如用户管理页文案统一放 `admin.customerUsers.*`），复用高频通用词放 `common.*`，不要为凑数随意铺散或复制整段键。
 - **消息插值用 i18n 语法**：含动态值的文案在字典里写成 `删除用户：{name}`，代码侧用 `t('...', { name })`，不要用字符串拼接代替。
 
+## 前端按钮与主题规范（强制规则）
+
+历史教训：Arco 组件的 `--arcoblue-*` token 定义在 **body 层**（`arco.css`），而主题的粉色覆盖曾写在 `:root`（html 层）上——**html 层定义会被 body 层盖掉**，导致全站 Arco 按钮/标签/开关长期显示 Arco 默认蓝，想改一个按钮颜色只能逐处写样式覆盖（「一个蓝色按钮改半天」）。2026-10-04 已修复（主色链下沉 body 层）。规则：
+
+- **按钮统一走单一入口**：新代码一律用 `ui/src/components/AppButton.vue`（`variant: primary/secondary/outline/text/ghost/danger` + `status` + `size` + `iconOnly` + icon 插槽），**禁止**在调用处写死颜色/圆角样式覆盖。既有直接使用 `a-button` 的页面按页渐进迁移，但**不得新增**第二套按钮封装或新的硬编码按钮样式。
+- **颜色只用主题 token**：组件样式只允许引用 `--aicss-*`、`--tw-*` 或 Arco 语义 token（`--primary-*` 等），**禁止硬编码 hex/rgb**（历史案例：`#165dff`、`#1d4ed8`、`#2563eb` 散落 20+ 处）。需要品牌色时用 `var(--aicss-accent)` / `var(--tw-brand)`。
+- **主题 token 分层不可错位**（`ui/src/theme/theme.css`）：
+  - `--tw-*` / `--aicss-*` 定义在 `:root` / `[data-theme=...]`（html 层），无竞争者；
+  - `--arcoblue-*`（Arco 主色链，联动 `--primary-*`）**必须定义在 body 层选择器**（`html body`、`html[data-theme="xxx"] body`），写在 html 层会被 arco.css 的 body 定义覆盖而失效；
+  - 新增主题：按现有两层结构复制（html 层 tw/aicss + body 层 arcoblue），并在 `ui/src/theme/index.ts` 注册 themeId。
+- **新增 Arco 图标需注册**：按需注册在 `ui/src/plugins/arco.ts` 的 `arcoIcons` 映射表中登记（历史缺陷：页面用了 `icon-folder` 但未注册，图标静默不渲染）。
+
 ## 系统配置统一走 admin 管理（强制规则）
 
 ### 总则（面向整个 admin 后端）

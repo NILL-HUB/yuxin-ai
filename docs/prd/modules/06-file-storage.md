@@ -429,3 +429,10 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 - 删除语义：文件节点入回收站（可恢复）；目录节点递归处理子树。
 
 **与知识库的关系**：`KnowledgeDocument.upload_file_id` 对应文件**不复制**，以 `origin=knowledge_base` 只读出现，删除受既有引用保护。
+
+**前端页面**（`ui/src/views/space/files/ListView.vue`，路由 `/files`，侧边栏「文件中心」入口）：
+- 双视图：「我的文件」（目录浏览：面包屑 + 网格卡片 + 新建文件夹/刷新）与「全部文件」（`GET /space/files/all` 平铺分页，卡片点击直接打开文件）；
+- 卡片：文件夹/文件图标（图片文件显示缩略图，加载失败回退类型图标）、来源标签、hover 显示操作（重命名 / 移动 / 删除）；
+- 删除与重命名/移动均为自定义弹窗（删除移入回收站、可恢复）；空目录显示引导文案 + 新建主操作；
+- 按钮统一使用 `ui/src/components/AppButton.vue`（颜色与圆角全部取自主题 token，约定见根目录 `AGENTS.md`「前端按钮与主题规范」）；
+- 数据契约：`ui/src/services/file-center.ts` 统一以 `BaseResponse<T>` 标注并解包 `response.data`（历史缺陷：曾直接返回整个响应体，页面读不到 `items` 长期空白，2026-10-04 修复）。
