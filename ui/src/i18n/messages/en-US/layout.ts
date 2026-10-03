@@ -18,6 +18,7 @@ export default  {
       myApps: 'My Apps',
       fileCenter: 'File Center',
       recycleBin: 'Recycle Bin',
+      devices: 'My Devices',
       studio: 'Creation Studio',
       store: 'App Store',
       schedules: 'Scheduled Tasks',

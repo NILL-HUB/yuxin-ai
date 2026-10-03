@@ -9,16 +9,24 @@ import type {
 } from '@/models/assistant-agent'
 
 // 与辅助Agent进行对话
+// device_id：会话级设备绑定（可选）——传字符串则随请求下传（空串=解绑），
+// 不传（undefined）表示不改动现有绑定；仅显式传入时才出现在请求体里。
 export const assistantAgentChat = (
   query: string,
   image_urls: string[] = [],
   conversation_id: string = '',
   onData: (event_response: Record<string, unknown>) => void,
+  device_id?: string,
 ) => {
   return ssePost(
     `/assistant-agent/chat`,
     {
-      body: { query, image_urls, conversation_id },
+      body: {
+        query,
+        image_urls,
+        conversation_id,
+        ...(typeof device_id === 'string' ? { device_id } : {}),
+      },
       headers: {
         'Accept-Language': getAppLocale(),
         'X-App-Locale': getAppLocale(),

@@ -44,6 +44,12 @@ const router = createRouter({
           meta: { requiresAuth: true },
         },
         {
+          path: 'devices',
+          name: 'user-devices',
+          component: () => import('@/views/space/devices/ListView.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
           path: 'schedules/runs/:task_id',
           name: 'user-schedules-runs',
           component: () => import('@/views/space/schedules/RunsView.vue'),

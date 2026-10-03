@@ -18,6 +18,7 @@ export default  {
       myApps: '我的应用',
       fileCenter: '文件中心',
       recycleBin: '回收站',
+      devices: '我的设备',
       studio: '创作工作室',
       store: '应用商店',
       schedules: '定时任务',

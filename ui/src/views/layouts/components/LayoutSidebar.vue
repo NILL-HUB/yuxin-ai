@@ -88,6 +88,13 @@ const navSections = computed<SidebarNavSection[]>(() => [
         icon: 'icon-delete',
         active: route.path.startsWith('/recycle-bin'),
       },
+      {
+        key: 'devices',
+        label: t('layout.sidebar.devices'),
+        to: '/devices',
+        icon: 'icon-computer',
+        active: route.path.startsWith('/devices'),
+      },
     ],
   },
   {

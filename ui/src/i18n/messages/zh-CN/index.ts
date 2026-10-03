@@ -7,6 +7,7 @@ import settings from './settings'
 import space from './space'
 import userRecycleBin from './userRecycleBin'
 import fileCenter from './fileCenter'
+import devices from './devices'
 import myApps from './myApps'
 import home from './home'
 import studio from './studio'
@@ -37,6 +38,7 @@ export default {
   space,
   userRecycleBin,
   fileCenter,
+  devices,
   myApps,
   home,
   studio,

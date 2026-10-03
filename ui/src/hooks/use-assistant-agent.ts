@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   assistantAgentChat,
   assistantAgentGenerateIntroduction,
@@ -18,6 +19,7 @@ import { Message } from '@arco-design/web-vue'
 export const useAssistantAgentChat = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
+  const route = useRoute()
 
   // 2.定义辅助Agent会话处理器
   const handleAssistantAgentChat = async (
@@ -26,6 +28,10 @@ export const useAssistantAgentChat = () => {
     conversation_id: string = '',
     onData: (event_response: Record<string, unknown>) => void,
   ) => {
+    // 会话级设备绑定（P0）：由设备列表页经 /home?device_id=… 下传；
+    // 查询参数存在时随每次请求透传（空串=解绑），不存在时保持不改动。
+    const rawDeviceId = route.query.device_id
+    const deviceId = typeof rawDeviceId === 'string' ? rawDeviceId : undefined
     try {
       loading.value = true
       await assistantAgentChat(
@@ -33,6 +39,7 @@ export const useAssistantAgentChat = () => {
         image_urls,
         conversation_id,
         onData,
+        deviceId,
       )
     } finally {
       loading.value = false
