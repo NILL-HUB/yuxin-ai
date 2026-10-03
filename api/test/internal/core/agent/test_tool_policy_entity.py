@@ -39,3 +39,59 @@ def test_computer_action_is_image_result_tool_by_default():
     # 原有默认成员不回归
     assert policy.is_image_result_tool("qwen_image_text_to_image")
     assert policy.is_hard_fail_tool("qwen_image_edit")
+
+
+def test_requires_confirmation_skips_observation_only_computer_actions():
+    """纯观察动作（截图/元素树/列表）零写入零焦点影响，免确认——GUI 任务不被逐步打断。"""
+    policy = ToolPolicy()
+
+    assert policy.requires_confirmation(
+        "computer_action", {"actions": [{"action": "capture"}]}
+    ) is False
+    assert policy.requires_confirmation(
+        "computer_action",
+        {"actions": [{"action": "screenshot"}, {"action": "list_windows"}]},
+    ) is False
+    assert policy.requires_confirmation(
+        "computer_action", {"actions": [{"action": "list_apps"}]}
+    ) is False
+
+
+def test_requires_confirmation_keeps_mutating_computer_actions():
+    """会改变 GUI 状态的动作（含观察+操作混合序列）仍按高风险确认。"""
+    policy = ToolPolicy()
+
+    assert policy.requires_confirmation(
+        "computer_action", {"actions": [{"action": "click", "x": 10, "y": 20}]}
+    ) is True
+    assert policy.requires_confirmation(
+        "computer_action",
+        {"actions": [{"action": "capture"}, {"action": "click", "x": 10, "y": 20}]},
+    ) is True
+    assert policy.requires_confirmation(
+        "computer_action", {"actions": [{"action": "type", "text": "hi"}]}
+    ) is True
+
+
+def test_requires_confirmation_falls_back_when_actions_missing():
+    """actions 缺失/为空时按保守语义确认（无法证明是纯观察）。"""
+    policy = ToolPolicy()
+
+    assert policy.requires_confirmation("computer_action", None) is True
+    assert policy.requires_confirmation("computer_action", {}) is True
+    assert policy.requires_confirmation("computer_action", {"actions": []}) is True
+    # 非法条目（非 dict）不能通过观察判定
+    assert policy.requires_confirmation(
+        "computer_action", {"actions": ["capture"]}
+    ) is True
+
+
+def test_requires_confirmation_other_tools_unaffected():
+    """其他高风险工具维持确认；非高风险工具依旧免确认。"""
+    policy = ToolPolicy()
+
+    assert policy.requires_confirmation("send_email", {}) is True
+    assert policy.requires_confirmation("execute_code", {"command": "print(1)"}) is True
+    assert policy.requires_confirmation("browser_action", {"action": "snapshot"}) is True
+    assert policy.requires_confirmation("os_file_task", {"op": "read", "path": "x"}) is False
+    assert policy.requires_confirmation("os_terminal", {"command": "ls"}) is False

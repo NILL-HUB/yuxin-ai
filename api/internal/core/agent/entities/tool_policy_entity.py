@@ -34,6 +34,13 @@ _DEFAULT_DANGEROUS_TOOL_NAMES = (
     "execute_shell",
 )
 
+# computer_action 的纯观察动作：截图/元素树/窗口与应用列表——零写入、零焦点影响，
+# 与文件读取同档（免确认）。其余 GUI 动作（click/type/press/launch_app 等）会改变
+# GUI 状态，仍按高风险逐次（轮内首次）确认。
+_COMPUTER_OBSERVATION_ACTIONS: frozenset[str] = frozenset(
+    {"screenshot", "capture", "list_apps", "list_windows"}
+)
+
 
 class ToolPolicy(BaseModel):
     """工具运行时策略的统一定义。"""
@@ -70,3 +77,23 @@ class ToolPolicy(BaseModel):
     def is_high_risk_tool(self, tool_name: str | None) -> bool:
         normalized = self._normalize_tool_name(tool_name)
         return bool(normalized and normalized in self.high_risk_tool_names)
+
+    def requires_confirmation(self, tool_name: str | None, tool_input: dict | None = None) -> bool:
+        """本次工具调用是否需要用户确认（比 is_high_risk_tool 更细：按入参分档）。
+
+        唯一分档：computer_action 的 actions 全部为纯观察动作（截图/元素树/列表）时
+        免确认——零写入、零焦点影响，逐次弹窗只会拖垮 GUI 任务的体验；
+        其余 GUI 动作与全部高风险工具维持确认语义。
+        """
+        if not self.is_high_risk_tool(tool_name):
+            return False
+        if self._normalize_tool_name(tool_name) == "computer_action":
+            actions = (tool_input or {}).get("actions") or []
+            if actions and all(
+                isinstance(action, dict)
+                and str(action.get("action") or "").strip().lower()
+                in _COMPUTER_OBSERVATION_ACTIONS
+                for action in actions
+            ):
+                return False
+        return True

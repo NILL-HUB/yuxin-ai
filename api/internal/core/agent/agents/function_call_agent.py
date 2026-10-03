@@ -543,7 +543,10 @@ class FunctionCallAgent(BaseAgent):
                     ))
                     continue
 
-                if tool_policy.is_high_risk_tool(tool_call["name"]):
+                # requires_confirmation 按入参分档：computer_action 的纯观察动作
+                # （screenshot/capture/list_*）零写入零焦点影响，免确认不弹窗，
+                # 避免 GUI 任务每一步观察都被确认打断。
+                if tool_policy.requires_confirmation(tool_call["name"], tool_call.get("args")):
                     account_id = (
                         getattr(self.agent_config, "user_id", None)
                         or getattr(state, "user_id", None)

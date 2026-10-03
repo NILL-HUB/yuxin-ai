@@ -52,6 +52,9 @@
   - [配置治理：admin 统一化审计清单](research/config-inventory.md)：env 读取点分级（已修复/死代码/合理保留/待评估），存储 configs 接入入口
 - [已完成计划的归档](archive/)：已落地的 roadmap / 执行历史 / 计划与规格（orchestration / knowledge / admin-refactor / memory-system execution / superpowers-plans / superpowers-specs / research-completed）
 - [superpowers plans & specs](superpowers/)：**仅保留尚未落地或仍在途**的实现计划与规格
+  - [会话级工作区授权设计](superpowers/specs/2026-10-04-session-workspace-scope-design.md)：会话绑定授权根目录（用户显式批准），文件三件套治理覆盖面对齐 GUI 整机可达范围——安全根降级为默认边界、授权根可超出，scope 内复用同构快照/回收站；**设计稿，未实现**
+  - [手机端遥控与多设备协作设计](superpowers/specs/2026-10-03-mobile-remote-control-multi-device-design.md)：手机端精简遥控面（设备自动发现/显式选设备/任务卡/审批/系统级推送）+ 设备网关（子项目 B）+ 执行位置路由 + 审批挂起-复活模型 + 消息准入三途径；**设计稿，未实现**（推送已定：友盟+个推双通道 admin 热切换）
+  - [手机端遥控 P0 实施计划](superpowers/plans/2026-10-03-mobile-p0-device-list-and-binding.md)：设备管理接口、会话级设备绑定与按设备解析 bridge、设备定向推送房间、设备列表页、Capacitor 壳与遥控面骨架；**未开始**
   - [用户侧统一文件中心（虚拟目录树）设计](superpowers/specs/2026-09-30-user-file-center-design.md)：用户可见的文件目录树管理面 + 可被 Agent 使用的 `file_center` 工具集（阶段 1 已落地；阶段 2 服务端已落地、桌面端 UI 与互传未做；阶段 3 外部云盘未实现——见 §10 落地状态）
   - [L2 全模态（说话人切分/OCR 块）实现计划](superpowers/plans/2026-09-24-kb-l2-omni-diarization.md)：未实现
   - [Qwen 多模态插件 + 助手 Omni 计划](superpowers/plans/2026-09-24-qwen-mm-plugins-assistant-omni.md)：未实现
