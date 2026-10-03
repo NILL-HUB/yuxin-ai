@@ -6,6 +6,7 @@
    - 三层 token 并联：
      ① --tw-*      : Tailwind v4 语义色（@theme inline 引用，运行时切换）
      ② --arcoblue-*: Arco Design Vue 主色（RGB 三元组格式，引用链 --primary-N）
+                      ⚠️ 必须定义在 body 层，见下方「Arco 主色链」块
      ③ --aicss-*   : 项目自有设计令牌（ai-chat-ui.css 同族覆盖）
    - 新增主题：复制一份 [data-theme="xxx"] 块并替换色值即可，
      再在 src/theme/index.ts 注册 themeId，一键接入。
@@ -31,19 +32,6 @@
   --tw-subtle: #c988a6;
   --tw-card: #fffafc;
   --tw-radius: 1.8rem;
-
-  /* Arco Design Vue 主色（RGB 三元组，非 hex）
-     覆盖 --arcoblue-6 即联动 --primary-6 全链 */
-  --arcoblue-1: 252, 233, 240;
-  --arcoblue-2: 248, 214, 228;
-  --arcoblue-3: 244, 181, 209;
-  --arcoblue-4: 240, 149, 189;
-  --arcoblue-5: 236, 116, 166;
-  --arcoblue-6: 233, 30, 99;
-  --arcoblue-7: 208, 24, 87;
-  --arcoblue-8: 184, 20, 77;
-  --arcoblue-9: 161, 15, 66;
-  --arcoblue-10: 138, 12, 56;
 
   /* AICSS 设计令牌覆盖（联动 ChatComposer/AgentThought 等全部组件） */
   --aicss-bg: #fff5f9;
@@ -94,17 +82,6 @@
   --tw-card: #2d001a;
   --tw-radius: 1.8rem;
 
-  --arcoblue-1: 58, 0, 30;
-  --arcoblue-2: 74, 0, 38;
-  --arcoblue-3: 94, 0, 49;
-  --arcoblue-4: 117, 0, 61;
-  --arcoblue-5: 142, 0, 74;
-  --arcoblue-6: 255, 0, 127;
-  --arcoblue-7: 255, 45, 148;
-  --arcoblue-8: 255, 90, 168;
-  --arcoblue-9: 255, 130, 186;
-  --arcoblue-10: 255, 170, 204;
-
   --aicss-bg: #1a000e;
   --aicss-bg-subtle: #240013;
   --aicss-surface: #2d001a;
@@ -132,6 +109,39 @@
     0 4px 10px rgba(0, 0, 0, 0.4),
     0 0 0 0.5px rgba(255, 255, 255, 0.1),
     0 20px 48px rgba(0, 0, 0, 0.32);
+}
+
+/* ---------- Arco 主色链（必须定义在 body 层） ----------
+   arco.css 在 `body` 上定义 --arcoblue-*（默认蓝），html/`:root` 层的同名覆盖
+   会被 body 层盖掉，导致 Arco 组件（按钮/标签/开关等）主色不与主题联动。
+   因此在此同层覆盖：选择器特异度不低于 arco（body / body[arco-theme='dark']），
+   且本文件在 arco.css 之后加载。--primary-* = var(--arcoblue-*) 由 arco 定义，
+   覆盖 --arcoblue-* 即自动联动全链。 */
+html body,
+html[data-theme="barbie"] body {
+  --arcoblue-1: 252, 233, 240;
+  --arcoblue-2: 248, 214, 228;
+  --arcoblue-3: 244, 181, 209;
+  --arcoblue-4: 240, 149, 189;
+  --arcoblue-5: 236, 116, 166;
+  --arcoblue-6: 233, 30, 99;
+  --arcoblue-7: 208, 24, 87;
+  --arcoblue-8: 184, 20, 77;
+  --arcoblue-9: 161, 15, 66;
+  --arcoblue-10: 138, 12, 56;
+}
+
+html[data-theme="barbie-dark"] body {
+  --arcoblue-1: 58, 0, 30;
+  --arcoblue-2: 74, 0, 38;
+  --arcoblue-3: 94, 0, 49;
+  --arcoblue-4: 117, 0, 61;
+  --arcoblue-5: 142, 0, 74;
+  --arcoblue-6: 255, 0, 127;
+  --arcoblue-7: 255, 45, 148;
+  --arcoblue-8: 255, 90, 168;
+  --arcoblue-9: 255, 130, 186;
+  --arcoblue-10: 255, 170, 204;
 }
 
 /* ---------- Arco 暗色属性与 data-theme 同步 ---------- */
