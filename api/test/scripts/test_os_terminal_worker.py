@@ -630,3 +630,104 @@ def test_exec_gitbash_handles_quoted_path_with_spaces(tmp_path, monkeypatch):
 
     assert result["ok"] is True, result
     assert "quoted-ok" in target.read_text(encoding="utf-8", errors="replace")
+
+
+# ---------------------------------------------------------------------------
+# 快照范围跟随实际写入面（cwd 外写入覆盖）+ Agent 自愈信号
+# ---------------------------------------------------------------------------
+def test_collect_snapshot_roots_extracts_referenced_dirs(tmp_path, monkeypatch):
+    """命令引用的安全根内路径 → 其存在祖先目录纳入快照根；cwd 内路径去重。"""
+    from scripts.os_automation_worker import _collect_exec_snapshot_roots
+
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    cwd = tmp_path / "a"
+    other = tmp_path / "b"
+    cwd.mkdir()
+    other.mkdir()
+    (other / "x.txt").write_text("x", encoding="utf-8")
+
+    roots = _collect_exec_snapshot_roots(
+        f'copy "C:\nonexistent\zz.txt" "{other / "x.txt"}"', str(cwd), str(tmp_path)
+    )
+    assert roots[0] == str(cwd)
+    assert str(other) in roots
+
+    # cwd 内路径已被 cwd 扫描覆盖，不重复收录
+    roots2 = _collect_exec_snapshot_roots(
+        f'echo hi > "{cwd / "y.txt"}"', str(cwd), str(tmp_path)
+    )
+    assert roots2 == [str(cwd)]
+
+    # 安全根之外的一律不收（治理下限不放宽）
+    roots3 = _collect_exec_snapshot_roots(
+        'type "C:\Windows\win.ini"', str(cwd), str(tmp_path)
+    )
+    assert roots3 == [str(cwd)]
+
+
+def test_exec_snapshot_covers_paths_outside_working_dir(tmp_path, monkeypatch):
+    """cwd 之外被命令改坏的文件同样入快照、可回滚（治理范围跟随写入面）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    cwd = tmp_path / "proj-a"
+    other = tmp_path / "proj-b"
+    cwd.mkdir()
+    other.mkdir()
+    outside_target = other / "doc.txt"
+    outside_target.write_text("outside-original", encoding="utf-8")
+
+    result = _exec_operation(
+        {
+            "command": f'echo clobbered > "{outside_target}"',
+            "shell": _native_shell(),
+            "working_dir": str(cwd),
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert result["snapshot"]["status"] == "captured"
+    assert any("proj-b" in root for root in result["snapshot"]["roots"])
+    assert any("doc.txt" in path for path in result["changes"]["modified"])
+
+    rollback = _rollback_file({"path": str(outside_target), "working_dir": str(cwd)})
+    assert rollback["ok"] is True, rollback
+    assert outside_target.read_text(encoding="utf-8") == "outside-original"
+
+
+def test_exec_recovery_hint_on_failed_command_with_changes(tmp_path, monkeypatch):
+    """命令失败但已有文件改动 → recovery_hint 引导 Agent 自查并主动回滚。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / "f.txt"
+    target.write_text("data", encoding="utf-8")
+    command = (
+        f'echo changed > "{target}" & exit 2'
+        if os.name == "nt"
+        else f'echo changed > "{target}"; exit 2'
+    )
+
+    result = _exec_operation(
+        {"command": command, "shell": _native_shell(), "working_dir": str(tmp_path)}
+    )
+
+    assert result["ok"] is False
+    assert result["exit_code"] != 0
+    assert result["changes"]["modified_count"] == 1
+    assert "os_snapshot" in result["recovery_hint"]
+    assert "rollback_file" in result["recovery_hint"]
+
+
+def test_exec_no_recovery_hint_on_success(tmp_path, monkeypatch):
+    """成功命令的文件改动是正常迭代，不给 recovery_hint（避免误报）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / "ok.txt"
+
+    result = _exec_operation(
+        {
+            "command": f'echo fine > "{target}"',
+            "shell": _native_shell(),
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["changes"]["created_count"] == 1
+    assert "recovery_hint" not in result

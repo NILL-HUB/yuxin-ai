@@ -1723,6 +1723,11 @@ EXEC_SNAPSHOT_SKIPPED_HINT = (
     "工作目录过大，本次未做写前快照：该次命令若改坏文件将无法经 os_snapshot 回滚。"
     "请把 working_dir 指向具体项目目录；改写文件内容优先用 os_file_task（有精确快照）。"
 )
+EXEC_RECOVERY_HINT = (
+    "命令执行失败/超时，但已有文件被本次命令改动（见 changes）：请检查这些文件是否被改坏；"
+    "确认改坏时立即自行调用 os_snapshot 回滚（rollback_file 恢复单文件、rollback_turn "
+    "按本轮批量恢复），不要等用户提出。"
+)
 _EXEC_SNAPSHOT_EXCLUDE_DIRS: frozenset[str] = frozenset(
     {
         SNAPSHOT_DIR_NAME.lower(),
@@ -2314,6 +2319,60 @@ def _kill_process_tree(proc: "subprocess.Popen[bytes]") -> None:
         pass
 
 
+# 命令文本中的绝对路径（Windows 盘符形式；MSYS/GitBash 的 /d/... 在单独正则中映射）
+_WIN_ABS_PATH_RE = re.compile(r"[A-Za-z]:[\\/][^\s;|&<>\"'`]*")
+_MSYS_ABS_PATH_RE = re.compile(r"(?<![\w:])/(?![/])[A-Za-z](?:/[^\s;|&<>\"'`]*)?")
+_TRAILING_PUNCT_RE = re.compile(r"[.,;:)\]}>'\"]+$")
+_EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT = 8
+
+
+def _collect_exec_snapshot_roots(command: str, cwd: str, safe_root: str) -> list[str]:
+    """收集本次执行需要纳入写前快照的目录根。
+
+    cwd 之外：命令文本中出现的、安全根内**真实存在**的绝对路径（Windows 盘符形式与
+    GitBash 的 /d/... 形式）取其最近存在祖先目录。用于覆盖「一条命令顺手改了 cwd 之外
+    的文件」的场景——快照/回滚范围必须跟随 Agent 的实际写入面，而不是只盯 cwd。
+    cwd 内的路径天然被 cwd 扫描覆盖，自动去重；上限 _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT。
+    """
+    roots: list[str] = [cwd]
+    seen = {cwd}
+
+    def _add_target(target: str) -> None:
+        if not target or _is_path_within(cwd, target) or not _is_path_within(safe_root, target):
+            return
+        if target not in seen and len(roots) < _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT:
+            seen.add(target)
+            roots.append(target)
+
+    candidates: list[str] = []
+    for match in _WIN_ABS_PATH_RE.finditer(command or ""):
+        candidates.append(_TRAILING_PUNCT_RE.sub("", match.group(0)))
+    for match in _MSYS_ABS_PATH_RE.finditer(command or ""):
+        raw = _TRAILING_PUNCT_RE.sub("", match.group(0))
+        # GitBash 的 /d/proj → D:\proj（仅单盘符字母；/usr 等映射不在安全根内会被拒绝）
+        if len(raw) >= 3 and raw[1] == "/" and raw[0].isalpha():
+            candidates.append(f"{raw[1].upper()}:{raw[2:]}")
+
+    for raw in candidates:
+        if not raw or len(raw) > 512:
+            continue
+        probe = Path(raw).expanduser()
+        target = None
+        for _ in range(8):
+            try:
+                if probe.exists():
+                    target = str(probe if probe.is_dir() else probe.parent)
+                    break
+            except OSError:
+                pass
+            if len(probe.parts) <= 2:
+                break
+            probe = probe.parent
+        if target:
+            _add_target(target)
+    return roots
+
+
 def _scan_exec_tree(root: str) -> tuple[dict[str, tuple[int, int]], int, int] | None:
     """扫描工作目录下需纳入快照的文件指纹。
 
@@ -2354,15 +2413,55 @@ def _scan_exec_tree(root: str) -> tuple[dict[str, tuple[int, int]], int, int] | 
 
 
 def _snapshot_exec_tree_before(
-    root: str, *, session_id: str, conversation_turn: str
+    roots: list[str],
+    *,
+    safe_root: str,
+    session_id: str,
+    conversation_turn: str,
 ) -> tuple[dict[str, Any], dict[str, tuple[int, int]] | None]:
-    """终端执行前的增量写前快照；返回 (报告, 执行前指纹表)。
+    """终端执行前的增量写前快照；返回 (报告, 执行前合并指纹表)。
 
-    指纹表供执行后对比（changes 清单）。快照写入失败时抛 OSError，由调用方
-    fail-closed 拒绝执行——保证"执行了就可回滚"这一不变式。
+    roots[0] 是工作目录，其余为命令文本中引用的、安全根内的外部目录（覆盖
+    "一条命令顺手改了 cwd 之外文件"的场景）。**manifest 与 .snap 统一落安全根**
+    （safe_root），否则多根场景下条目分裂、rollback_file/rollback_turn 找不到；
+    指纹缓存仍按扫描根维护。快照写入失败时抛 OSError，由调用方 fail-closed
+    拒绝执行——保证"执行了就可回滚"这一不变式。部分根超限降级时状态为 partial。
     """
-    scanned = _scan_exec_tree(root)
-    if scanned is None:
+    with _exec_tree_state_lock:
+        baselines = {root: dict(_exec_tree_state.get(root) or {}) for root in roots}
+    batch_id = uuid.uuid4().hex
+    merged: dict[str, tuple[int, int]] = {}
+    captured = 0
+    skipped_large = 0
+    inspected = 0
+    degraded_roots: list[str] = []
+    for root in roots:
+        scanned = _scan_exec_tree(root)
+        if scanned is None:
+            degraded_roots.append(root)
+            continue
+        state, file_count, total_bytes = scanned
+        inspected += file_count
+        merged.update(state)
+        previous = baselines.get(root) or {}
+        for path, meta in state.items():
+            # 与上次快照时指纹一致 → 内容已快照过（内容寻址去重），无需重复
+            if previous.get(path) == meta:
+                continue
+            entry = _capture_single_file_snapshot(
+                path,
+                safe_root,
+                source="os_terminal",
+                session_id=session_id,
+                conversation_turn=conversation_turn,
+                batch_id=batch_id,
+                taken_before="terminal",
+            )
+            if entry.get("skipped"):
+                skipped_large += 1
+            else:
+                captured += 1
+    if degraded_roots and not merged:
         return (
             {
                 "status": "skipped_too_large",
@@ -2372,40 +2471,18 @@ def _snapshot_exec_tree_before(
             },
             None,
         )
-    state, file_count, total_bytes = scanned
-    with _exec_tree_state_lock:
-        previous = _exec_tree_state.get(root)
-    batch_id = uuid.uuid4().hex
-    captured = 0
-    skipped_large = 0
-    for path, meta in state.items():
-        # 与上次快照时指纹一致 → 内容已快照过（内容寻址去重），无需重复
-        if previous is not None and previous.get(path) == meta:
-            continue
-        entry = _capture_single_file_snapshot(
-            path,
-            root,
-            source="os_terminal",
-            session_id=session_id,
-            conversation_turn=conversation_turn,
-            batch_id=batch_id,
-            taken_before="terminal",
-        )
-        if entry.get("skipped"):
-            skipped_large += 1
-        else:
-            captured += 1
-    return (
-        {
-            "status": "captured",
-            "captured": captured,
-            "inspected": file_count,
-            "skipped_large": skipped_large,
-            "total_bytes": total_bytes,
-            "batch_id": batch_id,
-        },
-        state,
-    )
+    report: dict[str, Any] = {
+        "status": "partial" if degraded_roots else "captured",
+        "captured": captured,
+        "inspected": inspected,
+        "skipped_large": skipped_large,
+        "roots": roots,
+        "batch_id": batch_id,
+    }
+    if degraded_roots:
+        report["degraded_roots"] = degraded_roots
+        report["hint"] = EXEC_SNAPSHOT_SKIPPED_HINT
+    return report, merged
 
 
 def _diff_exec_tree(
@@ -2420,10 +2497,14 @@ def _diff_exec_tree(
         return None
 
     def _relative(path: str) -> str:
+        # cwd 内的改动显示相对路径；cwd 外（多根覆盖场景）显示绝对路径，避免 ..\ 误导
         try:
-            return os.path.relpath(path, root)
+            rel = os.path.relpath(path, root)
         except ValueError:
             return path
+        if rel.startswith(".."):
+            return path
+        return rel
 
     modified = sorted(p for p, meta in after.items() if p in before and before[p] != meta)
     created = sorted(p for p in after if p not in before)
@@ -2474,11 +2555,15 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     if executable is None:
         return {"ok": False, "error": error, "shell": shell}
 
-    # 写前快照（fail-closed）：快照失败说明环境异常（磁盘满/权限），此时拒绝执行，
-    # 保证「执行过的命令都可回滚」这一不变式。
+    # 写前快照（fail-closed）：范围 = cwd + 命令引用的安全根内目录（覆盖 cwd 外写入）；
+    # manifest 统一落安全根。快照失败说明环境异常（磁盘满/权限），此时拒绝执行，
+    # 保证「执行过的命令都可回滚」。
+    safe_root = _resolve_safe_root("")
+    snapshot_roots = _collect_exec_snapshot_roots(command, root, safe_root)
     try:
         snapshot_report, before_state = _snapshot_exec_tree_before(
-            root,
+            snapshot_roots,
+            safe_root=safe_root,
             session_id=str(payload.get("session_id") or ""),
             conversation_turn=str(payload.get("conversation_turn") or ""),
         )
@@ -2538,15 +2623,17 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     exit_code = proc.returncode
 
     # 执行后指纹：产出本次改动清单，并作为"下一次执行前的已快照基线"
-    after_scan = _scan_exec_tree(root)
-    after_state = after_scan[0] if after_scan else None
-    changes = _diff_exec_tree(before_state, after_state, root=root)
-    with _exec_tree_state_lock:
-        if after_state is None:
-            # 降级/不可遍历：清基线，避免下次误判"已快照"
-            _exec_tree_state.pop(root, None)
-        else:
-            _exec_tree_state[root] = after_state
+    merged_after: dict[str, tuple[int, int]] = {}
+    for scan_root in snapshot_roots:
+        after_one = _scan_exec_tree(scan_root)
+        with _exec_tree_state_lock:
+            if after_one is None:
+                # 降级/不可遍历：清基线，避免下次误判"已快照"
+                _exec_tree_state.pop(scan_root, None)
+            else:
+                merged_after.update(after_one[0])
+                _exec_tree_state[scan_root] = after_one[0]
+    changes = _diff_exec_tree(before_state, merged_after or None, root=root)
 
     result: dict[str, Any] = {
         "ok": (not timed_out) and exit_code == 0,
@@ -2561,6 +2648,14 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     }
     if changes is not None:
         result["changes"] = changes
+    # 自愈信号：命令失败/超时但已有文件被改动——最典型的"改坏了"场景，
+    # 引导 Agent 自查并主动回滚（回滚是 Agent 的自主义务，不等用户提出）
+    if changes and (
+        changes.get("modified_count")
+        or changes.get("created_count")
+        or changes.get("removed_count")
+    ) and (timed_out or exit_code != 0):
+        result["recovery_hint"] = EXEC_RECOVERY_HINT
     if timed_out:
         result["timed_out"] = True
         result["error"] = f"命令执行超时（{timeout_seconds}s），已终止进程树"

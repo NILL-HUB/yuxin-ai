@@ -134,6 +134,10 @@ class ComputerActionTool(BaseTool):
         "仅当被结构化拒绝时才升级前台坐标方式。"
         "也支持前台坐标动作（move/click/scroll/type/press/hotkey/screenshot）"
         "与应用管理（list_apps/list_windows/launch_app）。"
+        "⚠️ 文件治理禁令：不得用本工具删除、修改文件或执行命令（包括打开资源管理器删除、"
+        "往终端窗口输入命令等）——文件操作一律走 os_file_task / os_recycle_bin / os_terminal"
+        "（有写前快照与回收站治理、可回滚），本工具仅用于没有命令行等价物的 GUI 操作；"
+        "GUI 操作没有快照兜底，破坏不可恢复。"
         "⚠️ 需要账号有在线桌面设备，或已配置服务端控制通道（容器内虚拟桌面，非用户真实电脑）；"
         "操作用户真实电脑的执行端为桌面客户端，两者皆无时返回不可用。按高风险审批。"
     )
