@@ -1,5 +1,10 @@
 import { del, get, patch, post } from '@/utils/request'
-import type { FileCenterChildren, FileCenterEntry } from '@/models/file-center'
+import type { BaseResponse } from '@/models/base'
+import type {
+  FileCenterAllFilesPage,
+  FileCenterChildren,
+  FileCenterEntry,
+} from '@/models/file-center'
 
 /**
  * 列出某目录下的直接子节点（parentId 为空表示账号根）。
@@ -7,9 +12,23 @@ import type { FileCenterChildren, FileCenterEntry } from '@/models/file-center'
 export const listFileCenterEntries = async (
   parentId: string | null = null,
 ): Promise<FileCenterChildren> => {
-  return get<FileCenterChildren>('/space/files', {
+  const response = await get<BaseResponse<FileCenterChildren>>('/space/files', {
     params: parentId ? { parent_id: parentId } : {},
   })
+  return response.data
+}
+
+/**
+ * 「全部文件」平铺视图：账号下已入树的文件（分页，按创建时间倒序）。
+ */
+export const listAllFileCenterFiles = async (
+  page = 1,
+  pageSize = 20,
+): Promise<FileCenterAllFilesPage> => {
+  const response = await get<BaseResponse<FileCenterAllFilesPage>>('/space/files/all', {
+    params: { page, page_size: pageSize },
+  })
+  return response.data
 }
 
 /**
@@ -19,9 +38,10 @@ export const createFileCenterFolder = async (
   parentId: string | null,
   name: string,
 ): Promise<FileCenterEntry> => {
-  return post<FileCenterEntry>('/space/files/folders', {
+  const response = await post<BaseResponse<FileCenterEntry>>('/space/files/folders', {
     body: JSON.stringify({ parent_id: parentId, name }),
   })
+  return response.data
 }
 
 /**
@@ -31,16 +51,17 @@ export const updateFileCenterEntry = async (
   entryId: string,
   payload: { name?: string; parent_id?: string | null },
 ): Promise<FileCenterEntry> => {
-  return patch<FileCenterEntry>(`/space/files/${entryId}`, {
+  const response = await patch<BaseResponse<FileCenterEntry>>(`/space/files/${entryId}`, {
     body: JSON.stringify(payload),
   })
+  return response.data
 }
 
 /**
  * 删除节点（文件入回收站可恢复；目录递归）。
  */
 export const deleteFileCenterEntry = async (entryId: string): Promise<void> => {
-  return del<void>(`/space/files/${entryId}`)
+  await del<BaseResponse<unknown>>(`/space/files/${entryId}`)
 }
 
 /**
@@ -51,7 +72,8 @@ export const importFileCenterUpload = async (
   parentId: string | null,
   name: string,
 ): Promise<FileCenterEntry> => {
-  return post<FileCenterEntry>('/space/files/import', {
+  const response = await post<BaseResponse<FileCenterEntry>>('/space/files/import', {
     body: JSON.stringify({ upload_file_id: uploadFileId, parent_id: parentId, name }),
   })
+  return response.data
 }

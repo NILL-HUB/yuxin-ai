@@ -1,6 +1,10 @@
 export default {
   title: 'File Center',
   root: 'Root',
+  tabs: {
+    browse: 'My Files',
+    all: 'All Files',
+  },
   newFolder: 'New Folder',
   newFolderTitle: 'New Folder',
   rename: 'Rename',
@@ -12,14 +16,21 @@ export default {
   delete: 'Delete',
   deleteTitle: 'Delete',
   deleteConfirm: 'Deleted items go to the recycle bin and can be restored.',
+  deleteAction: 'Move to Recycle Bin',
   deleteSuccess: 'Moved to recycle bin',
   refresh: 'Refresh',
   empty: 'This folder is empty',
+  emptyBrowseHint:
+    'Create a folder to start organizing, or ask the agent to save generated files here.',
+  emptyAllHint:
+    'No archived files yet. Files generated or uploaded in conversations will appear here.',
   noPreview: 'No available link for this file',
   loadFailed: 'Failed to load file center',
   operateFailed: 'Operation failed',
   nameRequired: 'Please enter a name',
   namePlaceholder: 'Enter a name',
+  cancel: 'Cancel',
+  confirm: 'Confirm',
   typeFolder: 'Folder',
   typeFile: 'File',
   columns: {
