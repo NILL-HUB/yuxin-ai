@@ -2,6 +2,7 @@
 
 > 更新日期：2026-09-19
 > 定位：桌面客户端（子项目 A）已实现首版并完成 NSIS 打包验证；设备注册（登录即设备）已实现，"服务端 → 宿主机"链路已打通。
+> 更新（2026-10-04）：手机端遥控 **P0 已落地**——设备管理（重命名/设默认/解绑）、会话级设备绑定（`conversation.desktop_device_id`）、设备定向推送房间、Web/手机设备列表页；设计见 [spec](../../superpowers/specs/2026-10-03-mobile-remote-control-multi-device-design.md)、计划见 [plan](../../superpowers/plans/2026-10-03-mobile-p0-device-list-and-binding.md)。
 > 主文档：[architecture-design.md](../architecture-design.md)
 > 相关模块：[08-os-automation.md](./08-os-automation.md)（宿主机 OS worker 服务端）｜ 设计规格：[2026-09-08-desktop-client-a-design.md](../../archive/superpowers-specs/2026-09-08-desktop-client-a-design.md)（已归档）｜ 执行计划：[2026-09-08-desktop-client-a-plan.md](../../archive/superpowers-plans/2026-09-08-desktop-client-a-plan.md)（已归档）
 
@@ -98,6 +99,16 @@ Electron 主进程（desktop/main.js，唯一入口）
   `assistant_agent_service` 挂载（`requester=account_id`），不再依赖静态 env 才能可用；
   未注册设备时回退 `BROWSER_AUTOMATION_URL/TOKEN` 并返回明确错误（默认关闭）。
   （2026-09-25 修复：`local_render_runner.py` 曾把「`browser_action` 仅读静态 env」记为已知断链，现已消除。）
+
+### 1d. 设备管理与会话级设备绑定（P0，2026-10-04 落地）
+
+- **设备管理接口**：`PATCH /desktop/devices/<device_id>`（重命名 / 设为默认；缺字段拒绝；设默认同账号互斥、已解绑设备禁止设默认）→ `DesktopDeviceService.update_device`。
+- **会话级设备绑定**：`conversation.desktop_device_id`（迁移 `b7c8d9e0f1a2`）记录该会话的执行设备；`POST /assistant-agent/chat` 的 `device_id` 语义：**缺省/None=不改动、空串=解绑、非空=绑定**（绑定校验归属；离线可绑、已解绑拒绝）。绑定值在 `assistant_agent_service._build_assistant_runtime_tools` 的**唯一注入点**透传给走设备 bridge 的工具（os_file_task / os_snapshot / os_terminal / os_recycle_bin / computer_action / browser_action）。
+- **按设备解析 bridge**：`resolve_desktop_bridge(account_id, device_id=...)` 指定设备时只解析该设备（归属 + 心跳租约，与 `resolve_bridge` 同口径），**不命中不回退静态配置**（避免静默换机执行），并以 `resolve_unavailable_message` 返回「指定的设备不可用」统一文案。
+- **设备定向推送**：Socket.IO 房间 `device:<device_id>`（`subscribe_device_notification`，订阅前校验归属）；设备注册「非在线→在线」跃迁与吊销广播 `device_status_changed`（心跳不广播，避免 60s 噪音）。
+- **前端**：`/devices` 设备列表页（在线态/重命名/设默认/解绑/使用此设备）；「使用此设备」→ `/home?device_id=…` → 发送时随 `/assistant-agent/chat` 透传。
+- **手机壳构建链**：`mobile/` 补齐 `typescript` 依赖（`capacitor.config.ts` 需要），`cap sync` 可通过；APK/模拟器验证走 CI（`.github/workflows/mobile-build.yml`）。
+- 仍未实现（P1）：设备网关（WS 下行通道 + 设备级 token）、系统级推送（友盟/个推双通道）——见 spec §4.11。
 
 ### 2. 服务器地址注入（server-config + /api/desktop-config）
 
