@@ -243,3 +243,19 @@ def test_computer_action_invalid_base64_marks_unsaved(monkeypatch):
 
     assert "screenshot_base64" not in result
     assert result["screenshot_saved"] is False
+
+
+def test_computer_action_passes_device_id_to_payload(monkeypatch):
+    captured = {}
+
+    def fake_call_worker(payload):
+        captured.update(payload)
+        return {"ok": True, "results": []}
+
+    monkeypatch.setattr(module, "_call_worker", fake_call_worker)
+
+    ComputerActionTool(requester="acct-1", device_id="dev-2")._run(
+        actions=[{"action": "move", "x": 1, "y": 1}]
+    )
+
+    assert captured["device_id"] == "dev-2"

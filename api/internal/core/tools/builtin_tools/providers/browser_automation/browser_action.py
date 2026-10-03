@@ -88,6 +88,7 @@ class BrowserActionTool(BaseTool):
     )
     args_schema: type[BaseModel] = BrowserActionInput
     requester: str = ""
+    device_id: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         payload = {
@@ -98,6 +99,7 @@ class BrowserActionTool(BaseTool):
             "wait_ms": int(kwargs.get("wait_ms") or 0),
             "timeout": int(kwargs.get("timeout") or 30000),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "device_id": _normalize_text(kwargs.get("device_id") or self.device_id),
         }
         result = _call_worker(payload)
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -110,4 +112,5 @@ def browser_action(**kwargs: Any) -> BaseTool:
     """工厂函数：返回浏览器自动化工具。"""
     return BrowserActionTool(
         requester=_normalize_text(kwargs.get("requester")),
+        device_id=_normalize_text(kwargs.get("device_id")),
     )

@@ -143,11 +143,13 @@ class ComputerActionTool(BaseTool):
     )
     args_schema: type[BaseModel] = ComputerActionInput
     requester: str = ""
+    device_id: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         payload = {
             "actions": list(kwargs.get("actions") or []),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "device_id": _normalize_text(kwargs.get("device_id") or self.device_id),
         }
         result = _replace_screenshot(_call_worker(payload), str(payload["requester"]))
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -160,4 +162,5 @@ def computer_action(**kwargs: Any) -> BaseTool:
     """工厂函数：返回计算机控制工具。"""
     return ComputerActionTool(
         requester=_normalize_text(kwargs.get("requester")),
+        device_id=_normalize_text(kwargs.get("device_id")),
     )

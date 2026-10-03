@@ -87,6 +87,7 @@ class OsSnapshotTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsSnapshotInput
     requester: str = ""
+    device_id: str = ""
     session_id: str = ""
     conversation_turn: str = ""
 
@@ -103,6 +104,7 @@ class OsSnapshotTool(BaseTool):
             "limit": int(kwargs.get("limit") or 0),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "device_id": _normalize_text(kwargs.get("device_id") or self.device_id),
         }
         result = _call_worker(payload)
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -115,6 +117,7 @@ def os_snapshot(**kwargs: Any) -> BaseTool:
     """工厂函数：返回本机文件快照回滚工具。"""
     return OsSnapshotTool(
         requester=_normalize_text(kwargs.get("requester")),
+        device_id=_normalize_text(kwargs.get("device_id")),
         session_id=_normalize_text(kwargs.get("session_id")),
         conversation_turn=_normalize_text(kwargs.get("conversation_turn")),
     )

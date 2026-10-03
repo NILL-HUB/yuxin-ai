@@ -99,6 +99,7 @@ class OsTerminalTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsTerminalInput
     requester: str = ""
+    device_id: str = ""
     session_id: str = ""
     conversation_turn: str = ""
 
@@ -114,6 +115,7 @@ class OsTerminalTool(BaseTool):
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "timeout_seconds": timeout_seconds,
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "device_id": _normalize_text(kwargs.get("device_id") or self.device_id),
             # 写前快照按会话/轮次分组：os_snapshot rollback_turn 可回滚本轮全部终端改动
             "session_id": _normalize_text(kwargs.get("session_id") or self.session_id),
             "conversation_turn": _normalize_text(
@@ -132,6 +134,7 @@ def os_terminal(**kwargs: Any) -> BaseTool:
     """工厂函数：返回本机终端工具。"""
     return OsTerminalTool(
         requester=_normalize_text(kwargs.get("requester")),
+        device_id=_normalize_text(kwargs.get("device_id")),
         session_id=_normalize_text(kwargs.get("session_id")),
         conversation_turn=_normalize_text(kwargs.get("conversation_turn")),
     )

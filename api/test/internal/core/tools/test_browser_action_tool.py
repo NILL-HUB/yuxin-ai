@@ -111,3 +111,19 @@ def test_browser_action_prefers_dynamic_desktop_bridge(monkeypatch):
     assert result["ok"] is True
     assert captured["url"] == "http://dynamic-host:9876/browser"
     assert captured["auth"] == "Bearer dynamic-token"
+
+
+def test_browser_action_passes_device_id_to_payload(monkeypatch):
+    captured = {}
+
+    def fake_call_worker(payload):
+        captured.update(payload)
+        return {"ok": True, "title": "Example"}
+
+    monkeypatch.setattr(browser_action_module, "_call_worker", fake_call_worker)
+
+    BrowserActionTool(requester="acct-1", device_id="dev-2")._run(
+        action="navigate", url="https://example.com"
+    )
+
+    assert captured["device_id"] == "dev-2"

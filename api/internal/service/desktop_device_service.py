@@ -130,6 +130,56 @@ class DesktopDeviceService(BaseService):
             return None
         return str(device.bridge_origin).rstrip("/"), token
 
+    def resolve_bridge_for(self, account_id: UUID, device_id: str) -> tuple[str, str] | None:
+        """解析**指定设备**的 bridge (origin, token)；不存在/非本人/离线返回 None。
+
+        与 resolve_bridge 使用同一可用性判据（status=online 且心跳在租约内），
+        保证「设备列表显示在线」与「指定设备能否执行」两处口径一致。
+        """
+        device_id = str(device_id or "").strip()
+        if not device_id:
+            return None
+        lease_threshold = _utcnow_naive() - timedelta(seconds=DEVICE_ONLINE_TTL_SECONDS)
+        device = (
+            self.db.session.query(DesktopDevice)
+            .filter(
+                DesktopDevice.account_id == account_id,
+                DesktopDevice.device_id == device_id,
+                DesktopDevice.status == "online",
+                DesktopDevice.last_seen_at >= lease_threshold,
+            )
+            .one_or_none()
+        )
+        if device is None:
+            return None
+        if not device.bridge_origin or not device.bridge_token_encrypted:
+            return None
+        try:
+            token = _decrypt_value(device.bridge_token_encrypted)
+        except ValueError:
+            logger.warning("指定设备 token 解密失败 device=%s", device_id)
+            return None
+        return str(device.bridge_origin).rstrip("/"), token
+
+    def device_bindable(self, account_id: UUID, device_id: str) -> bool:
+        """会话绑定前校验：设备属于该账号且未被解绑（**是否在线不阻断绑定**）。
+
+        离线设备允许绑定：执行时由 resolver 返回「指定设备离线」的明确错误，
+        用户无需因设备临时离线而重新选择。
+        """
+        device_id = str(device_id or "").strip()
+        if not device_id:
+            return False
+        device = (
+            self.db.session.query(DesktopDevice)
+            .filter(
+                DesktopDevice.account_id == account_id,
+                DesktopDevice.device_id == device_id,
+            )
+            .one_or_none()
+        )
+        return bool(device is not None and device.status != "revoked")
+
     def list_devices(self, account_id: UUID) -> list[dict]:
         """列出该账号的设备（token 脱敏，不返回明文）。"""
         rows = (

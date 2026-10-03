@@ -43,6 +43,9 @@ class Conversation(Base):
     is_pinned = Column(Boolean, nullable=False, server_default=text("false"))  # 是否置顶
     is_deleted = Column(Boolean, nullable=False, server_default=text("false"))  # 是否删除
     invoke_from = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 调用来源
+    # 会话绑定的桌面设备（desktop_device.device_id；NULL=按「默认设备 > 最近在线」自动解析）。
+    # 手机/Web 显式选择设备后写入；显式清空（空串）表示解绑回自动解析。
+    desktop_device_id = Column(String(128), nullable=True)
     created_by = Column(
         UUID,
         nullable=True,

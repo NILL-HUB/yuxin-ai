@@ -487,3 +487,110 @@ def test_update_device_rejects_default_for_revoked_device():
 
     with pytest.raises(ValidateErrorException):
         _service(session).update_device(device.account_id, "dev-1", is_default=True)
+
+
+# ------------------------------------------------- resolve_bridge_for / device_bindable
+
+def test_resolve_bridge_for_returns_decrypted_token():
+    device = DesktopDevice(
+        device_id="dev-2",
+        account_id=uuid4(),
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9877/",
+        bridge_token_encrypted=_encrypt_value("device-token"),
+        is_default=False,
+        status="online",
+        last_seen_at=_utcnow_naive(),
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    resolved = _service(session).resolve_bridge_for(device.account_id, "dev-2")
+
+    assert resolved == ("http://host.docker.internal:9877", "device-token")
+
+
+def test_resolve_bridge_for_returns_none_when_device_offline_or_missing():
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+
+    assert _service(session).resolve_bridge_for(uuid4(), "dev-x") is None
+
+
+def test_device_bindable_true_for_online_device():
+    device = DesktopDevice(
+        device_id="dev-2",
+        account_id=uuid4(),
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9877",
+        bridge_token_encrypted=_encrypt_value("t"),
+        is_default=False,
+        status="online",
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    assert _service(session).device_bindable(device.account_id, "dev-2") is True
+
+
+def test_device_bindable_false_for_revoked_or_missing():
+    revoked = DesktopDevice(
+        device_id="dev-2",
+        account_id=uuid4(),
+        name="",
+        platform="",
+        bridge_origin="http://host.docker.internal:9877",
+        bridge_token_encrypted=_encrypt_value("t"),
+        is_default=False,
+        status="revoked",
+    )
+    session = _SessionStub([_QueryStub(one_or_none_result=revoked)])
+    assert _service(session).device_bindable(revoked.account_id, "dev-2") is False
+
+    session2 = _SessionStub([_QueryStub(one_or_none_result=None)])
+    assert _service(session2).device_bindable(uuid4(), "missing") is False
+
+
+# ------------------------------------------------- resolver: 指定设备语义
+
+def test_resolver_with_device_id_uses_specified_device(monkeypatch):
+    captured = {}
+
+    def _resolve_for(self, account_id, device_id):
+        captured["account_id"] = account_id
+        captured["device_id"] = device_id
+        return ("http://host.docker.internal:9876", "specified")
+
+    monkeypatch.setattr(DesktopDeviceService, "resolve_bridge_for", _resolve_for)
+
+    assert resolver.resolve_desktop_bridge("acct-1", purpose="/file", device_id="dev-2") == (
+        "http://host.docker.internal:9876",
+        "specified",
+    )
+    assert captured == {"account_id": "acct-1", "device_id": "dev-2"}
+
+
+def test_resolver_with_device_id_skips_static_fallback(monkeypatch):
+    """指定设备不可用时不得静默回退静态配置（否则会换到别的机器执行）。"""
+    monkeypatch.setattr(DesktopDeviceService, "resolve_bridge_for", lambda self, account_id, device_id: None)
+    monkeypatch.setenv("DESKTOP_BRIDGE_URL", "http://fallback:1")
+    monkeypatch.setenv("DESKTOP_BRIDGE_TOKEN", "fallback")
+
+    assert resolver.resolve_desktop_bridge("acct-1", purpose="/file", device_id="dev-2") is None
+
+
+def test_resolver_with_device_id_survives_lookup_failure(monkeypatch):
+    def _boom(self, account_id, device_id):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(DesktopDeviceService, "resolve_bridge_for", _boom)
+    monkeypatch.setenv("DESKTOP_BRIDGE_URL", "http://fallback:1")
+    monkeypatch.setenv("DESKTOP_BRIDGE_TOKEN", "fallback")
+
+    assert resolver.resolve_desktop_bridge("acct-1", device_id="dev-2") is None
+
+
+def test_resolve_unavailable_message_selects_variant():
+    assert resolver.resolve_unavailable_message("dev-2") == resolver.DESKTOP_DEVICE_OFFLINE_MESSAGE
+    assert resolver.resolve_unavailable_message("") == resolver.DESKTOP_UNAVAILABLE_MESSAGE
+    assert resolver.resolve_unavailable_message(None) == resolver.DESKTOP_UNAVAILABLE_MESSAGE
+    assert "指定的设备" in resolver.DESKTOP_DEVICE_OFFLINE_MESSAGE

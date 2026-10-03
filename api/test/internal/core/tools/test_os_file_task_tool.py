@@ -184,3 +184,72 @@ def test_os_file_task_appends_file_path_for_os_automation_url(monkeypatch):
     assert result["ok"] is True
     assert captured["url"] == "http://worker:8765/file"
     assert captured["auth"] == "Bearer os-token"
+
+
+def test_os_file_task_passes_bound_device_id_and_targets_it(monkeypatch):
+    """会话绑定的设备随 payload 下传，bridge 解析按指定设备进行。"""
+    captured = {}
+
+    def fake_resolve(account_id=None, *, purpose="", device_id=None):
+        captured["resolved_device"] = device_id
+        return "http://host.docker.internal:9876", "bridge-token"
+
+    monkeypatch.setattr(
+        "internal.service.desktop_bridge_resolver.resolve_desktop_bridge", fake_resolve
+    )
+
+    class _FakeResponse:
+        def read(self):
+            return json.dumps({"ok": True, "content": "hi", "truncated": False}).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def _fake_urlopen(request, timeout):
+        captured["request"] = request
+        return _FakeResponse()
+
+    worker_client = importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.worker_client"
+    )
+    monkeypatch.setattr(worker_client.urllib.request, "urlopen", _fake_urlopen)
+
+    OsFileTaskTool(requester="user-1", device_id="dev-2")._run(
+        op="read", path="C:/tmp/notes.txt"
+    )
+
+    body = json.loads(captured["request"].data)
+    assert body["device_id"] == "dev-2"
+    assert captured["resolved_device"] == "dev-2"
+    assert captured["request"].full_url == "http://host.docker.internal:9876/file"
+
+
+def test_os_file_task_specified_device_offline_reports_device_message(monkeypatch):
+    """指定设备解析不命中：返回设备离线文案，不回退静态配置、不发请求。"""
+    monkeypatch.setenv("OS_AUTOMATION_URL", "http://worker:8765")
+    monkeypatch.setenv("OS_AUTOMATION_TOKEN", "os-token")
+    monkeypatch.setattr(
+        "internal.service.desktop_bridge_resolver.resolve_desktop_bridge",
+        lambda account_id=None, *, purpose="", device_id=None: None,
+    )
+    called = {"urlopen": False}
+    worker_client = importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.worker_client"
+    )
+
+    def _boom(*_args, **_kwargs):
+        called["urlopen"] = True
+        raise AssertionError("不应发起 HTTP 请求")
+
+    monkeypatch.setattr(worker_client.urllib.request, "urlopen", _boom)
+
+    result = json.loads(
+        OsFileTaskTool(requester="user-1", device_id="dev-2")._run(op="read", path="x")
+    )
+
+    assert result["ok"] is False
+    assert "指定的设备" in result["error"]
+    assert called["urlopen"] is False

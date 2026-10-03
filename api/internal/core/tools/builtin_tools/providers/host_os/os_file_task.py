@@ -108,6 +108,7 @@ class OsFileTaskTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsFileTaskInput
     requester: str = ""
+    device_id: str = ""
     session_id: str = ""
     conversation_turn: str = ""
 
@@ -120,6 +121,7 @@ class OsFileTaskTool(BaseTool):
             "approval_token": _normalize_text(kwargs.get("approval_token")),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "device_id": _normalize_text(kwargs.get("device_id") or self.device_id),
             "session_id": _normalize_text(kwargs.get("session_id") or self.session_id),
             "conversation_turn": _normalize_text(
                 kwargs.get("conversation_turn") or self.conversation_turn
@@ -139,6 +141,7 @@ def os_file_task(**kwargs: Any) -> BaseTool:
     """工厂函数：返回宿主机文件操作 LangChain 工具。"""
     return OsFileTaskTool(
         requester=_normalize_text(kwargs.get("requester")),
+        device_id=_normalize_text(kwargs.get("device_id")),
         session_id=_normalize_text(kwargs.get("session_id")),
         conversation_turn=_normalize_text(kwargs.get("conversation_turn")),
     )

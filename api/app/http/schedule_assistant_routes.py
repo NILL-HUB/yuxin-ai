@@ -578,6 +578,8 @@ def register_routes(quart_app):
             conversation_id=_field(str(payload.get("conversation_id") or "")),
             image_urls=_field(payload.get("image_urls") or []),
             confirm_deep_thinking=_field(bool(payload.get("confirm_deep_thinking", False))),
+            # 会话级设备绑定：缺省/None=不改动；空串=解绑；非空=绑定（归属校验在 service 层）
+            device_id=_field(payload.get("device_id")),
         )
         response = await _to_thread(
             _get_service(AssistantAgentService).chat, req, account

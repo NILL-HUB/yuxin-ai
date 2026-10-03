@@ -15,6 +15,9 @@ class AssistantAgentChat(Form):
     confirm_deep_thinking = BooleanField("confirm_deep_thinking", default=False)
     image_urls = ListField("image_urls", default=[])
     conversation_id = StringField("conversation_id", default="", validators=[Optional()])
+    # 会话级设备绑定（桌面设备 device_id）：
+    # - 缺省/None：不改动现有绑定；- 空串：解绑回自动解析；- 非空：绑定该校验通过的设备
+    device_id = StringField("device_id", default="", validators=[Optional()])
     query = StringField("query", validators=[
         DataRequired("用户提问query不能为空")
     ])
