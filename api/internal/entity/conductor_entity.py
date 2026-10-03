@@ -66,8 +66,8 @@ VALID_AGENT_POOLS = {
 class ConductorAgentTask:
     """指挥官分配给单个 Agent 的子任务。
 
-    工具选择不在指挥官层完成——Agent 执行时通过向量索引自行检索工具，
-    找不到合适工具时上报指挥官，由指挥官判断是否真的缺能力并决定回报用户。
+    工具选择不在指挥官层完成——Agent 执行时按子任务描述经 ToolSelectorService
+    自行检索并挂载工具，指挥官只负责指定 Agent 池与模型档位。
     """
     task_id: str                              # 任务唯一 ID（t1, t2, ...）
     title: str                                # 子任务标题
@@ -143,34 +143,6 @@ class ConductorPlan:
             "risk_level": self.risk_level,
             "estimated_cost_tier": self.estimated_cost_tier,
             "conductor_model_id": self.conductor_model_id,
-        }
-
-
-# =========================================================
-# 缺能力上报决策
-# =========================================================
-
-class EscalationAction(str, Enum):
-    """指挥官处理 Agent 上报的动作。"""
-    RETRY_RELAXED = "retry_relaxed"   # 放宽阈值让 Agent 重试
-    REPORT_USER = "report_user"       # 回报用户缺工具/需澄清
-    GIVE_UP = "give_up"               # 已重试过仍失败，放弃
-
-
-@dataclass
-class EscalationDecision:
-    """指挥官对 Agent 工具检索上报的处理决策。"""
-    action: str                              # EscalationAction 枚举值
-    message: str | None = None               # 给用户的消息（report_user 时必填）
-    reason: str = ""                         # 决策原因
-    relaxed_threshold: float | None = None   # 重试时放宽的阈值（retry_relaxed 时必填）
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "action": self.action,
-            "message": self.message,
-            "reason": self.reason,
-            "relaxed_threshold": self.relaxed_threshold,
         }
 
 

@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld('yujianwoDesktop', {
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('desktop:set-launch-at-login', enabled),
   getLaunchAtLogin: () => ipcRenderer.invoke('desktop:get-launch-at-login'),
   checkForUpdates: () => ipcRenderer.invoke('desktop:check-for-updates'),
+  quitAndInstall: () => ipcRenderer.invoke('desktop:quit-and-install'),
+  onUpdateStatus: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, payload) => callback(payload)
+    ipcRenderer.on('desktop:update-status', listener)
+    return () => ipcRenderer.removeListener('desktop:update-status', listener)
+  },
 })
 
 // 自绘标题栏窗口控制（titleBarStyle:hidden + titleBarOverlay 方案）

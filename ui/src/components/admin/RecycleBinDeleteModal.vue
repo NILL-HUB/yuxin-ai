@@ -5,7 +5,8 @@ import { useI18n } from 'vue-i18n'
 /**
  * 统一删除确认弹窗：提示资源将进入回收站，并选择留存（销毁）天数。
  *
- * 后端约定：删除资源统一走回收站，留存天数仅允许 7/30/90/180（默认 30）。
+ * 后端约定：删除资源统一走回收站，留存天数仅允许 7/30/90/180；
+ * 人工手动删除默认 7 天（Agent 代删由后端固定 30 天）。
  * hint 可覆盖默认提示文案（用户端删除提示与管理员侧不同）。
  */
 const props = withDefaults(
@@ -32,12 +33,13 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const RETENTION_CHOICES = [7, 30, 90, 180]
-const retentionDays = ref(30)
+const DEFAULT_RETENTION_DAYS = 7
+const retentionDays = ref(DEFAULT_RETENTION_DAYS)
 
 watch(
   () => props.visible,
   (visible) => {
-    if (visible) retentionDays.value = 30
+    if (visible) retentionDays.value = DEFAULT_RETENTION_DAYS
   },
 )
 

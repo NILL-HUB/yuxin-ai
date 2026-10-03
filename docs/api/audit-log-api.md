@@ -46,6 +46,9 @@
 | `admin_user_name` | string | 否 | 操作管理员展示名（`username` 优先，回退 `name`）；无法解析时为空串 |
 | `account_id` | string(uuid) | 是 | 关联用户账号 ID（用户侧工具调用审计时记录） |
 | `account_name` | string | 否 | 关联账号展示名（`name` 优先，回退 `email`）；无法解析时为空串 |
+| `actor_type` | string | 否 | 操作主体类型：`human`（管理员）/ `agent`（管理端 Agent 代执行）；默认 `human` |
+| `agent_id` | string(uuid) | 是 | 代执行的 Agent ID（`actor_type=agent` 时有值，否则 `null`） |
+| `agent_name` | string | 否 | Agent 展示名（列表接口按 `agent_id` 批量回源；无法解析时为空串） |
 | `action` | string | 否 | 操作类型（见 §四枚举） |
 | `resource_type` | string | 否 | 资源类型（见 §四枚举） |
 | `resource_id` | string | 否 | 资源标识；通常是资源 UUID，也可能是业务键（如 `billing_config.code`、`payment_provider_config.provider`）或逗号拼接的多 ID（`storage.file_delete`） |
@@ -70,6 +73,9 @@
         "admin_user_name": "admin",
         "account_id": null,
         "account_name": "",
+        "actor_type": "human",
+        "agent_id": null,
+        "agent_name": "",
         "action": "delete",
         "resource_type": "customer_user",
         "resource_id": "229261e4-2211-4463-ad26-72703ba1419d",
@@ -126,16 +132,17 @@
 | `policy_change_draft` | `policy_change_apply`、`policy_change_rollback` |
 | `tool` | `tool_invocation` |
 | `memory` | `ghost_memory_cleanup`（系统自愈脚本，`admin_user_id=NULL`，`resource_id` 为空） |
+| `builtin_tool` / `schedule_task`（板块名） | `admin_agent.<board>.<action>`；后缀 `.denied`（权限不足被拒）、`.drafted`（`supervised` 档转为变更草稿），`actor_type=agent` |
 
 > 点分复合 action（如 `storage.file_delete`）前端按「资源 · 动作」组合翻译；未知值回退语义字典。
 
 ### 4.2 `resource_type`
 
-当前写入 `audit_log` 的取值：`admin_user`、`role`、`customer_user`、`plan`、`billing_config`、`redeem_code`、`redeem_code_batch`、`skill`、`mcp`、`storage_file`、`system_knowledge`、`distribution_relation`、`purchase_order`、`withdrawal_request`、`return_request`、`payment_provider_config`、`policy_change_draft`、`tool`、`memory`。
+当前写入 `audit_log` 的取值：`admin_user`、`role`、`customer_user`、`plan`、`billing_config`、`redeem_code`、`redeem_code_batch`、`skill`、`mcp`、`storage_file`、`system_knowledge`、`distribution_relation`、`purchase_order`、`withdrawal_request`、`return_request`、`payment_provider_config`、`policy_change_draft`、`tool`、`memory`、`builtin_tool`、`schedule_task`（后两者为管理端 Agent 板块动作的 `resource_type`）。
 
 > **注意**：`resource_name` 回源映射（`_RESOURCE_NAME_LOOKUPS`，见 §三）共登记 **30** 个类型，与审计实际取值**不完全重合**：
-> - 审计已产生但**未登记**回源的类型（`withdrawal_request`、`policy_change_draft`、`memory`）只依赖快照取名；
-> - 映射额外预留了当前由**回收站**（`recycle_bin` 表）写入、审计暂未产生的类型（`app`、`workflow`、`api_tool`、`knowledge_base`、`knowledge_document`、`conversation`、`schedule_task`、`external_data_source`、`upload_file`、`model`、`model_provider`、`orchestration_flag`、`prompt_template`，以及 `customer_user` 的别名 `account`），供未来这些类型纳入审计时即插即用。
+> - 审计已产生但**未登记**回源的类型（`withdrawal_request`、`policy_change_draft`、`memory`、`builtin_tool`）只依赖快照取名；
+> - 映射额外预留了当前由**回收站**（`recycle_bin` 表）写入、审计暂未产生的类型（`app`、`workflow`、`api_tool`、`knowledge_base`、`knowledge_document`、`conversation`、`external_data_source`、`upload_file`、`model`、`model_provider`、`orchestration_flag`、`prompt_template`，以及 `customer_user` 的别名 `account`），供未来这些类型纳入审计时即插即用。
 >
 > 未登记类型仅在快照无名称时降级为空名，不影响列表返回。
 > 前端另有别名映射：`skill_package → skill`、`mcp_provider → mcp`、`storage → storage_file`。
@@ -202,6 +209,7 @@
 - 订单 / 提现 / 售后 / 支付配置：`admin_commerce_routes.py` 的 `_write_audit`
   > 管理端已于 2026-09-14 移除分销能力（`distribution/*` 与 `PUT /admin/users/<id>/superior` 端点删除），`_write_audit` 不再产生 `bind_superior` / `unbind_superior` 记录；历史记录仍可读（`action` 与 `resource_type=distribution_relation` 的渲染标签保留）。
 - 工具调用审计：`ToolInvocationAuditService`（`resource_type=tool`，同时写 `account_id`）
+- 管理端 Agent 板块动作：`AdminAgentExecutionService`（`action=admin_agent.<board>.<action>`，后缀 `.denied` / `.drafted`；`resource_type` 为板块名，`actor_type=agent` + `agent_id`）
 - 记忆自愈脚本：`action=ghost_memory_cleanup`、`resource_type=memory`、`admin_user_id=NULL`
 
 ## 相关文档

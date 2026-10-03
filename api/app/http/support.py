@@ -719,6 +719,7 @@ def _admin_route_permission(method: str, path: str) -> str | None:
         ("workflows",): ("workflow", "workflow:read", "workflow:create", "workflow:update", "workflow:delete"),
         ("skills",): ("skill", "skill:read", "skill:create", "skill:update", "skill:delete"),
         ("mcp",): ("mcp", "mcp:read", "mcp:create", "mcp:update", "mcp:delete"),
+        ("cli",): ("cli", "cli:read", "cli:create", "cli:update", "cli:delete"),
         ("api-tools",): ("tool", "tool:read", "tool:create", "tool:update", "tool:delete"),
         ("tools",): ("tool", "tool:read", "tool:create", "tool:update", "tool:delete"),
     }
@@ -759,12 +760,12 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     # 支付配置。
     if _admin_match(segments, ("admin", "payment-configs")):
         return "payment_config:read" if method == "GET" else "payment_config:manage"
-    # 邮件/短信发送配置、桌面客户端连接配置、全局控制配置（系统配置域）。
+    # 邮件/短信发送配置、桌面客户端连接配置、桌面端更新检查、全局控制配置（系统配置域）。
     if _admin_match(segments, ("admin", "mail-config")) or _admin_match(
         segments, ("admin", "sms-config")
     ) or _admin_match(segments, ("admin", "desktop-client-config")) or _admin_match(
-        segments, ("admin", "global-control-config")
-    ):
+        segments, ("admin", "desktop-update")
+    ) or _admin_match(segments, ("admin", "global-control-config")):
         return "system_config:manage"
 
     return None

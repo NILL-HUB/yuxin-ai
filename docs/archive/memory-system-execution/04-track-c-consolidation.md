@@ -3,7 +3,7 @@
 
 > **创建日期**：2026-07-09
 > **Track**：C（巩固引擎，C1-C5）
-> **关联架构**：[03-consolidation-skill-policy-api.md](../../03-consolidation-skill-policy-api.md) | [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) | [architecture-design.md Ch16](../../architecture-design.md) | [00-overview.md](./00-overview.md)
+> **关联架构**：[03-consolidation-skill-policy-api.md](../../prd/memory-system/03-consolidation-skill-policy-api.md) | [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) | [architecture-design.md Ch16](../../prd/architecture-design.md) | [00-overview.md](./00-overview.md)
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除；Track C 任务在 Track A（写入路径）完成后启动（T2 时机），与 Track B 并行。
 > **子代理**：Agent-Consolidate
 
@@ -169,9 +169,9 @@ class ConsolidationEngine:
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md §7.1 ConsolidationEngine 完整 Python 实现](../../03-consolidation-skill-policy-api.md)
-- [03-consolidation-skill-policy-api.md §7 巩固引擎（五阶段流程）](../../03-consolidation-skill-policy-api.md)
-- [architecture-design.md §16.2 脑启发架构映射（睡眠巩固）](../../architecture-design.md)
+- [03-consolidation-skill-policy-api.md §7.1 ConsolidationEngine 完整 Python 实现](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [03-consolidation-skill-policy-api.md §7 巩固引擎（五阶段流程）](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [architecture-design.md §16.2 脑启发架构映射（睡眠巩固）](../../prd/architecture-design.md)
 
 ---
 
@@ -274,8 +274,8 @@ class ConflictDetector:
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md §7.2 ConflictDetector 完整 Python 实现](../../03-consolidation-skill-policy-api.md)
-- [03-consolidation-skill-policy-api.md §7 巩固引擎（阶段 2 冲突检测）](../../03-consolidation-skill-policy-api.md)
+- [03-consolidation-skill-policy-api.md §7.2 ConflictDetector 完整 Python 实现](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [03-consolidation-skill-policy-api.md §7 巩固引擎（阶段 2 冲突检测）](../../prd/memory-system/03-consolidation-skill-policy-api.md)
 
 ---
 
@@ -358,8 +358,8 @@ class RepresentationRepulsion:
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md §7.3 RepresentationRepulsion 完整 Python 实现](../../03-consolidation-skill-policy-api.md)
-- [architecture-design.md §16.2 脑启发架构映射（反向重播）](../../architecture-design.md)
+- [03-consolidation-skill-policy-api.md §7.3 RepresentationRepulsion 完整 Python 实现](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [architecture-design.md §16.2 脑启发架构映射（反向重播）](../../prd/architecture-design.md)
 
 ---
 
@@ -460,9 +460,9 @@ celery_app.conf.task_routes = {
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md §7.1 Celery 任务定义](../../03-consolidation-skill-policy-api.md)
-- [03-consolidation-skill-policy-api.md §7 巩固引擎（定时任务）](../../03-consolidation-skill-policy-api.md)
-- [02-storage-and-retrieval.md §降级策略（Celery 没跑时的降级行为）](../../02-storage-and-retrieval.md)
+- [03-consolidation-skill-policy-api.md §7.1 Celery 任务定义](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [03-consolidation-skill-policy-api.md §7 巩固引擎（定时任务）](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [02-storage-and-retrieval.md §降级策略（Celery 没跑时的降级行为）](../../prd/memory-system/02-storage-and-retrieval.md)
 
 ---
 
@@ -526,8 +526,8 @@ async def consolidate_memory(
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md §10 API 接口定义（/memory/consolidate）](../../03-consolidation-skill-policy-api.md)
-- [03-consolidation-skill-policy-api.md §10.1 FastAPI 路由定义（consolidate_memory）](../../03-consolidation-skill-policy-api.md)
+- [03-consolidation-skill-policy-api.md §10 API 接口定义（/memory/consolidate）](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [03-consolidation-skill-policy-api.md §10.1 FastAPI 路由定义（consolidate_memory）](../../prd/memory-system/03-consolidation-skill-policy-api.md)
 
 ---
 

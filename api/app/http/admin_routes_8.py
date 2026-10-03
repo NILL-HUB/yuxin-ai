@@ -387,6 +387,33 @@ def _preview_batch_bind_feature_model(_model_type, model_config_id):
     return {"updated": updated, "skipped": skipped, "items": items, "model": model}
 
 
+def _fetch_desktop_update_latest(feed_url: str) -> dict:
+    """拉取更新包目录下的 latest.yml，解析最新版本信息供 admin 核对。
+
+    这是「管理员检查是否有更新」的读取路径：读的是客户端检查更新时的同一份
+    latest.yml，因此展示结果即客户端将看到的版本与更新内容。
+    """
+    import requests
+    import yaml
+
+    base = str(feed_url or "").strip().rstrip("/")
+    latest_url = f"{base}/latest.yml"
+    resp = requests.get(latest_url, timeout=15)
+    resp.raise_for_status()
+    meta = yaml.safe_load(resp.text) or {}
+    files = meta.get("files") if isinstance(meta.get("files"), list) else []
+    first_file = files[0] if files else {}
+    return {
+        "ok": True,
+        "feed_url": base,
+        "latest_url": latest_url,
+        "latest_version": str(meta.get("version") or ""),
+        "release_notes": str(meta.get("releaseNotes") or ""),
+        "release_date": str(meta.get("releaseDate") or ""),
+        "package_path": str(meta.get("path") or first_file.get("url") or ""),
+    }
+
+
 def register_routes(quart_app):
     """把批次 8 的 Admin 端点注册到 quart_app（幂等，重复调用直接返回）。"""
     global _registered
@@ -1884,6 +1911,35 @@ def register_routes(quart_app):
         except ValueError as exc:
             return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
         return a._ok({"configs": cfg})
+
+    @quart_app.post("/admin/desktop-update/check")
+    async def admin_desktop_update_check():
+        """检查更新包目录下是否有可下发的版本（读 latest.yml 解析）。
+
+        供管理员在开启推送前核对上游版本与更新内容；不修改任何状态。
+        """
+        from app.http import asgi_app as a
+        from internal.service.desktop_client_config_service import DesktopClientConfigService
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        cfg = await a._to_thread(a._get_service(DesktopClientConfigService).get_config)
+        feed_url = str(cfg.get("update_feed_url") or "").strip().rstrip("/")
+        if not feed_url:
+            return a._json_resp(
+                code="validate_error",
+                message="请先配置更新包地址",
+                data={},
+                status=400,
+            )
+
+        try:
+            result = await a._to_thread(_fetch_desktop_update_latest, feed_url)
+        except Exception as exc:
+            return a._ok({"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
+        return a._ok(result)
 
     # ------------------------------------------------------------------
     # admin 全局控制配置（global_control_config 单行 JSONB）：读取 / 更新

@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 # 关键词快速匹配的最小查询长度（短查询留给 LLM）
 _MIN_QUERY_LEN_FOR_KEYWORD = 4
-# 关键词快速匹配的最大命中数（避免过选）
-_MAX_KEYWORD_HITS = 3
+# 关键词快速匹配的最大命中数（避免过选；与档位上限取 min，档位高时可多给）
+_MAX_KEYWORD_HITS = 6
 # 工具名直接出现的最小长度（避免短名误命中，如 "t" / "ai"）
 _MIN_TOOL_NAME_LEN_FOR_SUBSTRING = 4
 # 描述子串匹配的最小长度（避免短子串误命中）

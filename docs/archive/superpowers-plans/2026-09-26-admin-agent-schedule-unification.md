@@ -1,5 +1,7 @@
 # 管理员 Agent 定时任务统一与无人值守自治 Implementation Plan
 
+> **已归档（2026-10-03）**：五阶段（L1~L5）已全部落地。当前契约见 [admin-agents-api.md](../../api/admin-agents-api.md)（`per_run_tokens` / `admin_agent_chat` 通道）与 [01-agent-tool-pool.md](../../prd/modules/01-agent-tool-pool.md)（`schedule_task` 板块）；本文档仅保留实施过程，**不代表当前实现**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 修复 admin Agent 的 token 预算记账断链，让定时唤醒走带记忆的多步骤对话链，加入单次唤醒 token 硬顶，最终让 Agent 能自建/删除定时任务并收敛到统一的平台入口。
@@ -10,7 +12,7 @@
 
 **前置：** 本计划 5 个阶段必须按 L1 → L2 → L3 → L4 → L5 顺序执行（L1 不做则 L3/L4 的预算保护形同虚设）。
 
-**Spec:** `docs/superpowers/specs/2026-09-26-admin-agent-schedule-unification-design.md`
+**Spec:** `docs/archive/superpowers-specs/2026-09-26-admin-agent-schedule-unification-design.md`
 
 ---
 

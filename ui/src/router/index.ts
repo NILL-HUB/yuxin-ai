@@ -194,6 +194,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['mcp:read'] },
             },
             {
+              path: 'cli',
+              name: 'admin-cli',
+              component: () => import('@/views/admin/AdminCliView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['cli:read'] },
+            },
+            {
               path: 'skills',
               name: 'admin-skills',
               component: () => import('@/views/admin/AdminSkillsView.vue'),

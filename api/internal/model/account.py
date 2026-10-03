@@ -78,6 +78,11 @@ class Account(Base):
         return self.status == "deleted"
 
     @property
+    def is_recycled(self) -> bool:
+        """账号是否已被删除并进入回收站（锁定态：禁止登录，数据与资产保留，可恢复）。"""
+        return self.status == "recycled"
+
+    @property
     def assistant_agent_conversation(self) -> "Conversation":
         """只读属性，返回当前账号的辅助Agent会话"""
         conversation = db.session.query(Conversation).get(

@@ -8,6 +8,7 @@
 """
 
 from contextlib import contextmanager
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -15,7 +16,11 @@ import pytest
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.model import DesktopDevice
 from internal.service import desktop_bridge_resolver as resolver
-from internal.service.desktop_device_service import DesktopDeviceService
+from internal.service.desktop_device_service import (
+    DEVICE_ONLINE_TTL_SECONDS,
+    DesktopDeviceService,
+    _utcnow_naive,
+)
 from internal.service.tool_credential_encryptor import _encrypt_value
 
 
@@ -275,3 +280,87 @@ def test_resolver_returns_none_without_any_source(monkeypatch):
     monkeypatch.delenv("DESKTOP_BRIDGE_TOKEN", raising=False)
 
     assert resolver.resolve_desktop_bridge(None) is None
+
+
+class _FilterCapturingQuery(_QueryStub):
+    """记录 filter 收到的表达式。
+
+    _QueryStub.filter 是空实现（不执行真实 SQL），因此租约这类**发生在 SQL 层**的
+    条件对普通 stub 完全不可见——必须捕获表达式本身，否则租约失效不会被单测发现。
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.filters = []
+
+    def filter(self, *args, **_kwargs):
+        self.filters.extend(args)
+        return self
+
+
+def test_resolve_bridge_filters_by_heartbeat_lease():
+    """resolve_bridge 必须把租约作为 SQL 过滤条件，而非仅依赖 status 字段。
+
+    回归保护：设备关机/休眠后 status 仍是 online（没有任何进程会去改它），
+    只有 last_seen_at 租约才能识别离线，避免任务被派给已关机的设备。
+    """
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        bridge_origin="http://host.docker.internal:9876",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        is_default=True,
+        status="online",
+        last_seen_at=_utcnow_naive(),
+    )
+    query = _FilterCapturingQuery(first_result=device)
+    session = _SessionStub([query])
+
+    _service(session).resolve_bridge(device.account_id)
+
+    rendered = " ".join(str(expr) for expr in query.filters)
+    assert "last_seen_at" in rendered
+    assert "status" in rendered
+
+
+@pytest.mark.parametrize(
+    "age_seconds, expected",
+    [
+        (0, "online"),
+        (DEVICE_ONLINE_TTL_SECONDS - 5, "online"),
+        # 不写死在 TTL 精确边界：构造时刻与判定时刻各取一次 now，边界值会抖动
+        (DEVICE_ONLINE_TTL_SECONDS + 5, "offline"),
+    ],
+)
+def test_effective_status_marks_stale_device_offline(age_seconds, expected):
+    """展示态读时计算：心跳超过租约即显示 offline，与 resolve_bridge 判定保持一致。"""
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        status="online",
+        last_seen_at=_utcnow_naive() - timedelta(seconds=age_seconds),
+    )
+
+    assert DesktopDeviceService._effective_status(device) == expected
+
+
+def test_effective_status_preserves_revoked():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        status="revoked",
+        last_seen_at=_utcnow_naive(),
+    )
+
+    assert DesktopDeviceService._effective_status(device) == "revoked"
+
+
+def test_effective_status_treats_missing_last_seen_as_offline():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        status="online",
+        last_seen_at=None,
+    )
+
+    assert DesktopDeviceService._effective_status(device) == "offline"

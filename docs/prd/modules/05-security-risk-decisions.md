@@ -60,7 +60,63 @@
 | 过度设计 | 一次性做全平台 | 分阶段上线，保留兼容路径 |
 | 破坏现有功能 | 改动 AssistantAgentService 影响旧链路 | Feature Flag、回归测试、fallback 到旧流程 |
 
+### 21.1 资源删除与回收站统一策略（跨模块，2026-09-30）
 
+**单一入口**：所有资源删除统一经 `RecycleBinService.delete_resource()`（`api/internal/service/recycle_bin_service.py`），
+按类型分派到 `recycle_bin_handlers.py` 的「快照 / 物理删除 / 恢复 / 到期销毁」四件套；
+到期由 celery `internal.task.recycle_bin_tasks.run_recycle_bin_expiration`（每小时，见 `config/config.py` 的 `recycle-bin-expiration`）扫描 `expire_at` 执行销毁，成功后标记 `expired`，失败保持 `pending` 待重试。
+
+**资源类型（15 种，`RESOURCE_TYPES`）**：`knowledge_base` / `system_prompt` / `app` / `workflow` / `skill` / `mcp` / `api_tool` /
+`knowledge_document` / `upload_file` / `os_file` / `schedule_task` / `external_data_source` / `conversation` /
+`memory` / `account`。其中 `account` 为 **admin 专属**（`ADMIN_ONLY_RESOURCE_TYPES`，user/agent 来源被 `ValidateErrorException` 拒绝），
+其余用户可见类型（`USER_VISIBLE_RESOURCE_TYPES`）入用户回收站。
+
+**留存期策略（2026-09-30 反转，此前为「人工 30 / agent 7」）**：
+
+| 删除来源 | 留存期 | 说明 |
+|---|---|---|
+| 人工手动删除（`admin` / `user`） | **7 天**（前端可选 7/30/90/180） | `DEFAULT_RETENTION_DAYS = 7` |
+| Agent 代删（`agent` / `admin_agent`） | **30 天**（`agent` 固定；`admin_agent` 可配但默认 30） | `AGENT_RETENTION_DAYS = 30` |
+
+删除点位分类（2026-09-30 全量盘点）：
+
+- **已入站**：知识库/文档（用户与系统）、上传文件（存储迁移）、本机文件（agent 代删，`record_os_file_deletion`）、会话、
+  记忆（`memory_governor`）、定时任务（含单次任务执行后自动归档）、外部数据源、应用/工作流/技能/MCP/API 工具/系统提示词（admin 侧）——22 个调用点。
+- **账号（本次新增入站）**：`AdminCustomerUserService.delete_customer_user`。
+- **合理硬删（不入站）**：回收站自身物理删除实现、随父资源级联的子表（会话变量/角色权限/套餐权益等）、
+  admin 系统配置项（模型池/密钥/档位/子池/治理策略/Agent 池）、记忆 purge 清尾、`cleanup_expired_records`。
+
+**账号（`account`）三段生命周期**——与其他资源「入站即物理删原表」不同：
+
+1. **入站 = 锁定**（`physical_delete_account`）：`account.status = 'recycled'` + 批量吊销全部未撤销会话（`account_session.revoked_at`）；
+   **不删任何行、不清任何数据与资产**。登录闸门 `AccountService._ensure_account_enabled` 拦截 `recycled`
+   （与历史 `deleted` 同等拒绝，覆盖密码/验证码/OAuth 全部登录路径），用户**当即无法登录**；
+   锁定期定时任务派发被排除（`ScheduleTaskService.scan_due_tasks` 过滤 `deleted` / `recycled` 归属账号——
+   不改任务 `enabled`，恢复后自动重新纳入，无需还原标记）。
+   admin 用户列表 `list_customer_users` 默认同时排除 `deleted` / `recycled`（可按 status 显式查询）。
+2. **恢复**（`restore_account`）：把 `status` 回写快照值（资产未曾清理，无需重建；密码字段在快照内，恢复后可正常登录）。
+   入口仅回收站 `restore_item`；`enable_customer_user` / `disable_customer_user` 显式拒绝 `recycled`，
+   避免「已启用但仍会被到期销毁」的语义错位。
+3. **到期销毁 = 全量清空**（`purge_account`）：
+   - **资产**：知识库（含文档/分段/向量/上传文件记录 + 底层存储对象与配额释放）、孤立上传文件、应用、工作流、
+     会话（含消息/思考/变量）、记忆（PG `user_memory` + Neo4j `MemoryNode/Episode/Entity/SemanticMemory/Community`、
+     独占 Skill、画像节点）、定时任务（含运行记录）、外部数据源、自建 `api_tool` / `mcp`；
+   - **附属数据**：`account_oauth` / `account_session` / `account_storage_usage` / `api_key` / `desktop_device` /
+     `file_center_entry` / 知识库与文档标签 / `routing_log` / 工作流结果与运行 / 分销（referral_code、
+     distribution_relation、balance_account/transaction、withdrawal_request）/ 计费（purchase_order、return_request、
+     auto_renewal、membership、credit_account/transaction、billing_reconciliation）/ `tool_confirmation` /
+     `video_visual_embedding` / `tag`+`app_tag`+`workflow_tag`；
+   - **缓存**：Redis 主体键（`memory:digest:` / `skill:*` / `nudge:*`，经 `MemoryGovernor._clear_all_user_cache`）；
+   - 最后**物理删除 `account` 行**（先将 `admin_user.account_id` / `audit_log.account_id` 置空以断开外键）——**不留孤儿**。
+   - **审计例外**：`audit_log` / `tool_invocation_audit` 按合规留痕保留，仅断开与账号的引用。
+
+**历史 `deleted` 状态**：旧注销路径（不可逆 `status='deleted'`）保留兼容——登录拦截与既有数据不动，
+后台列表仍可按 `status=deleted` 查询。新删除一律走 `recycled`。
+`AdminCustomerUserService._cleanup_user_runtime_data` 已随本改造删除（PG/Neo4j/Redis 清理职责整体移交 `purge_account`，
+清理时点从「删除即清」改为「到期销毁才清」）。
+
+**接口锚点**：admin 删除用户 `POST /admin/users/<account_id>/delete`（可选 `retention_days`，默认 7 天，
+`admin_routes_7.py`）；回收站恢复 `RecycleBinService.restore_item`（admin 侧）/ `restore_user_item`（用户侧）。
 
 ## 22. Feature Flag 与回滚策略
 

@@ -3,6 +3,7 @@ import { computed, ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import DocumentIndexNotification from '@/components/DocumentIndexNotification.vue'
 import AgentNotification from '@/components/AgentNotification.vue'
 import DesktopTitleBar from '@/components/DesktopTitleBar.vue'
+import DesktopUpdateModal from '@/components/DesktopUpdateModal.vue'
 import { useDocumentIndexNotificationWebSocket } from '@/hooks/use-document-index-notification-websocket'
 import { useDocumentIndexNotificationPolling } from '@/hooks/use-document-index-notification-polling'
 import { useAgentNotificationWebSocket } from '@/hooks/use-agent-notification-websocket'
@@ -212,6 +213,8 @@ onUnmounted(() => {
     </div>
     <!-- 桌面自绘标题栏：fixed 悬浮于窗口顶部（仅 Electron 环境渲染） -->
     <desktop-title-bar v-if="isDesktop" />
+    <!-- 桌面端更新弹窗：发现新版本时展示版本与更新历程（下载/安装由主进程自动完成） -->
+    <desktop-update-modal v-if="isDesktop" />
   </a-config-provider>
 </template>
 

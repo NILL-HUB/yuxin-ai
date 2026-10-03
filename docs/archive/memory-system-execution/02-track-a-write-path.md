@@ -4,7 +4,7 @@
 > **创建日期**：2026-07-09
 > **Track 负责人**：Agent-Write
 > **前置条件**：Phase 0（I1-I6）已完成，Neo4j / PostgreSQL pgvector / Redis 容器可用，统一数据模型 `memory_models.py` 已落地
-> **关联架构**：[01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §2 写入路径 | [00-overview.md](./00-overview.md)
+> **关联架构**：[01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §2 写入路径 | [00-overview.md](./00-overview.md)
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除
 
 ---
@@ -34,7 +34,7 @@ entity_resolution ── 三信号融合（vector + BM25 + LLM）判断新实体
 
 **关键设计决策**：
 
-1. **自动写入替代逐条确认**：SalienceScorer 评分后自动写入，无需用户确认。用户通过图可视化界面事后管理（详见 [02-storage-and-retrieval.md](../02-storage-and-retrieval.md)）。
+1. **自动写入替代逐条确认**：SalienceScorer 评分后自动写入，无需用户确认。用户通过图可视化界面事后管理（详见 [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md)）。
 2. **完全替代旧系统**：旧路径 `assistant_agent_service → LongTermMemoryService → MemoryCandidateExtractor → MemoryConfidenceTracker → 用户确认 → UserMemoryService.remember()` 全部删除，不做向后兼容。
 3. **新路径**：`assistant_agent_service → MemoryWriteService.write_from_conversation() → SalienceScorer.score() → LedgerWriter.write_*()`。
 
@@ -172,9 +172,9 @@ class ScoreFactors:
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §1.5 SalienceResult
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §2.1 WritePath 枚举与 ScoreFactors
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §2.2 SalienceScorer
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §1.5 SalienceResult
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §2.1 WritePath 枚举与 ScoreFactors
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §2.2 SalienceScorer
 
 ---
 
@@ -313,9 +313,9 @@ class LedgerWriter:
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §1.3 MemoryNode（Episode / Entity）
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §1.4 MemoryEdge（四时间戳双时间模型）
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §2.3 LedgerWriter
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §1.3 MemoryNode（Episode / Entity）
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §1.4 MemoryEdge（四时间戳双时间模型）
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §2.3 LedgerWriter
 
 ---
 
@@ -439,7 +439,7 @@ def _levenshtein_distance(s1: str, s2: str) -> int: ...
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §2.4 TKG 实体消解
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §2.4 TKG 实体消解
 
 ---
 
@@ -528,7 +528,7 @@ class MemoryHandler:
 ### 关联架构文档章节
 
 - [00-overview.md](./00-overview.md) §代码目录结构规划（memory_handler.py 定位）
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §2 写入路径
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §2 写入路径
 
 ---
 
@@ -635,7 +635,7 @@ class AssistantAgentService:
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../01-data-models-and-write-path.md) §旧系统替代说明
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §旧系统替代说明
 - [00-overview.md](./00-overview.md) §子代理委派策略（Agent-Write 负责 Track A）
 
 ---

@@ -1,6 +1,8 @@
 # MCP 配置表单化改造（批次 1）设计
 
-> 状态：在途（实现中）
+> **已归档（2026-10-03）**：批次 1 已全部落地——共享层 `ui/src/components/config-editors/*`（KeyValueEditor / OrderedArgListEditor / TagListEditor / ToolSchemaBuilder / McpTemplatePicker / config-parse）、两个 MCP 主弹窗与 `ImportMcpModal` 私有 KV 收编、掩码覆盖缺陷修复（`mcp-binding-source.resolveBindingCredentials`）、`AdminStorageView` 硬编码文案改 i18n；单测（config-parse / KeyValueEditor+OrderedArgListEditor / ToolSchemaBuilder+模板预填 / binding-source）与 i18n parity 全绿。**端到端验收（选百炼模板 → 应用内真实调用）未在本环境复验**。本文档仅保留设计过程与决策依据，**不代表当前实现**。
+
+> 状态：已落地（2026-10-03 归档；批次 2+ 的 7 个非 MCP 配置点另行立项，未实施）
 > 背景：仓库内存在 11 处「要求管理员手工输入原始 JSON / 逗号分隔列表」的配置点，其中 MCP 相关最集中、最易出错，且同一组字段在 2 个组件里各抄一份解析逻辑。本设计为「配置项填写方式语义化 / 自动化」改造的**批次 1**，只覆盖 MCP；其余批次另行立项。
 
 ## 1. 问题与判定

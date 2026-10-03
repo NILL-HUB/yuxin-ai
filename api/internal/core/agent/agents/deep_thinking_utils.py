@@ -1,7 +1,6 @@
 """DeepThinkingAgent 通用工具函数。"""
 from __future__ import annotations
 
-import logging
 import os
 import re
 import textwrap
@@ -13,30 +12,6 @@ from internal.core.agent.entities.deep_thinking_entity import (
     StructuredDocumentOutlinePlan,
     StructuredDocumentSectionPlan,
 )
-
-logger = logging.getLogger(__name__)
-
-
-def read_positive_int_env(env_name: str, default: int, *, minimum: int | None = None) -> int:
-    raw_value = (os.getenv(env_name) or "").strip()
-    if not raw_value:
-        return default
-
-    try:
-        parsed_value = int(raw_value)
-    except ValueError:
-        logger.warning("%s=%r 无法解析为整数，使用默认值 %s", env_name, raw_value, default)
-        return default
-
-    if parsed_value <= 0:
-        logger.warning("%s=%r 必须大于 0，使用默认值 %s", env_name, raw_value, default)
-        return default
-
-    if minimum is not None and parsed_value < minimum:
-        logger.warning("%s=%r 小于最小值 %s，使用最小值 %s", env_name, raw_value, minimum, minimum)
-        return minimum
-
-    return parsed_value
 
 
 def extract_tagged_block_content(text: str, tag_name: str) -> str:

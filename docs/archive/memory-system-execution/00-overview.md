@@ -2,7 +2,7 @@
 # 记忆系统并行开发任务执行文档
 
 > **创建日期**：2026-07-09
-> **关联架构**：[architecture-design.md Ch16](../architecture-design.md) | [memory-system/ 子文档](./)
+> **关联架构**：[architecture-design.md Ch16](../../prd/architecture-design.md) | [memory-system/ 子文档](./)
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除
 
 ---

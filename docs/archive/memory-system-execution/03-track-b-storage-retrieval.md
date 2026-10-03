@@ -3,7 +3,7 @@
 
 > **创建日期**：2026-07-09
 > **Track**：B（存储与检索，B1-B8）
-> **关联架构**：[02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) | [architecture-design.md Ch16](../../architecture-design.md) | [00-overview.md](./00-overview.md)
+> **关联架构**：[02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) | [architecture-design.md Ch16](../../prd/architecture-design.md) | [00-overview.md](./00-overview.md)
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除；Track B 任务在 Track A（写入路径）完成后启动（T2 时机）。
 > **子代理**：Agent-Retrieve
 
@@ -130,9 +130,9 @@ class HebbianDecay:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §5.1 四级存储分层](../../02-storage-and-retrieval.md)
-- [02-storage-and-retrieval.md §5.2 HebbianDecay 完整 Python 实现](../../02-storage-and-retrieval.md)
-- [architecture-design.md §16.2 脑启发架构映射](../../architecture-design.md)
+- [02-storage-and-retrieval.md §5.1 四级存储分层](../../prd/memory-system/02-storage-and-retrieval.md)
+- [02-storage-and-retrieval.md §5.2 HebbianDecay 完整 Python 实现](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §16.2 脑启发架构映射](../../prd/architecture-design.md)
 
 ---
 
@@ -239,9 +239,9 @@ class ColdStorageManager:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §5.3 冷存储与 Key 重建](../../02-storage-and-retrieval.md)
-- [02-storage-and-retrieval.md §5.1 四级存储分层（L3 冷记忆）](../../02-storage-and-retrieval.md)
-- [architecture-design.md §16.2 脑启发架构映射](../../architecture-design.md)
+- [02-storage-and-retrieval.md §5.3 冷存储与 Key 重建](../../prd/memory-system/02-storage-and-retrieval.md)
+- [02-storage-and-retrieval.md §5.1 四级存储分层（L3 冷记忆）](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §16.2 脑启发架构映射](../../prd/architecture-design.md)
 
 ---
 
@@ -370,9 +370,9 @@ class MemoryRetriever:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §6.1 总流程图（System 1/2 双系统）](../../02-storage-and-retrieval.md)
-- [02-storage-and-retrieval.md §6.2 MemoryRetriever 完整 Python 实现](../../02-storage-and-retrieval.md)
-- [architecture-design.md §16.4 System 1 / System 2 双系统架构](../../architecture-design.md)
+- [02-storage-and-retrieval.md §6.1 总流程图（System 1/2 双系统）](../../prd/memory-system/02-storage-and-retrieval.md)
+- [02-storage-and-retrieval.md §6.2 MemoryRetriever 完整 Python 实现](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §16.4 System 1 / System 2 双系统架构](../../prd/architecture-design.md)
 
 ---
 
@@ -450,8 +450,8 @@ class SpreadActivation:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §6.3 SpreadActivation 完整 Python 实现](../../02-storage-and-retrieval.md)
-- [architecture-design.md §16.4 System 1 / System 2 双系统架构（System 2 图扩展）](../../architecture-design.md)
+- [02-storage-and-retrieval.md §6.3 SpreadActivation 完整 Python 实现](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §16.4 System 1 / System 2 双系统架构（System 2 图扩展）](../../prd/architecture-design.md)
 
 ---
 
@@ -552,9 +552,9 @@ class FunnelCompressor:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §6.4 FunnelCompressor 完整 Python 实现](../../02-storage-and-retrieval.md)
-- [02-storage-and-retrieval.md §6.1 总流程图（漏斗压缩环节）](../../02-storage-and-retrieval.md)
-- [architecture-design.md §16.4 System 1 / System 2 双系统架构](../../architecture-design.md)
+- [02-storage-and-retrieval.md §6.4 FunnelCompressor 完整 Python 实现](../../prd/memory-system/02-storage-and-retrieval.md)
+- [02-storage-and-retrieval.md §6.1 总流程图（漏斗压缩环节）](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §16.4 System 1 / System 2 双系统架构](../../prd/architecture-design.md)
 
 ---
 
@@ -657,9 +657,9 @@ class DigestManager:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §6.5 DigestManager 完整 Python 实现](../../02-storage-and-retrieval.md)
-- [02-storage-and-retrieval.md §5.1 四级存储分层（L0 Redis 工作缓冲）](../../02-storage-and-retrieval.md)
-- [architecture-design.md §16.4 System 1 / System 2 双系统架构（System 1 Digest）](../../architecture-design.md)
+- [02-storage-and-retrieval.md §6.5 DigestManager 完整 Python 实现](../../prd/memory-system/02-storage-and-retrieval.md)
+- [02-storage-and-retrieval.md §5.1 四级存储分层（L0 Redis 工作缓冲）](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §16.4 System 1 / System 2 双系统架构（System 1 Digest）](../../prd/architecture-design.md)
 
 ---
 
@@ -731,8 +731,8 @@ async def get_digest(
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md §10 API 接口定义（/memory/retrieve, /memory/digest）](../../03-consolidation-skill-policy-api.md)
-- [02-storage-and-retrieval.md §6.1 总流程图](../../02-storage-and-retrieval.md)
+- [03-consolidation-skill-policy-api.md §10 API 接口定义（/memory/retrieve, /memory/digest）](../../prd/memory-system/03-consolidation-skill-policy-api.md)
+- [02-storage-and-retrieval.md §6.1 总流程图](../../prd/memory-system/02-storage-and-retrieval.md)
 
 ---
 
@@ -823,9 +823,9 @@ class ResultSynthesizerService:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md §6.5 DigestManager（替代说明 v5.1：MemoryDigest 只替代 relevant_facts）](../../02-storage-and-retrieval.md)
-- [02-storage-and-retrieval.md §旧系统替代说明（token_buffer_memory 替代矩阵）](../../02-storage-and-retrieval.md)
-- [architecture-design.md §14 ResultSynthesizer 设计](../../architecture-design.md)
+- [02-storage-and-retrieval.md §6.5 DigestManager（替代说明 v5.1：MemoryDigest 只替代 relevant_facts）](../../prd/memory-system/02-storage-and-retrieval.md)
+- [02-storage-and-retrieval.md §旧系统替代说明（token_buffer_memory 替代矩阵）](../../prd/memory-system/02-storage-and-retrieval.md)
+- [architecture-design.md §14 ResultSynthesizer 设计](../../prd/architecture-design.md)
 
 ---
 

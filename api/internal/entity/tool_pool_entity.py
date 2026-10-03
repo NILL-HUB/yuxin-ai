@@ -18,6 +18,13 @@ BUILTIN_TOOL_SUB_POOLS = [
         "default_enabled": True,
     },
     {
+        "name": "cli",
+        "label": "CLI 工具",
+        "description": "通过本地 CLI Provider 暴露的工具池",
+        "visible_to_user": True,
+        "default_enabled": True,
+    },
+    {
         "name": "api",
         "label": "API 工具",
         "description": "通过 OpenAPI Schema 接入的工具池",

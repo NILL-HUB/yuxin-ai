@@ -19,6 +19,7 @@ export default  {
         external_data_source: 'External Data Source',
         conversation: 'Conversation',
         memory: 'Memory',
+        account: 'User Account',
       },
       deletedByTypes: {
         admin: 'Admin content',

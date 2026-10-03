@@ -316,7 +316,7 @@
 
 | 交付物 | 位置 |
 | --- | --- |
-| 注销路径补 Redis 清理（缺口八） | `api/internal/service/admin_customer_user_service.py`（`_cleanup_user_runtime_data` → `MemoryGovernor._clear_all_user_cache`） |
+| 注销路径补 Redis 清理（缺口八） | 原先落点为 `admin_customer_user_service.py`（`_cleanup_user_runtime_data` → `MemoryGovernor._clear_all_user_cache`）；**2026-09-30 已迁移**至账号到期销毁 `recycle_bin_handlers.purge_account`（删除改为「入回收站+锁定」，清理时点后移到销毁） |
 | Entity 聚合 `$cutoff` 绑定（缺口六） | `api/internal/service/memory/community_induction.py` |
 | ProfileGraphService 全方法主体化（缺口四） | `api/internal/service/memory/profile_graph.py` |
 | 写时冲突/执行钩子/实体消解主体化（缺口十四 a/b/c） | `write_time_conflict_resolver.py`、`post_execution_hook.py`、`entity_resolution.py` |

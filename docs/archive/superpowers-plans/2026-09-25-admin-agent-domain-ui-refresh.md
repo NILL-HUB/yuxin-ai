@@ -1,5 +1,7 @@
 # 管理端 Agent 治理域 UI 翻新 + 功能核查修复
 
+> **已归档（2026-10-03）**：该计划已落地（`ui/src/utils/admin-agent-display.ts` 已被 Agent 池/子池定义/Agent 列表与对话页复用；roadmap 记为 UX-9）。当前状态见 [execution-roadmap.md](../../prd/execution-roadmap.md)；本文档仅保留实施过程，**不代表当前实现**。
+
 - 状态：已完成
 - 日期：2026-09-25
 - 范围：`/admin/agents`（管理端 Agent 列表、对话）、`/admin/agent-pool`（Agent 池配置）、`/admin/sub-pool-definition`（子池定义）

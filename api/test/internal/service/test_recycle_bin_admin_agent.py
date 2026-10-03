@@ -72,7 +72,7 @@ class TestAdminAgentSource:
         assert item.snapshot.get("_agent_id") == str(agent_id)
 
     def test_admin_agent_retention_defaults_to_30_days(self, monkeypatch):
-        """admin_agent 来源留存默认 30 天（不是用户侧 agent 的 7 天）。"""
+        """admin_agent 来源留存默认 30 天（与用户侧 agent 同口径；人工手动删为 7 天）。"""
         svc, added = _service(monkeypatch)
         svc.delete_resource(
             resource_type="workflow",
@@ -106,7 +106,7 @@ class TestAdminAgentSource:
         assert added[0].retention_days == 30
 
     def test_user_visible_resource_can_still_use_agent_source(self, monkeypatch):
-        """既有 agent（用户侧）语义不受影响：仍固定 7 天。"""
+        """既有 agent（用户侧）语义：固定 30 天留存（agent 代删统一 30 天）。"""
         svc, added = _service(monkeypatch)
         svc.delete_resource(
             resource_type="os_file",
@@ -116,7 +116,7 @@ class TestAdminAgentSource:
             agent_id=uuid4(),
         )
         assert added[0].deleted_by_type == "agent"
-        assert added[0].retention_days == 7
+        assert added[0].retention_days == 30
 
     def test_agent_source_still_rejects_admin_only_resource(self, monkeypatch):
         """守卫：新分支不得放宽既有 agent 来源的约束（防越权回归）。"""
@@ -138,6 +138,29 @@ class TestAdminAgentSource:
                 resource_id=uuid4(),
                 deleted_by_type="admin_agent",
             )
+
+    def test_account_resource_is_admin_only(self, monkeypatch):
+        """账号（account）为 admin 专属：管理员可入站，user/agent 来源一律拒绝。"""
+        svc, added = _service(monkeypatch)
+        ok = svc.delete_resource(
+            resource_type="account",
+            resource_id=uuid4(),
+            deleted_by=uuid4(),
+            deleted_by_type="admin",
+        )
+        assert ok is True
+        assert added[0].resource_type == "account"
+        # 人工手动删除默认 7 天
+        assert added[0].retention_days == 7
+
+        for source in ("user", "agent"):
+            with pytest.raises(ValidateErrorException):
+                svc.delete_resource(
+                    resource_type="account",
+                    resource_id=uuid4(),
+                    deleted_by=uuid4(),
+                    deleted_by_type=source,
+                )
 
     def test_unknown_source_still_normalizes_to_admin(self, monkeypatch):
         """既有语义：未知来源静默归一为 admin（不破坏兼容）。"""

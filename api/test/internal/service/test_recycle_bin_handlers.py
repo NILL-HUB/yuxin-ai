@@ -439,3 +439,245 @@ def test_delete_documents_by_source_removes_matching_docs_and_segments(monkeypat
 
     assert count == 1
     assert removed["vector"] == [segment.id]
+
+
+# ---------------------------------------------------------------------------
+# account：用户账号（锁定模式）
+# 删除 = 锁定（status='recycled' + 吊销全部会话），不清数据与资产；
+# 恢复 = status 回写快照值；到期销毁 = 全量清空该账号资产与附属数据。
+# ---------------------------------------------------------------------------
+class _AccountQuery:
+    def __init__(self, session, model_name):
+        self._session = session
+        self._model_name = model_name
+
+    def filter(self, *_a, **_k):
+        return self
+
+    def one_or_none(self):
+        if self._model_name == "Account":
+            return self._session.account
+        return None
+
+    def update(self, values=None, **_k):
+        self._session.updated.append((self._model_name, values))
+        return 1
+
+    def delete(self, **_k):
+        self._session.deleted.append(self._model_name)
+        return 1
+
+
+class _AccountSession:
+    """按模型名分派的 session stub：记录 update/delete 调用。"""
+
+    def __init__(self, account):
+        self.account = account
+        self.updated: list = []
+        self.deleted: list = []
+
+    def query(self, model, *_a, **_k):
+        return _AccountQuery(self, getattr(model, "__name__", str(model)))
+
+
+def test_snapshot_account_returns_row_dict(monkeypatch):
+    from internal.model.account import Account
+
+    account = Account(id=uuid4(), status="active", name="张三", email="zhangsan@example.com")
+    session = _AccountSession(account)
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=session))
+
+    snapshot = handlers.snapshot_account(account.id)
+
+    assert snapshot is not None
+    main = snapshot["main"]
+    assert main["status"] == "active"
+    assert main["name"] == "张三"
+    # 密码等字段一并入快照，保证恢复后仍可登录
+    assert "password" in main and "password_salt" in main
+
+
+def test_snapshot_account_returns_none_when_missing(monkeypatch):
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=_AccountSession(None)))
+    assert handlers.snapshot_account(uuid4()) is None
+
+
+def test_physical_delete_account_locks_and_revokes_sessions(monkeypatch):
+    """入站 = 锁定：置 status='recycled' 并批量吊销未撤销会话，不删任何数据。"""
+    account = SimpleNamespace(id="acc-1", status="active")
+    session = _AccountSession(account)
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=session))
+
+    handlers.physical_delete_account("acc-1")
+
+    assert account.status == "recycled"
+    updated_models = [name for name, _ in session.updated]
+    assert "AccountSession" in updated_models
+    assert session.deleted == []
+
+
+def test_restore_account_restores_previous_status(monkeypatch):
+    account = SimpleNamespace(id="acc-1", status="recycled")
+    session = _AccountSession(account)
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=session))
+
+    assert handlers.restore_account({"main": {"id": "acc-1", "status": "active"}}) is True
+    assert account.status == "active"
+
+
+def test_restore_account_falls_back_to_active_without_snapshot_status(monkeypatch):
+    account = SimpleNamespace(id="acc-1", status="recycled")
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=_AccountSession(account)))
+
+    assert handlers.restore_account({"main": {"id": "acc-1"}}) is True
+    assert account.status == "active"
+
+
+def test_restore_account_returns_false_when_destroyed(monkeypatch):
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=_AccountSession(None)))
+    assert handlers.restore_account({"main": {"id": "gone", "status": "active"}}) is False
+
+
+def test_purge_account_clears_assets_aux_data_and_row(monkeypatch):
+    """到期销毁：清资产 + 清附属数据 + 解绑引用 + 物理删除账号行（无孤儿）。"""
+    import internal.service.memory.memory_governor as _governor_mod
+
+    account_id = uuid4()
+    session = _AccountSession(None)
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=session))
+
+    touched = []
+    monkeypatch.setattr(
+        handlers, "_purge_account_owned_resources", lambda aid: touched.append(str(aid))
+    )
+    monkeypatch.setattr(handlers, "_purge_account_neo4j", lambda aid: touched.append("neo4j"))
+
+    class _GovernorStub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def _clear_all_user_cache(self, owner_key):
+            touched.append("redis")
+            return 0
+
+    monkeypatch.setattr(_governor_mod, "MemoryGovernor", _GovernorStub)
+
+    handlers.purge_account({"main": {"id": str(account_id), "status": "recycled"}})
+
+    assert touched == [str(account_id), "neo4j", "redis"]
+    updated_models = [name for name, _ in session.updated]
+    assert "AdminUser" in updated_models
+    assert "AuditLog" in updated_models
+    assert "Account" in session.deleted
+
+
+def test_purge_account_owned_resources_covers_all_owned_assets(monkeypatch):
+    """资产清空必须逐一覆盖知识库/文件/应用/工作流/会话/记忆/任务/数据源/工具。"""
+    ids = [uuid4() for _ in range(10)]
+    mapping = {
+        "KnowledgeBase": [(ids[0],)],
+        "UploadFile": [(ids[1],)],
+        "App": [(ids[2],)],
+        "Workflow": [(ids[3],)],
+        "Conversation": [(ids[4],)],
+        "UserMemory": [(ids[5],)],
+        "ScheduleTask": [(ids[6],)],
+        "ExternalDataSource": [(ids[7],)],
+        "ApiToolProvider": [(ids[8],)],
+        "McpProvider": [(ids[9],)],
+    }
+
+    class _Query:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def filter(self, *_a, **_k):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        def query(self, model, *_a, **_k):
+            # 调用方传的是类（如 App）或列属性（如 KnowledgeBase.id），统一解析到类名
+            cls = getattr(model, "class_", model)
+            return _Query(mapping.get(getattr(cls, "__name__", ""), []))
+
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=_Session()))
+    # 快照返回 None → 只走物理删除分支，purge 分支不执行（避免触达存储层）
+    for name in (
+        "snapshot_knowledge_base",
+        "snapshot_upload_file",
+        "snapshot_memory",
+        "snapshot_schedule_task",
+        "snapshot_external_data_source",
+    ):
+        monkeypatch.setattr(handlers, name, lambda rid: None)
+    # 会话走 snapshot + purge（无 physical_delete 环节），快照需非空才能触达 purge
+    monkeypatch.setattr(
+        handlers, "snapshot_conversation", lambda rid: {"main": {"id": str(rid)}}
+    )
+
+    calls = []
+    monkeypatch.setattr(
+        handlers, "physical_delete_generic", lambda rtype, rid: calls.append((rtype, str(rid)))
+    )
+    for name in (
+        "physical_delete_knowledge_base",
+        "physical_delete_upload_file",
+        "purge_conversation",
+        "physical_delete_memory",
+        "physical_delete_schedule_task",
+        "physical_delete_external_data_source",
+    ):
+        monkeypatch.setattr(
+            handlers, name, lambda rid, _n=name: calls.append((_n, str(rid)))
+        )
+
+    handlers._purge_account_owned_resources(uuid4())
+
+    covered = {name for name, _ in calls}
+    assert {
+        "physical_delete_knowledge_base",
+        "physical_delete_upload_file",
+        "app",
+        "workflow",
+        "purge_conversation",
+        "physical_delete_memory",
+        "physical_delete_schedule_task",
+        "physical_delete_external_data_source",
+        "api_tool",
+        "mcp",
+    } <= covered
+
+
+def test_snapshot_resource_routes_account(monkeypatch):
+    called = {}
+    monkeypatch.setattr(
+        handlers, "snapshot_account", lambda rid: called.update(rid=str(rid)) or {"main": {}}
+    )
+    assert handlers.snapshot_resource("account", "acc-1") == {"main": {}}
+    assert called["rid"] == "acc-1"
+
+
+def test_physical_delete_resource_routes_account(monkeypatch):
+    called = []
+    monkeypatch.setattr(handlers, "physical_delete_account", lambda rid: called.append(str(rid)))
+    handlers.physical_delete_resource("account", "acc-1")
+    assert called == ["acc-1"]
+
+
+def test_restore_resource_routes_account(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        handlers, "restore_account", lambda s: called.append(s["main"]["id"]) or True
+    )
+    assert handlers.restore_resource("account", {"main": {"id": "acc-1"}}) is True
+    assert called == ["acc-1"]
+
+
+def test_purge_resource_routes_account(monkeypatch):
+    called = []
+    monkeypatch.setattr(handlers, "purge_account", lambda s: called.append("account"))
+    handlers.purge_resource("account", {})
+    assert called == ["account"]

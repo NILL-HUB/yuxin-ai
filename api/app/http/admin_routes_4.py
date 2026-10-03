@@ -745,3 +745,144 @@ def register_routes(quart_app):
             resource_id=str(provider_id),
         )
         return a._ok_msg("删除MCP成功")
+
+    # ---------------------------------------------------------------------- #
+    # CLI 工具来源（source_type=cli）：与 builtin/api_tool/mcp/skill 并列
+    # ---------------------------------------------------------------------- #
+
+    @quart_app.get("/admin/cli")
+    async def admin_list_cli_providers():
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.cli_service import CliService
+
+        items = await a._to_thread(a._get_service(CliService).list_providers, account.id)
+        return a._ok({"items": items})
+
+    @quart_app.post("/admin/cli")
+    async def admin_create_cli_provider():
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.cli_service import CliService
+
+        data = await request.get_json(force=True, silent=True) or {}
+        name = str(data.get("name") or "").strip()
+        command = str(data.get("command") or "").strip()
+        tool_schema = data.get("tool_schema") or {}
+        if not name:
+            return a._json_resp(
+                code="validate_error",
+                message="CLI 名称不能为空",
+                data={"name": ["CLI 名称不能为空"]},
+                status=400,
+            )
+        if not command:
+            return a._json_resp(
+                code="validate_error",
+                message="CLI 命令不能为空",
+                data={"command": ["CLI 命令不能为空"]},
+                status=400,
+            )
+        # 纯 CLI 无自描述能力：不声明能力说明书即不可用（服务端与前端均校验）
+        if not isinstance(tool_schema, dict) or not tool_schema:
+            return a._json_resp(
+                code="validate_error",
+                message="CLI 能力说明书不能为空",
+                data={"tool_schema": ["请至少声明一个工具及其描述"]},
+                status=400,
+            )
+
+        provider = await a._to_thread(
+            a._get_service(CliService).create_provider,
+            account_id=account.id,
+            name=name,
+            label=str(data.get("label") or ""),
+            description=str(data.get("description") or ""),
+            category=str(data.get("category") or "other"),
+            command=command,
+            args=list(data.get("args") or []),
+            env=dict(data.get("env") or {}),
+            tool_schema=dict(tool_schema),
+            task_keywords=list(data.get("task_keywords") or []),
+            timeout_seconds=int(data.get("timeout_seconds") or 30),
+            enabled=bool(data.get("enabled", True)),
+        )
+        await _record_mutation_audit(
+            action="cli.create",
+            resource_type="cli",
+            resource_id=str(provider.id),
+            after_data={"name": name, "command": command},
+        )
+        return a._ok({"id": str(provider.id)})
+
+    @quart_app.get("/admin/cli/<uuid:provider_id>")
+    async def admin_get_cli_provider(provider_id):
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.cli_service import CliService
+
+        provider = await a._to_thread(a._get_service(CliService).get_provider, provider_id)
+        if provider is None:
+            return a._json_resp(code="not_found", message="CLI 不存在", status=404)
+        return a._ok(await a._to_thread(a._get_service(CliService).to_dict, provider))
+
+    @quart_app.put("/admin/cli/<uuid:provider_id>")
+    async def admin_update_cli_provider(provider_id):
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.cli_service import CliService
+
+        data = await request.get_json(force=True, silent=True) or {}
+        fields = {
+            key: data[key]
+            for key in (
+                "label", "description", "category", "command", "args",
+                "env", "tool_schema", "task_keywords", "timeout_seconds", "enabled",
+            )
+            if key in data
+        }
+        if "tool_schema" in fields and not fields["tool_schema"]:
+            return a._json_resp(
+                code="validate_error",
+                message="CLI 能力说明书不能为空",
+                data={"tool_schema": ["请至少声明一个工具及其描述"]},
+                status=400,
+            )
+        provider = await a._to_thread(
+            a._get_service(CliService).update_provider, provider_id, **fields
+        )
+        if provider is None:
+            return a._json_resp(code="not_found", message="CLI 不存在", status=404)
+        await _record_mutation_audit(
+            action="cli.update",
+            resource_type="cli",
+            resource_id=str(provider_id),
+            after_data={"fields": sorted(fields.keys())},
+        )
+        return a._ok_msg("更新CLI成功")
+
+    @quart_app.delete("/admin/cli/<uuid:provider_id>")
+    async def admin_delete_cli_provider(provider_id):
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        from internal.service.cli_service import CliService
+
+        deleted = await a._to_thread(a._get_service(CliService).delete_provider, provider_id)
+        if not deleted:
+            return a._json_resp(code="not_found", message="CLI 不存在", status=404)
+        await _record_mutation_audit(
+            action="cli.delete",
+            resource_type="cli",
+            resource_id=str(provider_id),
+        )
+        return a._ok_msg("删除CLI成功")

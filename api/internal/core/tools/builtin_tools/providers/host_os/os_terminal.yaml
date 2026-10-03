@@ -1,0 +1,43 @@
+name: os_terminal
+label: 本机终端
+description: 本机任务的主力执行手段：以 CMD 或 GitBash 执行真实命令（查看目录与文件、Git 操作、安装依赖、构建编译、运行测试与脚本、查看系统与进程信息、批量处理），一次性非交互返回 stdout/stderr 与退出码；工作目录限安全根目录内，删除类命令被硬阻断并引导改用 os_recycle_bin。
+params: []
+task_keywords:
+  - 终端
+  - 命令行
+  - shell
+  - cmd
+  - gitbash
+  - bash
+  - 执行命令
+  - 运行命令
+  - run_command
+  - terminal
+  - 本地开发
+  - 项目
+  - 构建
+  - build
+  - 编译
+  - 测试
+  - 运行测试
+  - 跑测试
+  - 单元测试
+  - 依赖
+  - 安装依赖
+  - 脚本
+  - 命令
+  - 版本控制
+  - npm
+  - pip
+  - uv
+  - node
+  - git
+  - 提交代码
+  - 运行脚本
+  - 执行脚本
+  - 系统信息
+  - 进程
+  - 查看目录
+  - 批量处理
+  - 部署
+  - 调试

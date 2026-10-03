@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from ..worker_client import call_host_worker
 
 
 logger = logging.getLogger(__name__)
@@ -60,47 +60,20 @@ def _normalize_text(value: Any) -> str:
 
 
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
-    from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
-    from internal.service.tool_credential_resolver import get_tool_credential
-
-    resolved = resolve_desktop_bridge(payload.get("requester"), purpose="/browser")
-    if resolved:
-        endpoint, token = resolved
-    else:
-        # 2.回退静态配置（独立 browser worker）
-        endpoint = get_tool_credential("BROWSER_AUTOMATION_URL")
-        token = get_tool_credential("BROWSER_AUTOMATION_TOKEN")
-    if not endpoint or not token:
-        return {
-            "ok": False,
-            "error": "未找到可用的浏览器自动化连接（当前账号未注册在线设备），"
-                     "且 BROWSER_AUTOMATION_URL/TOKEN 未配置，浏览器自动化默认关闭",
-        }
-    url = endpoint.rstrip("/") + "/browser"
-    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json; charset=utf-8",
-            "Authorization": f"Bearer {token}",
-        },
-    )
+    # urllib 超时 = 页面动作超时(ms) + 30s 缓冲，避免动作未完成即被客户端掐断
     timeout = (int(payload.get("timeout") or 30000) // 1000) + 30
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-            return json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        try:
-            error_payload = json.loads(exc.read().decode("utf-8", errors="replace"))
-        except Exception:
-            error_payload = {"error": str(exc)}
-        return {"ok": False, "error": error_payload.get("error", str(exc))}
-    except Exception as exc:
-        return {"ok": False, "error": f"调用浏览器自动化失败: {exc}"}
+    return call_host_worker(
+        payload,
+        purpose="/browser",
+        error_prefix="调用浏览器自动化失败",
+        static_url_env="BROWSER_AUTOMATION_URL",
+        static_token_env="BROWSER_AUTOMATION_TOKEN",
+        unavailable_error=(
+            "未找到可用的浏览器自动化连接（当前账号未注册在线设备），"
+            "且 BROWSER_AUTOMATION_URL/TOKEN 未配置，浏览器自动化默认关闭"
+        ),
+        timeout=timeout,
+    )
 
 
 class BrowserActionTool(BaseTool):

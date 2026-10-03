@@ -6,7 +6,7 @@
 > **任务范围**：D1-D4
 > **前置条件**：Track B（存储与检索）完成，Neo4j/PostgreSQL pgvector/Redis/Celery 依赖可用
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除
-> **关联架构**：[architecture-design.md Ch16](../../architecture-design.md) | [memory-system/03-consolidation-skill-policy-api.md §9-§10](../03-consolidation-skill-policy-api.md)
+> **关联架构**：[architecture-design.md Ch16](../../prd/architecture-design.md) | [memory-system/03-consolidation-skill-policy-api.md §9-§10](../../prd/memory-system/03-consolidation-skill-policy-api.md)
 
 ---
 

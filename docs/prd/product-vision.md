@@ -31,6 +31,8 @@
 ### 1.3 差异化定位
 
 > 本系统**不是**「又一个通用 Agent 调度平台」。调度、编排、工具池等能力是**实现生态赋能的技术底座**，不是产品目标本身。（历史表述已归档澄清，见 [architecture-design.md §1](./architecture-design.md)）
+>
+> 主动式 Agent 形态（对标 Instinct 的能力取舍、目标环境差异变量、独立 App 入口决策、优劣势与警戒线）见 [proactive-agent-ecosystem.md](./proactive-agent-ecosystem.md)。
 
 ---
 
@@ -92,7 +94,7 @@
 | 3 | 应用商店 → fork → A2A 调用他人应用 | ✅ 真可用 | `fork_public_app` + `route_public_agents` 真实调用 |
 | 4 | 定时任务：创建 → 到点执行 | ✅ 真可用 | Celery beat 注册 `run-scheduled-tasks` 每分钟 |
 | 5 | 分销：邀请码 → 绑定 → 佣金 → 提现 | ✅ 真可用 | 全链路已实现；受 `ENABLE_DISTRIBUTION` 开关控制（当前 DB 已开启 True） |
-| 6 | 内容生成：PPT/文档/表格/改图/短视频 | ⚠️ **断链（Web 环境）** | **「做 PPT/文档/表格」不成立**：75 个 builtin tool 中**无任何办公文件生成工具**；`docx`/`powerpoint` 等技能为 `prompt` 型且无执行后端；代码沙箱未配置（`E2B_*` 未设置）→ 只能输出文字、产不出真实文件。改图/短视频**生成**另有模型支撑（未实测）。证据见体检文档 §3.1 |
+| 6 | 内容生成：PPT/文档/表格/改图/短视频 | ⚠️ **断链（Web 环境）** | **「做 PPT/文档/表格」不成立**：75 个 builtin tool 中**无任何办公文件生成工具**；`docx`/`powerpoint` 等技能为 `prompt` 型且无执行后端；代码沙箱已收敛至 [admin 沙箱配置中心](./modules/10-sandbox-runtime.md)（多后端热切换），但当前未配置 `E2B_*` 凭证 / SCF endpoint → 实际仍未开通，只能输出文字、产不出真实文件。改图/短视频**生成**另有模型支撑（未实测）。证据见体检文档 §3.1 |
 | 7 | 语音交互（实时/ASR/TTS） | ✅ 真可用 | realtime_voice + audio_service + TTS |
 | 8 | 设备控制：**桌面端面板直接操作**（回收站/快照） | ✅ 真可用 | 桌面端 IPC → 本机 worker |
 | 9 | 设备控制：**对话里让小钰操作电脑** | ✅ 真可用（**前置：桌面端在线**） | §4.1 断链已修复：桌面端登录后注册设备，服务端按账号动态解析 bridge（端到端实测通过）。⚠️ **2026-09-29**：当前 `desktop_device` **无在线设备**、静态回退宿主机端点 refused → **Web-only 环境不可用**；且受 §三-1 工具调用主干影响，对话内触发亦不通 |
@@ -111,6 +113,7 @@
 | 22 | AI + 硬件 | ⛔ 未实现 | 远期 |
 | 23 | 首页意图推荐（recommended_agents/tools） | ✅ 真可用 | 已修复：`HomeService._build_intent_recommendations` 复用编排主链路候选收集器真实产出推荐 Agent（`AgentCandidateCollector.collect_by_pools` 按子池+query 打分取 Top3）与推荐工具（`ToolCandidateCollector` + `ToolSelectorService` 关键词/LLM 选择取 Top5）；schema 补全四个字段（此前被 marshmallow 静默丢弃）；前端首页渲染「推荐 Agent / 推荐工具」并可点击发起对话 |
 | 24 | AI 助手计费 | ✅ 真可用 | §4.3 已修复：`account_id` 由路由层显式传入，计费真实触发（含单测覆盖） |
+| 25 | 资源删除 → 回收站 → 恢复 / 到期销毁 | ✅ 真可用 | 15 种资源类型统一经 `RecycleBinService` 入站（快照 + 可恢复）；留存期：人工手动删 7 天、Agent 代删 30 天，到期由 celery 每小时 `purge_expired` 彻底销毁。**账号删除 = 入回收站 + 立即锁定**（用户当即无法登录，数据与资产完整保留，留存期内随时可恢复；到期销毁时全量清空账号资产与附属数据，不留孤儿）。架构见 `modules/05-security-risk-decisions.md` §21.1 |
 
 ---
 
@@ -135,7 +138,7 @@
 | 服务端存储 | 新增 `desktop_device` 表（[desktop_device.py](file:///d:/DEMO/openagent-main/api/internal/model/desktop_device.py)）+ 迁移 `l6a7b8c9d0e1`；token 经 Fernet 加密存储 |
 | 服务端服务 | [desktop_device_service.py](file:///d:/DEMO/openagent-main/api/internal/service/desktop_device_service.py)：register 幂等 UPSERT / resolve_bridge 按账号取默认在线设备 / list / revoke |
 | 服务端解析 | [desktop_bridge_resolver.py](file:///d:/DEMO/openagent-main/api/internal/service/desktop_bridge_resolver.py)：动态（按账号）优先，静态环境变量回退 |
-| 工具层 | `os_file_task` / `os_recycle_bin` / `os_snapshot` / `computer_action` 统一经 resolver 解析 bridge；`computer_action` 新增 `requester` 字段并在 [assistant_agent_service.py](file:///d:/DEMO/openagent-main/api/internal/service/assistant_agent_service.py) 注入 `account_id` |
+| 工具层 | `os_file_task` / `os_recycle_bin` / `os_snapshot` / `os_terminal` / `computer_action` 统一经 resolver 解析 bridge；`computer_action` 新增 `requester` 字段并在 [assistant_agent_service.py](file:///d:/DEMO/openagent-main/api/internal/service/assistant_agent_service.py) 注入 `account_id` |
 | 服务端路由 | `POST /desktop/devices/register`、`GET /desktop/devices`、`POST /desktop/devices/<id>/revoke` |
 | 桌面端 | [device-registry.js](file:///d:/DEMO/openagent-main/desktop/device-registry.js)：持久化稳定 `device_id`、推导桥对外地址（默认 `http://host.docker.internal:9876`）、登录后上报；main.js 在 set-credential 后触发注册 |
 
@@ -220,5 +223,5 @@ cua-driver 后台控制后端**已实现并通过实测**（后台点击时真�
 | 技术架构与模块设计 | [architecture-design.md](./architecture-design.md) |
 | 各模块实现细节 | [modules/](./modules/) |
 | 记忆系统设计 | [memory-system/](./memory-system/) |
-| 接口契约 | [api/](./api/)、[../api/](../api/) |
+| 接口契约 | [api/](../api/) |
 | 演进任务状态 | [execution-roadmap.md](./execution-roadmap.md) |

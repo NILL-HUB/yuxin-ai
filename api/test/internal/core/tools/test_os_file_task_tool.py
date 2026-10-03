@@ -40,10 +40,11 @@ def test_os_file_task_read_calls_host_worker(monkeypatch):
         captured["timeout"] = timeout
         return _FakeResponse()
 
-    module = importlib.import_module(
-        "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
+    # HTTP 调用已收敛到 worker_client（builtin provider 单一入口），注入点随之迁移
+    worker_client = importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.worker_client"
     )
-    monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(worker_client.urllib.request, "urlopen", _fake_urlopen)
     tool = OsFileTaskTool(requester="user-1")
 
     result = json.loads(tool._run(op="read", path="C:/tmp/notes.txt"))
@@ -78,10 +79,11 @@ def test_os_file_task_passes_session_context_to_worker(monkeypatch):
         captured["request"] = request
         return _FakeResponse()
 
-    module = importlib.import_module(
-        "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
+    # HTTP 调用已收敛到 worker_client（builtin provider 单一入口），注入点随之迁移
+    worker_client = importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.worker_client"
     )
-    monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(worker_client.urllib.request, "urlopen", _fake_urlopen)
     tool = OsFileTaskTool(
         requester="user-1",
         session_id="conv-9",
@@ -118,7 +120,8 @@ def test_os_file_task_returns_config_error_when_unconfigured(monkeypatch):
     )
 
     assert result["ok"] is False
-    assert "未配置" in result["error"]
+    # 统一文案（DESKTOP_UNAVAILABLE_MESSAGE）：引导安装/登录桌面客户端，而非只抛内部 env 名
+    assert "桌面客户端" in result["error"]
 
 
 def test_os_file_task_uses_desktop_bridge(monkeypatch):

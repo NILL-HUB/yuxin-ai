@@ -102,13 +102,19 @@ class OrchestratorService:
                 try:
                     decision_data = self.conductor_service.decide(
                         ctx.query,
-                        account_id=ctx.account_id,
                         budget_level=ctx.budget_level,
                         balance_credits=ctx.balance_credits,
                         image_url_count=len(ctx.image_urls),
                         deep_thinking_requested=ctx.deep_thinking_requested,
                     )
                     decision = RoutingDecision.from_dict(decision_data)
+                    # 工具子集统一由本服务（唯一权威入口）填充：指挥官只负责「派活 + 定档位」，
+                    # 永不接触工具清单。上限取自 cost_policy.max_tool_count（随复杂度档位变化）。
+                    decision.tool_subset = self.build_tool_subset(
+                        ctx.account_id,
+                        query=ctx.query,
+                        max_tools=(decision.cost_policy or {}).get("max_tool_count"),
+                    )
                     # 深度思考增强：Conductor 本身不输出 deep_thinking 模式，但复杂/分析类
                     # 任务（命中 DEEP_THINKING 意图分类，受 ENABLE_AUTO_DEEP_THINKING 开关约束）
                     # 仍应走深度思考。只用关键词层判定（零 LLM 成本——conductor 已做过
@@ -204,7 +210,13 @@ class OrchestratorService:
                     image_count=len(ctx.image_urls),
                     preliminary_mode=decision.execution_mode,
                 )
-            decision.tool_subset = self._build_tool_subset(ctx.account_id, query=ctx.query)
+            # 先定成本策略（含 max_tool_count 档位），再据此构建工具子集
+            self._attach_cost_policy(decision, ctx)
+            decision.tool_subset = self.build_tool_subset(
+                ctx.account_id,
+                query=ctx.query,
+                max_tools=(decision.cost_policy or {}).get("max_tool_count"),
+            )
             self._emit(
                 "tool_candidates_found",
                 routing_log_id,
@@ -215,7 +227,6 @@ class OrchestratorService:
                 routing_log_id,
                 {"selected_tools": decision.tool_subset.get("selected_tools", [])},
             )
-            self._attach_cost_policy(decision, ctx)
             self._attach_model_assignment(decision, ctx)
             self._emit(
                 "model_selected",
@@ -491,17 +502,37 @@ class OrchestratorService:
         event["event"] = event["event_type"]
         return [event]
 
-    def _build_tool_subset(self, account_id=None, query: str = "") -> dict:
+    # 无档位约束时的工具上限默认值（与 cost_policy 的 medium 档一致）
+    _DEFAULT_MAX_TOOLS = 5
+
+    def build_tool_subset(
+        self,
+        account_id=None,
+        query: str = "",
+        max_tools: int | None = None,
+    ) -> dict:
         """构建工具子集（方案A：关键词快通道 + LLM 兜底）。
 
         ToolSelectorService 已重构为全 source_type 覆盖：
         - 关键词快通道：匹配 task_keywords + tool_name + description
         - LLM 兜底：对 builtin + mcp + skill + workflow + api_tool 做语义选择
+
+        公共入口：既用于主链路路由决策，也被 multi_agent 子任务自检索复用
+        （按子任务描述为每个 Agent 单独选择工具），避免出现第二套选择实现。
+
+        Args:
+            max_tools: 工具数量上限，来自 cost_policy.max_tool_count（随复杂度档位
+                变化）；为 None / 非正数时回退 _DEFAULT_MAX_TOOLS。
         """
         if not self._flag_enabled("ENABLE_TOOL_POOL_RETRIEVAL", default=True):
             return self._empty_tool_subset("feature_flag_disabled")
         if self.tool_subset_builder is None:
             return self._empty_tool_subset("no_tool_subset_builder")
+        effective_max = (
+            max_tools
+            if isinstance(max_tools, int) and max_tools > 0
+            else self._DEFAULT_MAX_TOOLS
+        )
         candidates = []
         if account_id is not None:
             try:
@@ -514,11 +545,11 @@ class OrchestratorService:
         if query and self.tool_selector_service is not None and candidates:
             try:
                 selected = self.tool_selector_service.select_tools(
-                    query, candidates=candidates, max_tools=5,
+                    query, candidates=candidates, max_tools=effective_max,
                 )
                 if selected:
                     return self._merge_llm_selection_with_ranked(
-                        candidates, selected, max_tools=5,
+                        candidates, selected, max_tools=effective_max,
                     )
                 # 选择器返回空（如 query="你好"），回退到默认排序
                 logger.info(
@@ -529,7 +560,9 @@ class OrchestratorService:
                 logger.warning("工具选择异常，回退到默认排序: %s", exc, exc_info=True)
 
         # fallback: 默认排序（无查询感知）
-        return self.tool_subset_builder.build_ranked_subset(candidates)
+        return self.tool_subset_builder.build_ranked_subset(
+            candidates, max_tool_count=effective_max
+        )
 
     def _merge_llm_selection_with_ranked(
         self,

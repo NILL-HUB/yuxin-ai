@@ -87,8 +87,17 @@ class OrchestratedAgentResult:
     tool_calls: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # 子代理主动申明「无法完成」：无硬错误但任务并未达成的信号，
+    # 由 AgentTaskExecutor 按约定标记检测写入，用于触发指挥官重规划。
+    blocked: bool = False
+    blocking_reason: str = ""
     cost: dict = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+
+    @property
+    def failed(self) -> bool:
+        """是否视为失败（硬错误 或 主动申明无法完成）。"""
+        return bool(self.errors) or self.blocked
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "OrchestratedAgentResult":
@@ -105,6 +114,8 @@ class OrchestratedAgentResult:
             ),
             warnings=_unique_text_list(data.get("warnings")),
             errors=_unique_text_list(data.get("errors")),
+            blocked=bool(data.get("blocked")),
+            blocking_reason=_text(data.get("blocking_reason")),
             cost=data.get("cost") if isinstance(data.get("cost"), dict) else {},
             metadata=data.get("metadata") if isinstance(data.get("metadata"), dict) else {},
         )
@@ -117,6 +128,8 @@ class OrchestratedAgentResult:
             "tool_calls": [_safe_tool_call(item) for item in self.tool_calls],
             "warnings": self.warnings,
             "errors": self.errors,
+            "blocked": self.blocked,
+            "blocking_reason": self.blocking_reason,
             "cost": self.cost,
         }
 

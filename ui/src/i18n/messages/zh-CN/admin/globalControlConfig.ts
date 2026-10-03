@@ -1,7 +1,7 @@
 export default {
   title: '全局控制配置',
   description:
-    '统一管理平台侧全局行为配置：模型运行时降级、外部素材获取、会话 Checkpoint、技能目录同步、图像请求策略与视觉兜底模型、路由决策置信度门控，以及桌面客户端连接地址。',
+    '统一管理平台侧全局行为配置：模型运行时降级、外部素材获取、会话 Checkpoint、技能目录同步、图像请求策略与视觉兜底模型、路由决策置信度门控，以及桌面客户端连接与更新推送。',
   loadFailed: '加载全局控制配置失败',
   saved: '全局控制配置已保存',
   saveFailed: '保存全局控制配置失败',
@@ -41,8 +41,8 @@ export default {
         'LLM 路由/分类结果置信度低于阈值时回退保守路径（任务分类回退关键词判定、意图识别回退默认意图）。',
     },
     desktopClient: {
-      title: '桌面客户端连接',
-      description: '配置桌面客户端的 API 服务器地址，留空表示与当前服务器同源连接。',
+      title: '桌面客户端',
+      description: '配置桌面客户端的 API 服务器地址与更新推送（更新包地址、是否推送）。',
     },
   },
   fields: {
@@ -73,5 +73,19 @@ export default {
     routingConfidenceInvalid: '置信度阈值必须在 0 到 1 之间',
     apiOrigin: '连接地址（API 服务器）',
     apiOriginPlaceholder: '如 http://127.0.0.1 或 https://your-domain.com',
+    updateFeedUrl: '更新包地址',
+    updateFeedUrlPlaceholder: '如 https://openllm.cloud/desktop-updates',
+    updateFeedUrlHint:
+      '打包产物（*.exe、latest.yml、*.blockmap）的托管目录；留空表示不启用自动更新。',
+    updateEnabled: '向客户端推送更新',
+    updateEnabledHint:
+      '开启后客户端会检查新版本、弹窗展示更新历程并自动下载安装；关闭后客户端静默跳过检查。',
+    checkUpdate: '检查更新',
+    updateLatestVersion: '上游最新版本：{version}',
+    updatePublishedAt: '发布时间：{date}',
+    updateNotes: '更新内容',
+    updateNotesEmpty: '该版本未填写更新说明',
+    updateNoVersion: '上游未发现可用版本',
+    updateCheckFailed: '检查更新失败，请确认更新包地址可访问',
   },
 }

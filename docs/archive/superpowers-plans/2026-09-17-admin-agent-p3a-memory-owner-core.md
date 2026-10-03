@@ -31,13 +31,13 @@
 | 事实 | 值 / 证据 |
 | --- | --- |
 | 迁移当前 **单 head** | `x1a2b3c4d5e7`（AST 遍历 155 个迁移，唯一 head，已 git 跟踪） |
-| `user_memory` 字段 | `id` / **`owner_account_id`(UUID, FK account.id, NOT NULL)** / `memory_type` / `content` / `confidence` / `status` / `created_from` / `metadata_`(列名 `metadata`, JSONB) / `embedding_node_id` / `embedding`(Vector(1536)) / `scope`(server_default `'global'`) / `source_conversation_ids` / `last_used_at` / `updated_at` / `created_at`（[knowledge.py:132-155](../../api/internal/model/knowledge.py#L132-L155)） |
-| `user_memory` 索引 | `pk_user_memory_id`、`user_memory_owner_type_idx(owner_account_id, memory_type)`、`user_memory_status_idx(status)`（[knowledge.py:134-138](../../api/internal/model/knowledge.py#L134-L138)） |
-| 向量分表 | `user_memory_embedding_{dim}`，字段 `id` / `memory_id`(FK user_memory CASCADE) / **`owner_account_id`(UUID NOT NULL FK account)** / `embedding` / `embedding_node_id` / `created_at` / `updated_at`；索引 `{t}_owner_idx` / `{t}_memory_idx` / `{t}_memory_id_uidx`(UNIQUE) / `{t}_embedding_hnsw_idx`（[embedding_table_router.py:146-174](../../api/internal/service/embedding_table_router.py#L146-L174)） |
-| 向量分表建表入口 | `EmbeddingTableRouter.ensure_tables_for_dimension()`（[embedding_table_router.py:114-217](../../api/internal/service/embedding_table_router.py#L114-L217)）；维度 1–2000，兜底 1536 |
-| 写入落库点 | `LedgerWriter._upsert_vector` 新建 `UserMemory(...)`（[ledger_writer.py:950-962](../../api/internal/service/memory/ledger_writer.py#L950-L962)）；`owner_account_id` 来自 `UUID(str(payload["user_id"]))`，**解析失败即跳过写入**（[ledger_writer.py:839-860](../../api/internal/service/memory/ledger_writer.py#L839-L860)） |
-| 向量列双写现状 | 基表 `user_memory.embedding` 与分表并存：写分表（[ledger_writer.py:970-985](../../api/internal/service/memory/ledger_writer.py#L970-L985)），三处读基表列（`representation_repulsion.py:182-199`、`entity_resolution.py:241-243`、`consolidation_engine.py:790-793`） |
-| `MemoryEvent.user_id` | `str` 字段（Pydantic），语义即 `str(account.id)`（[memory_models.py:244](../../api/internal/model/memory_models.py#L244)） |
+| `user_memory` 字段 | `id` / **`owner_account_id`(UUID, FK account.id, NOT NULL)** / `memory_type` / `content` / `confidence` / `status` / `created_from` / `metadata_`(列名 `metadata`, JSONB) / `embedding_node_id` / `embedding`(Vector(1536)) / `scope`(server_default `'global'`) / `source_conversation_ids` / `last_used_at` / `updated_at` / `created_at`（[knowledge.py:132-155](../../../api/internal/model/knowledge.py#L132-L155)） |
+| `user_memory` 索引 | `pk_user_memory_id`、`user_memory_owner_type_idx(owner_account_id, memory_type)`、`user_memory_status_idx(status)`（[knowledge.py:134-138](../../../api/internal/model/knowledge.py#L134-L138)） |
+| 向量分表 | `user_memory_embedding_{dim}`，字段 `id` / `memory_id`(FK user_memory CASCADE) / **`owner_account_id`(UUID NOT NULL FK account)** / `embedding` / `embedding_node_id` / `created_at` / `updated_at`；索引 `{t}_owner_idx` / `{t}_memory_idx` / `{t}_memory_id_uidx`(UNIQUE) / `{t}_embedding_hnsw_idx`（[embedding_table_router.py:146-174](../../../api/internal/service/embedding_table_router.py#L146-L174)） |
+| 向量分表建表入口 | `EmbeddingTableRouter.ensure_tables_for_dimension()`（[embedding_table_router.py:114-217](../../../api/internal/service/embedding_table_router.py#L114-L217)）；维度 1–2000，兜底 1536 |
+| 写入落库点 | `LedgerWriter._upsert_vector` 新建 `UserMemory(...)`（[ledger_writer.py:950-962](../../../api/internal/service/memory/ledger_writer.py#L950-L962)）；`owner_account_id` 来自 `UUID(str(payload["user_id"]))`，**解析失败即跳过写入**（[ledger_writer.py:839-860](../../../api/internal/service/memory/ledger_writer.py#L839-L860)） |
+| 向量列双写现状 | 基表 `user_memory.embedding` 与分表并存：写分表（[ledger_writer.py:970-985](../../../api/internal/service/memory/ledger_writer.py#L970-L985)），三处读基表列（`representation_repulsion.py:182-199`、`entity_resolution.py:241-243`、`consolidation_engine.py:790-793`） |
+| `MemoryEvent.user_id` | `str` 字段（Pydantic），语义即 `str(account.id)`（[memory_models.py:244](../../../api/internal/model/memory_models.py#L244)） |
 | `admin_agent` 表 | 已存在，主键 `id` UUID（P1a 落地），可作 FK 目标 |
 | `scope` 字段现状 | 只写不读：仅 `ledger_writer.py:956` 硬编码 `"user_memory"`，默认 `'global'`；**全仓检索链路零过滤** |
 | 迁移 head 校验测试 | `test/internal/migration/test_migration_graph_integrity.py`（单 head + 无悬空 `down_revision`） |
@@ -192,7 +192,7 @@ def test_parse_rejects_malformed_uuid():
 def test_from_legacy_user_id_treats_non_uuid_as_user_key():
     """旧数据里 `user_id` 未必是 UUID（历史写入，如 'platform'）。
 
-    **行为必须与既有 `_upsert_vector` 一致**（[ledger_writer.py:846-860](../../api/internal/service/memory/ledger_writer.py#L846-L860)）：
+    **行为必须与既有 `_upsert_vector` 一致**（[ledger_writer.py:846-860](../../../api/internal/service/memory/ledger_writer.py#L846-L860)）：
     既有实现是 `UUID(str(...))` 失败 → 记 warning → **跳过写入**（不抛错）。
     故此处解析失败必须抛错，由调用方捕获后跳过——不得静默降级成
     "account 为空的 user 键"（那会让后续归属判定拿到坏 key）。

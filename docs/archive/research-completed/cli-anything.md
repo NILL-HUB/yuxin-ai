@@ -1,5 +1,10 @@
 # CLI-Anything 调研：把“软件 Agent 化”变成可分发 CLI
 
+> **⚠️ 方案作废（2026-09-24）**：本文建议的「cli-hub 工具目录 + 执行器」方案已被**否决并清理**。
+> 否决理由：① cli-hub 与"仅管理员手动注册进池的工具才允许 Agent 使用"的安全模型冲突，发现/安装生态与我们的准入边界不一致；② 该技能为纯提示词（无执行器），指导的 `cli-hub install` 在本环境既未安装又禁网，无法真实运行。
+> 现行方案：**CLI 作为受管工具池的独立来源（`source_type=cli`）** —— 管理员在 admin 注册 CLI（含能力说明书 `tool_schema`），其全部子命令进入工具池候选，经 `ToolSelectorService` 选择、复用 `McpStdioClient` 的 `protocol=raw` 执行。见 `docs/superpowers/specs/2026-09-24-cli-tool-pool-design.md`。
+> 本文仅作历史调研留存，**不代表当前实现**。
+
 > 调研时间：2026-08-12。结论基于 GitHub 仓库、HARNESS.md、codex-skill、cli-hub 源码、registry.json、论文摘要等一手来源。
 
 ## 结论

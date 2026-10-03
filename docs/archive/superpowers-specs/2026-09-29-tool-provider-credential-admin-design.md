@@ -1,6 +1,8 @@
 # 第三方工具凭证（搜索密钥等）收编 admin 设计（spec）
 
-- 状态：在途（2026-09-29），待评审后实施
+> **已归档（2026-10-03）**：该设计核心范围已落地（DB 解密优先 → env 兜底的单一解析入口、admin 凭证页签、P1-1 依赖联动；`probe` 按 §8 收窄为齐备性检查）。当前说明见 [01-agent-tool-pool.md](../../prd/modules/01-agent-tool-pool.md) 工具凭证章节与 [config-inventory.md](../../research/config-inventory.md)；本文档仅保留设计过程与决策依据，**不代表当前实现**。
+
+- 状态：已落地（2026-09-29 设计并实施；设计期标注「在途/待评审」为当时状态；2026-10-03 归档）
 - 触发：`web_search` 等工具的密钥（`SERPER_API_KEY`/`TAVILY_API_KEY`/`EXA_API_KEY`/`BRAVE_SEARCH_API_KEY`/`XAI_API_KEY`…）
   目前**只走 env**，后台无处可配、也无处可看；`.env.example` 里还是占位符，线上实际只剩免费 `ddgs` 兜底。
 - 目标一句话：**把散落在 env 的工具密钥收编为"admin 可配 + 加密入库 + 单一解析入口 + env 兜底"，迁移期行为零变化。**

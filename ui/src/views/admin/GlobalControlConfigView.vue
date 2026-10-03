@@ -8,8 +8,10 @@ import {
   saveGlobalControlSection,
 } from '@/services/admin-global-control-config'
 import {
+  checkDesktopUpdate,
   getDesktopClientConfig,
   saveDesktopClientConfig,
+  type DesktopUpdateCheckResult,
 } from '@/services/admin-desktop-client-config'
 
 const { t } = useI18n()
@@ -49,6 +51,10 @@ const form = reactive({
 })
 
 const apiOrigin = ref('')
+const updateFeedUrl = ref('')
+const updateEnabled = ref(false)
+const checkingUpdate = ref(false)
+const updateCheckResult = ref<DesktopUpdateCheckResult | null>(null)
 
 const loading = ref(false)
 const saving = ref(false)
@@ -78,6 +84,8 @@ const loadConfig = async () => {
     form.routing_confidence.intent_recognition_min_confidence =
       configs.routing_confidence?.intent_recognition_min_confidence ?? 0
     apiOrigin.value = desktop.api_origin || ''
+    updateFeedUrl.value = desktop.update_feed_url || ''
+    updateEnabled.value = Boolean(desktop.update_enabled)
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.globalControlConfig.loadFailed')))
   } finally {
@@ -149,13 +157,34 @@ const handleSave = async () => {
         intent_recognition_min_confidence:
           form.routing_confidence.intent_recognition_min_confidence,
       }),
-      saveDesktopClientConfig({ api_origin: apiOrigin.value.trim() }),
+      saveDesktopClientConfig({
+        api_origin: apiOrigin.value.trim(),
+        update_feed_url: updateFeedUrl.value.trim(),
+        update_enabled: updateEnabled.value,
+      }),
     ])
     Message.success(t('admin.globalControlConfig.saved'))
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.globalControlConfig.saveFailed')))
   } finally {
     saving.value = false
+  }
+}
+
+const handleCheckUpdate = async () => {
+  if (checkingUpdate.value) return
+  checkingUpdate.value = true
+  try {
+    const result = await checkDesktopUpdate()
+    updateCheckResult.value = result
+    if (!result?.ok) {
+      Message.warning(result?.detail || t('admin.globalControlConfig.fields.updateCheckFailed'))
+    }
+  } catch (error) {
+    updateCheckResult.value = null
+    Message.error(getErrorMessage(error, t('admin.globalControlConfig.fields.updateCheckFailed')))
+  } finally {
+    checkingUpdate.value = false
   }
 }
 
@@ -328,13 +357,16 @@ onMounted(loadConfig)
           <p class="hint-text">{{ t('admin.globalControlConfig.fields.routingConfidenceHint') }}</p>
         </section>
 
-        <!-- 桌面客户端连接 -->
+        <!-- 桌面客户端：连接地址 + 更新推送 -->
         <section class="config-card">
           <div class="card-header">
             <h3>{{ t('admin.globalControlConfig.sections.desktopClient.title') }}</h3>
             <p>{{ t('admin.globalControlConfig.sections.desktopClient.description') }}</p>
           </div>
-          <a-form :model="{ api_origin: apiOrigin }" layout="vertical">
+          <a-form
+            :model="{ api_origin: apiOrigin, update_feed_url: updateFeedUrl, update_enabled: updateEnabled }"
+            layout="vertical"
+          >
             <a-form-item :label="t('admin.globalControlConfig.fields.apiOrigin')" field="api_origin">
               <a-input
                 v-model="apiOrigin"
@@ -342,7 +374,61 @@ onMounted(loadConfig)
                 allow-clear
               />
             </a-form-item>
+            <a-form-item :label="t('admin.globalControlConfig.fields.updateFeedUrl')" field="update_feed_url">
+              <a-input
+                v-model="updateFeedUrl"
+                :placeholder="t('admin.globalControlConfig.fields.updateFeedUrlPlaceholder')"
+                allow-clear
+              />
+            </a-form-item>
+            <a-form-item :label="t('admin.globalControlConfig.fields.updateEnabled')" field="update_enabled">
+              <a-switch v-model="updateEnabled" />
+            </a-form-item>
           </a-form>
+          <p class="hint-text">{{ t('admin.globalControlConfig.fields.updateFeedUrlHint') }}</p>
+          <p class="hint-text">{{ t('admin.globalControlConfig.fields.updateEnabledHint') }}</p>
+
+          <div class="mt-2 flex items-center gap-2">
+            <a-button size="small" :loading="checkingUpdate" @click="handleCheckUpdate">
+              {{ t('admin.globalControlConfig.fields.checkUpdate') }}
+            </a-button>
+            <span
+              v-if="updateCheckResult && updateCheckResult.ok && updateCheckResult.latest_version"
+              class="text-xs text-gray-500"
+            >
+              {{
+                t('admin.globalControlConfig.fields.updateLatestVersion', {
+                  version: updateCheckResult.latest_version,
+                })
+              }}
+            </span>
+            <span v-else-if="updateCheckResult && updateCheckResult.ok" class="text-xs text-amber-500">
+              {{ t('admin.globalControlConfig.fields.updateNoVersion') }}
+            </span>
+            <span v-else-if="updateCheckResult && !updateCheckResult.ok" class="text-xs text-red-500">
+              {{ updateCheckResult.detail || t('admin.globalControlConfig.fields.updateCheckFailed') }}
+            </span>
+          </div>
+
+          <div
+            v-if="updateCheckResult && updateCheckResult.ok"
+            class="mt-2 rounded border px-2 py-1.5 text-xs"
+          >
+            <div v-if="updateCheckResult.release_date" class="text-gray-500">
+              {{
+                t('admin.globalControlConfig.fields.updatePublishedAt', {
+                  date: updateCheckResult.release_date,
+                })
+              }}
+            </div>
+            <div class="mt-1 font-medium">{{ t('admin.globalControlConfig.fields.updateNotes') }}</div>
+            <div v-if="updateCheckResult.release_notes" class="mt-1 whitespace-pre-wrap leading-relaxed">
+              {{ updateCheckResult.release_notes }}
+            </div>
+            <div v-else class="mt-1 text-gray-400">
+              {{ t('admin.globalControlConfig.fields.updateNotesEmpty') }}
+            </div>
+          </div>
         </section>
       </div>
     </a-spin>

@@ -2263,7 +2263,7 @@ L1 解析时经 `AudioService.audio_to_text_with_segments()`（请求 `response_
 把 `KB-P4` 行改为：
 
 ```markdown
-| KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成：渲染出片由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地（见 [02-knowledge-base.md §11.15](./modules/02-knowledge-base.md)） |
+| KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成：渲染出片由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地（见 [02-knowledge-base.md §11.15](../../prd/modules/02-knowledge-base.md)） |
 ```
 
 并在 KB-P4 小节（若已建）或 KB-P3.8 之后补一节 `### KB-P4：视频轻量剪辑（已完成）`，列出三个工具、执行环境、字幕时间轴三级解析（见 §0.1）。

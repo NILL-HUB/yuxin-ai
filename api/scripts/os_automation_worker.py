@@ -1,8 +1,8 @@
 """宿主机 OS 自动化 worker。
 
 运行在真实 Windows/Linux 主机上，通过受保护的本机 HTTP 接口接收平台请求，
-执行纯 Python 文件操作（读/搜/V4A 补丁）、回收站删除/恢复/清理，与文件
-写前快照/回滚，不依赖外部 CLI。
+执行文件操作（读/搜/V4A 补丁）、回收站删除/恢复/清理、文件写前快照/回滚，
+以及终端命令执行（Windows: CMD / GitBash），不依赖外部 CLI。
 
 安全模型：
 - 仅接受 Authorization: Bearer <OS_AUTOMATION_TOKEN> 的请求。
@@ -12,6 +12,10 @@
 - 每次真实写文件（UPDATE/DELETE/MOVE）前先做内容快照（写前快照，fail-closed），
   Agent 可通过 /snapshot 端点或 os_snapshot 工具一键回滚。快照全存本机隐藏目录，
   默认留存 7 天后由 GC 清理。
+- /exec 的终端命令在执行前经删除命令守卫（fail-closed）扫描：物理删除类命令
+  （rm/del/rd/Remove-Item/…、含内联代码、脚本文件、管道到解释器等形态）一律拒绝
+  并引导改用 os_recycle_bin——终端不得绕过"删除只进回收站"的治理。工作目录必须
+  落在安全根内；子进程环境剥离 worker 自身 token；超时杀进程树、输出限长。
 - 默认只监听本机回环地址（127.0.0.1）；若需容器/跨机访问，显式以
   `--host 0.0.0.0` 或 `OS_AUTOMATION_HOST` 覆盖，并必须配置强 token。
 """
@@ -22,9 +26,12 @@ import argparse
 import hashlib
 import hmac
 import json
+import locale
 import logging
 import os
+import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -1685,6 +1692,678 @@ def _snapshot_operation(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": "op 必须为 rollback_file/rollback_turn/list_snapshots"}
 
 
+# ---------------------------------------------------------------------------
+# 终端执行（Windows: CMD / GitBash）与删除命令守卫
+#
+# 治理约束：本机删除只能走回收站通道（os_recycle_bin / V4A Delete File）。
+# 终端是任意命令通道，物理删除命令（rm/del/rd/Remove-Item…）一旦放行即可绕过
+# 回收站，因此 /exec 在执行**前**做 fail-closed 扫描：命中即拒绝并引导改用
+# os_recycle_bin，而不是"执行后再补救"。守卫是对抗性文本解析，定位为护栏而非
+# 形式化沙箱保证（已知绕过面见 docs/prd/modules/08-os-automation.md）。
+# ---------------------------------------------------------------------------
+TERMINAL_DEFAULT_TIMEOUT_SECONDS = 60
+TERMINAL_MAX_TIMEOUT_SECONDS = 300
+TERMINAL_MAX_COMMAND_CHARS = 8000
+TERMINAL_MAX_OUTPUT_CHARS = 200_000
+TERMINAL_SCRIPT_SCAN_MAX_BYTES = 256 * 1024
+_GUARD_MAX_DEPTH = 3
+
+# 终端命令不得读到 worker 自身凭证：否则一条 echo %OS_AUTOMATION_TOKEN% 即可
+# 拿到直接调用本机 worker 全部端点的能力，绕过所有平台侧治理。
+_CHILD_ENV_STRIPPED_KEYS = (
+    "OS_AUTOMATION_TOKEN",
+    "DESKTOP_BRIDGE_TOKEN",
+    "BROWSER_AUTOMATION_TOKEN",
+    "COMPUTER_CONTROL_TOKEN",
+    "RENDER_WORKER_TOKEN",
+    "WAKE_WORD_TOKEN",
+)
+
+# 物理删除语义的命令名（归一化后小写）→ 中文说明
+_DELETE_COMMAND_NAMES: dict[str, str] = {
+    "rm": "rm 物理删除（未经回收站）",
+    "del": "del 物理删除（未经回收站）",
+    "erase": "erase 物理删除（del 别名）",
+    "rmdir": "rmdir 物理删除目录",
+    "rd": "rd 物理删除目录（rmdir 别名）",
+    "unlink": "unlink 物理删除文件",
+    "remove-item": "PowerShell Remove-Item 物理删除",
+    "ri": "PowerShell Remove-Item 别名（物理删除）",
+    "shred": "shred 覆写删除（不可恢复）",
+    "sdelete": "sdelete 安全删除（不可恢复）",
+    "trash": "trash 第三方删除命令（不进平台回收站）",
+    "format": "format 磁盘格式化（不可恢复）",
+    "diskpart": "diskpart 分区/卷操作（不可恢复）",
+}
+_DELETE_NAME_SET: frozenset[str] = frozenset(_DELETE_COMMAND_NAMES)
+
+# 删除语义的代码 API（仅在内联代码/脚本内容上扫描，避免 echo "rm -rf" 误伤）
+_DELETE_CODE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"shutil\s*\.\s*rmtree\s*\(", re.IGNORECASE), "shutil.rmtree（Python 递归删除）"),
+    (
+        re.compile(r"os\s*\.\s*(?:remove|removedirs)\s*\(", re.IGNORECASE),
+        "os.remove/removedirs（Python 删除）",
+    ),
+    (re.compile(r"os\s*\.\s*unlink\s*\(", re.IGNORECASE), "os.unlink（Python 删除文件）"),
+    (re.compile(r"os\s*\.\s*rmdir\s*\(", re.IGNORECASE), "os.rmdir（Python 删除目录）"),
+    (re.compile(r"\.\s*unlink\s*\(\s*\)", re.IGNORECASE), ".unlink()（Python 删除文件）"),
+    (
+        re.compile(r"\b(?:rmSync|unlinkSync|rmdirSync)\s*\(", re.IGNORECASE),
+        "Node.js fs 同步删除 API",
+    ),
+    (
+        re.compile(
+            r"fs\s*\.\s*(?:promises\s*\.\s*)?(?:rm|rmSync|unlink|unlinkSync|rmdir|rmdirSync)\s*\(",
+            re.IGNORECASE,
+        ),
+        "Node.js fs 删除 API",
+    ),
+    (
+        re.compile(
+            r"\[\s*(?:System\s*\.\s*)?IO\s*\.\s*(?:File|Directory)\s*\]\s*::\s*Delete",
+            re.IGNORECASE,
+        ),
+        ".NET IO 删除 API",
+    ),
+)
+
+# 可执行内联代码的解释器（其内联参数会被递归扫描）
+_SHELL_INTERPRETERS = frozenset(
+    {
+        "cmd",
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "powershell",
+        "pwsh",
+        "python",
+        "python3",
+        "py",
+        "node",
+        "perl",
+        "ruby",
+        "forfiles",
+    }
+)
+
+# 解释器的内联代码开关 → 其后的剩余 token 视为代码文本再扫描
+_INLINE_CODE_FLAGS: dict[str, tuple[str, ...]] = {
+    "cmd": ("/c", "/k", "//c", "//k"),
+    "powershell": ("-command", "-c", "-encodedcommand"),
+    "pwsh": ("-command", "-c", "-encodedcommand"),
+    "bash": ("-c",),
+    "sh": ("-c",),
+    "zsh": ("-c",),
+    "dash": ("-c",),
+    "python": ("-c",),
+    "python3": ("-c",),
+    "py": ("-c",),
+    "node": ("-e", "--eval", "-p", "--print"),
+    "perl": ("-e",),
+    "ruby": ("-e",),
+    "forfiles": ("/c",),
+}
+
+# 命令包装器：跳过它们（及其选项/数字/赋值参数）后再判定真实命令名（sudo rm / timeout 30 rm）
+_COMMAND_WRAPPERS = frozenset(
+    {"sudo", "doas", "env", "nohup", "exec", "command", "wsl", "busybox", "nice", "timeout", "start"}
+)
+
+_QUOTE_CHARS_RE = re.compile(r"['\"`]")
+_EXEC_SUFFIX_RE = re.compile(r"\.(exe|cmd|bat|com|ps1)$", re.IGNORECASE)
+_NUMERIC_ARG_RE = re.compile(r"\d+[smhd]?")
+_INLINE_B64_RE = re.compile(r"(?:b64decode|atob)\s*\(\s*['\"]([A-Za-z0-9+/=]{16,})['\"]")
+
+
+def _guard_block_reason(detail: str) -> str:
+    """删除守卫的统一拒绝文案（含 Agent 可执行的替代路径）。"""
+    return (
+        f"终端删除命令已被系统阻断（{detail}）。本机删除只能走删除工具，"
+        "请调用 os_recycle_bin(op=delete, paths=[...]) 移入回收站（可恢复、平台可见）；"
+        "在补丁中删除文件请改用 os_file_task 的 V4A `*** Delete File`（同样进回收站）。"
+    )
+
+
+def _command_token_names(token: str) -> set[str]:
+    """把单个 token 归一化为候选命令名集合。
+
+    - 去引号（含 r''m 这类空引号拼接）与路径前缀、去 .exe/.cmd/.bat 等后缀；
+    - 兼容 r\\m 形态（去掉反斜杠后再取一次），Windows 路径参数不受影响；
+    - 仅按逗号切分（引号串内的空格是参数语义：`print('rm -rf')` 里的 `rm -rf`
+      是一个字符串参数，不得拆成命令名 `rm`；`['rm','-f']` 才按逗号还原为命令名）。
+    """
+    names: set[str] = set()
+    for variant in (token, token.replace("\\", "")):
+        cleaned = _QUOTE_CHARS_RE.sub("", variant).strip()
+        for piece in cleaned.split(","):
+            piece = piece.split("/")[-1].split("\\")[-1]
+            piece = _EXEC_SUFFIX_RE.sub("", piece).strip().lower()
+            if piece:
+                names.add(piece)
+    return names
+
+
+def _split_shell_tokens(text: str) -> list[str]:
+    """引号感知分词：引号内空格不切分，引号符本身不入 token（r''m → rm）。"""
+    tokens: list[str] = []
+    current: list[str] = []
+    quote = ""
+    for ch in text:
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                current.append(ch)
+        elif ch in "'\"`":
+            quote = ch
+        elif ch.isspace():
+            if current:
+                tokens.append("".join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        tokens.append("".join(current))
+    return tokens
+
+
+def _iter_command_segments(text: str) -> list[tuple[str, bool]]:
+    """按 shell 分隔符切分命令，返回 [(段文本, 是否管道下游)]。
+
+    引号感知：引号内的 `;` `|` `(` 等是数据而非分隔符（`python -c "a; b()"` 必须
+    整体作为一段，否则内联代码会被切碎、绕过删除扫描）。
+    """
+    segments: list[tuple[str, bool]] = []
+    buf: list[str] = []
+    pipe_target = False
+    quote = ""
+    idx = 0
+    length = len(text)
+    while idx < length:
+        ch = text[idx]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+            idx += 1
+            continue
+        if ch in "'\"`":
+            quote = ch
+            buf.append(ch)
+            idx += 1
+            continue
+        two = text[idx: idx + 2]
+        if two in ("||", "&&"):
+            _flush_segment(segments, buf, pipe_target)
+            pipe_target = False
+            idx += 2
+            continue
+        if ch == "|":
+            _flush_segment(segments, buf, pipe_target)
+            pipe_target = True
+            idx += 1
+            continue
+        if ch in ";&\r\n(){}":
+            _flush_segment(segments, buf, pipe_target)
+            pipe_target = False
+            idx += 1
+            continue
+        buf.append(ch)
+        idx += 1
+    _flush_segment(segments, buf, pipe_target)
+    return segments
+
+
+def _flush_segment(
+    segments: list[tuple[str, bool]], buf: list[str], pipe_target: bool
+) -> None:
+    text = "".join(buf).strip()
+    buf.clear()
+    if text:
+        segments.append((text, pipe_target))
+
+
+def _skip_command_wrappers(tokens: list[str]) -> list[str]:
+    """跳过 sudo/env/timeout 等命令包装器与选项，返回用于判定的有效 token 序列。"""
+    idx = 0
+    for _ in range(8):
+        if idx >= len(tokens):
+            break
+        if not (_command_token_names(tokens[idx]) & _COMMAND_WRAPPERS):
+            break
+        idx += 1
+        while idx < len(tokens):
+            tok = tokens[idx]
+            if tok.startswith("-") or "=" in tok or _NUMERIC_ARG_RE.fullmatch(tok):
+                idx += 1
+                continue
+            break
+    return tokens[idx:]
+
+
+def _extract_inline_code(tokens: list[str]) -> list[tuple[str, str]]:
+    """提取解释器内联代码，返回 [(代码文本, "inline"|"encoded")]。"""
+    flags: set[str] = set()
+    for name in _command_token_names(tokens[0]):
+        flags.update(_INLINE_CODE_FLAGS.get(name, ()))
+    if not flags:
+        return []
+    for idx in range(1, len(tokens)):
+        low = tokens[idx].lower()
+        if low in flags:
+            code = " ".join(tokens[idx + 1:]).strip()
+            if not code:
+                return []
+            kind = "encoded" if low == "-encodedcommand" else "inline"
+            return [(code, kind)]
+    return []
+
+
+def _script_file_candidates(tokens: list[str], cwd: str) -> list[str]:
+    """段内指向真实存在文件的参数（用于读脚本内容递归扫描）。"""
+    out: list[str] = []
+    base = cwd or os.getcwd()
+    for tok in tokens[1:]:
+        if not tok or tok.startswith("-") or tok.startswith("/") or len(tok) > 512:
+            continue
+        path = tok if os.path.isabs(tok) else os.path.join(base, tok)
+        try:
+            if os.path.isfile(path):
+                out.append(path)
+        except OSError:
+            continue
+    return out
+
+
+def _read_script_text(path: str) -> str | None:
+    """读取脚本内容用于扫描；二进制文件返回 None（不误报）。"""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(TERMINAL_SCRIPT_SCAN_MAX_BYTES)
+    except OSError:
+        return None
+    if b"\x00" in raw[:4096]:
+        return None
+    # GBK/UTF-8 混用时按 UTF-8 忽略错误解码：删除命令均为 ASCII，不受影响
+    return raw.decode("utf-8", errors="ignore")
+
+
+def _decode_encoded_payload(payload: str) -> str:
+    """解码 base64 载荷（UTF-8 或 UTF-16LE）；无法解码返回空串。"""
+    import base64 as _b64
+
+    text = str(payload or "").strip().strip("'\"")
+    if not text or len(text) > 65536:
+        return ""
+    try:
+        raw = _b64.b64decode(text + "=" * (-len(text) % 4))
+    except Exception:
+        return ""
+    for encoding in ("utf-8", "utf-16-le"):
+        try:
+            decoded = raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        if "\x00" in decoded:
+            continue
+        if decoded.strip():
+            return decoded
+    return ""
+
+
+def _match_dangerous_code(code: str) -> str | None:
+    """在内联代码/脚本内容上匹配删除 API 模式。"""
+    for pattern, label in _DELETE_CODE_PATTERNS:
+        if pattern.search(code):
+            return label
+    return None
+
+
+def _find_blocked_delete(
+    command: str,
+    *,
+    cwd: str = "",
+    _depth: int = 0,
+) -> dict[str, str] | None:
+    """扫描命令文本，命中删除语义返回 {command, reason}；未命中返回 None（fail-closed）。
+
+    多层解析：分段 → 跳过包装器 → 段首命令名 → 组合形态（git rm / xargs / find /
+    robocopy / rsync / 管道到解释器）→ 内联代码递归（含 base64 载荷与删除 API 模式）
+    → 脚本文件内容递归。嵌套超过深度上限时拒绝执行（无法完成核验的命令不放行）。
+    """
+    if _depth > _GUARD_MAX_DEPTH:
+        return {
+            "command": str(command or "")[:200],
+            "reason": _guard_block_reason("命令嵌套层级过深，无法完成删除风险核验"),
+        }
+
+    for seg_text, pipe_target in _iter_command_segments(str(command or "")):
+        tokens = _split_shell_tokens(seg_text)
+        if not tokens:
+            continue
+        head_tokens = _skip_command_wrappers(tokens)
+        if not head_tokens:
+            continue
+        names = _command_token_names(head_tokens[0])
+
+        # 1) 段首即删除命令
+        for name in sorted(names):
+            if name in _DELETE_NAME_SET:
+                return {
+                    "command": seg_text[:200],
+                    "reason": _guard_block_reason(f"{name}：{_DELETE_COMMAND_NAMES[name]}"),
+                }
+
+        # 2) git rm / git clean（会移除工作区文件）
+        if "git" in names:
+            for tok in tokens[1:6]:
+                if tok.lower() in {"rm", "clean"}:
+                    return {
+                        "command": seg_text[:200],
+                        "reason": _guard_block_reason(f"git {tok.lower()}（移除工作区文件）"),
+                    }
+
+        # 3) xargs 后接删除命令
+        if "xargs" in names:
+            for tok in tokens[1:]:
+                if _command_token_names(tok) & _DELETE_NAME_SET:
+                    return {
+                        "command": seg_text[:200],
+                        "reason": _guard_block_reason("xargs 后接删除命令"),
+                    }
+
+        # 4) find -delete / find -exec rm
+        if "find" in names:
+            lowered = [tok.lower() for tok in tokens[1:]]
+            if "-delete" in lowered:
+                return {
+                    "command": seg_text[:200],
+                    "reason": _guard_block_reason("find -delete"),
+                }
+            for idx, tok in enumerate(lowered):
+                if tok == "-exec":
+                    for follow in tokens[idx + 1: idx + 3]:
+                        if _command_token_names(follow) & _DELETE_NAME_SET:
+                            return {
+                                "command": seg_text[:200],
+                                "reason": _guard_block_reason("find -exec 删除命令"),
+                            }
+
+        # 5) robocopy /MIR 与 rsync --delete（镜像/同步会删除目标端多余文件）
+        if "robocopy" in names and any(tok.lower() == "/mir" for tok in tokens[1:]):
+            return {
+                "command": seg_text[:200],
+                "reason": _guard_block_reason("robocopy /MIR 镜像删除"),
+            }
+        if "rsync" in names and any(tok.lower() == "--delete" for tok in tokens[1:]):
+            return {
+                "command": seg_text[:200],
+                "reason": _guard_block_reason("rsync --delete"),
+            }
+
+        interpreter_names = names & _SHELL_INTERPRETERS
+        inline_codes = _extract_inline_code(head_tokens) if interpreter_names else []
+        script_files = _script_file_candidates(head_tokens, cwd) if interpreter_names else []
+
+        # 6) 管道内容直接交给解释器（内容不可审计）
+        if pipe_target and interpreter_names and not inline_codes and not script_files:
+            return {
+                "command": seg_text[:200],
+                "reason": _guard_block_reason("管道内容直接交给解释器执行，无法审计"),
+            }
+
+        # 7) 内联代码递归（编码载荷先解码，再做文本与 API 模式扫描）
+        for code, kind in inline_codes:
+            if kind == "encoded":
+                decoded = _decode_encoded_payload(code)
+                if decoded:
+                    hit = _find_blocked_delete(decoded, cwd=cwd, _depth=_depth + 1)
+                    if hit:
+                        return hit
+                continue
+            hit = _find_blocked_delete(code, cwd=cwd, _depth=_depth + 1)
+            if hit:
+                return hit
+            label = _match_dangerous_code(code)
+            if label:
+                return {"command": seg_text[:200], "reason": _guard_block_reason(label)}
+            for payload in _INLINE_B64_RE.findall(code):
+                decoded = _decode_encoded_payload(payload)
+                if decoded:
+                    hit = _find_blocked_delete(decoded, cwd=cwd, _depth=_depth + 1)
+                    if hit:
+                        return hit
+
+        # 8) 脚本文件内容递归
+        for path in script_files:
+            content = _read_script_text(path)
+            if not content:
+                continue
+            hit = _find_blocked_delete(content, cwd=cwd, _depth=_depth + 1)
+            if hit:
+                return hit
+            label = _match_dangerous_code(content)
+            if label:
+                return {
+                    "command": os.path.basename(path),
+                    "reason": _guard_block_reason(f"{label}（脚本 {os.path.basename(path)}）"),
+                }
+
+    return None
+
+
+def _git_bash_candidates() -> list[str]:
+    """GitBash 的 bash.exe 候选路径（显式配置优先，其次常见安装位置）。"""
+    candidates: list[str] = []
+    configured = _env("GIT_BASH_PATH")
+    if configured:
+        candidates.append(configured)
+    for base in (
+        os.environ.get("ProgramFiles"),
+        os.environ.get("ProgramFiles(x86)"),
+        os.environ.get("ProgramW6432"),
+    ):
+        if base:
+            candidates.append(os.path.join(base, "Git", "bin", "bash.exe"))
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        candidates.append(os.path.join(local_appdata, "Programs", "Git", "bin", "bash.exe"))
+    candidates.append(os.path.expanduser("~/scoop/apps/git/current/bin/bash.exe"))
+    return candidates
+
+
+def _resolve_terminal_shell(shell: str) -> tuple[str | None, str]:
+    """解析 shell 可执行文件；返回 (可执行路径, 错误文案)。"""
+    name = str(shell or "").strip().lower()
+    if os.name == "nt":
+        if name == "cmd":
+            comspec = _env("COMSPEC") or os.path.join(
+                os.environ.get("SystemRoot", r"C:\Windows"), "System32", "cmd.exe"
+            )
+            if os.path.isfile(comspec):
+                return comspec, ""
+            return None, "未找到 cmd.exe（COMSPEC 与 System32 均不可用）"
+        if name in {"gitbash", "bash"}:
+            for candidate in _git_bash_candidates():
+                try:
+                    if candidate and os.path.isfile(candidate):
+                        return candidate, ""
+                except OSError:
+                    continue
+            found = shutil.which("bash")
+            # System32 下的 bash.exe 是 WSL 入口，不是 GitBash，不能当作 gitbash 使用
+            if found and "system32" not in found.lower():
+                return found, ""
+            return None, (
+                "未找到 GitBash（bash.exe）：请安装 Git for Windows，"
+                "或设置 GIT_BASH_PATH 指向 bash.exe；shell=cmd 仍可用。"
+            )
+        return None, f"不支持的 shell：{shell}（Windows 支持 cmd / gitbash）"
+    # 非 Windows：cmd/gitbash 统一映射到 sh，保持工具接口跨平台一致
+    if name in {"cmd", "gitbash", "bash", "sh"}:
+        found = shutil.which("sh") or shutil.which("bash")
+        if found:
+            return found, ""
+        return None, "未找到 /bin/sh 或 bash"
+    return None, f"不支持的 shell：{shell}"
+
+
+def _build_child_env() -> dict[str, str]:
+    """终端子进程环境：剥离 worker 自身凭证，避免命令直接读走平台 token。"""
+    env = dict(os.environ)
+    for key in _CHILD_ENV_STRIPPED_KEYS:
+        env.pop(key, None)
+    return env
+
+
+def _truncate_output(
+    text: str, limit: int = TERMINAL_MAX_OUTPUT_CHARS
+) -> tuple[str, bool]:
+    """输出限长（防止超长输出撑爆工具结果与上下文）。"""
+    if len(text) <= limit:
+        return text, False
+    return text[:limit] + f"\n...（输出超过 {limit} 字符上限，已截断）", True
+
+
+def _decode_console_output(raw: bytes) -> str:
+    """控制台输出解码：UTF-8 优先，回退系统 ANSI 代码页（中文 Windows 为 cp936）。"""
+    if not raw:
+        return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    for encoding in (locale.getpreferredencoding(False), "mbcs"):
+        if not encoding:
+            continue
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _kill_process_tree(proc: "subprocess.Popen[bytes]") -> None:
+    """终止进程树（Windows: taskkill /T；POSIX: killpg），避免孙进程残留。"""
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+            )
+            return
+        except OSError:
+            pass
+    else:
+        import signal as _signal
+
+        try:
+            os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
+            return
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
+    """/exec 端点：在本机以 cmd / GitBash 执行单条命令（删除命令硬阻断）。"""
+    command = str(payload.get("command") or "").strip()
+    # 默认 gitbash（Unix 语法对模型更友好）；不可用时返回可读错误并提示改用 cmd
+    shell = str(payload.get("shell") or "gitbash").strip().lower() or "gitbash"
+    root = _resolve_safe_root(str(payload.get("working_dir") or "").strip())
+    try:
+        timeout_seconds = int(
+            payload.get("timeout_seconds") or TERMINAL_DEFAULT_TIMEOUT_SECONDS
+        )
+    except (TypeError, ValueError):
+        timeout_seconds = TERMINAL_DEFAULT_TIMEOUT_SECONDS
+    timeout_seconds = max(1, min(timeout_seconds, TERMINAL_MAX_TIMEOUT_SECONDS))
+
+    if not command:
+        return {"ok": False, "error": "命令不能为空"}
+    if len(command) > TERMINAL_MAX_COMMAND_CHARS:
+        return {"ok": False, "error": f"命令过长（上限 {TERMINAL_MAX_COMMAND_CHARS} 字符）"}
+
+    blocked = _find_blocked_delete(command, cwd=root)
+    if blocked:
+        return {
+            "ok": False,
+            "blocked": True,
+            "command": blocked["command"],
+            "reason": blocked["reason"],
+            "error": blocked["reason"],
+        }
+
+    executable, error = _resolve_terminal_shell(shell)
+    if executable is None:
+        return {"ok": False, "error": error, "shell": shell}
+
+    if os.name == "nt":
+        args = (
+            [executable, "/d", "/s", "/c", command]
+            if shell == "cmd"
+            else [executable, "-c", command]
+        )
+        popen_kwargs: dict[str, Any] = {
+            "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+        }
+    else:
+        args = [executable, "-c", command]
+        popen_kwargs = {"start_new_session": True}
+
+    started = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            args,
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=_build_child_env(),
+            **popen_kwargs,
+        )
+    except OSError as exc:
+        return {"ok": False, "error": f"启动命令失败: {exc}", "shell": shell}
+
+    timed_out = False
+    try:
+        raw_out, raw_err = proc.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _kill_process_tree(proc)
+        try:
+            raw_out, raw_err = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            raw_out, raw_err = b"", b""
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    stdout, out_truncated = _truncate_output(_decode_console_output(raw_out or b""))
+    stderr, err_truncated = _truncate_output(_decode_console_output(raw_err or b""))
+    exit_code = proc.returncode
+
+    result: dict[str, Any] = {
+        "ok": (not timed_out) and exit_code == 0,
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "shell": shell,
+        "cwd": root,
+        "duration_ms": duration_ms,
+        "truncated": out_truncated or err_truncated,
+    }
+    if timed_out:
+        result["timed_out"] = True
+        result["error"] = f"命令执行超时（{timeout_seconds}s），已终止进程树"
+    elif exit_code != 0:
+        result["error"] = f"命令退出码 {exit_code}"
+    return result
+
+
 class OsAutomationHandler(BaseHTTPRequestHandler):
     server_version = "YujianwoOSAutomation/0.1"
 
@@ -1717,6 +2396,11 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send_json(401, {"ok": False, "error": "unauthorized"})
             return
+        shells = {
+            name: os.path.isfile(exe) if exe else False
+            for name in ("cmd", "gitbash")
+            for exe, _err in [_resolve_terminal_shell(name)]
+        }
         self._send_json(
             200,
             {
@@ -1725,12 +2409,13 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
                 "os": os.name,
                 "pid": os.getpid(),
                 "token_configured": bool(_env("OS_AUTOMATION_TOKEN")),
+                "terminal_shells": shells,
             },
         )
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/file", "/recycle", "/snapshot"}:
+        if parsed.path not in {"/file", "/recycle", "/snapshot", "/exec"}:
             self._send_json(404, {"ok": False, "error": "not_found"})
             return
         if not self._authorized():
@@ -1754,6 +2439,10 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/snapshot":
                 result = _snapshot_operation(payload)
+                self._send_json(200, result)
+                return
+            if parsed.path == "/exec":
+                result = _exec_operation(payload)
                 self._send_json(200, result)
                 return
         except Exception as exc:

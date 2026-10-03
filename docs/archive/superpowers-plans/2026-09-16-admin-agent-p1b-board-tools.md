@@ -4117,7 +4117,7 @@ cd api && python -m pytest test/internal/model/test_audit_log_actor_fields.py te
 
 关键边界：管理端 Agent **不能接触任何用户端内容**（账号层面已隔离）；**不继承**管理员全部权限（三重交集）；模型成本由系统承担（P4 补预算闸门）。
 
-详见 [rbac.md §9](../rbac.md)（授权与执行机制）与 [01-agent-tool-pool.md](./modules/01-agent-tool-pool.md)（`internal_admin` 池消费方）。
+详见 [rbac.md §9](../../rbac.md)（授权与执行机制）与 [01-agent-tool-pool.md](../../prd/modules/01-agent-tool-pool.md)（`internal_admin` 池消费方）。
 ```
 
 - [x] **Step 8: 同步 `docs/prd/execution-roadmap.md`**
@@ -4144,7 +4144,7 @@ cd api && python -m pytest test/internal/model/test_audit_log_actor_fields.py te
 | 草稿泛化 | `policy_change_draft.suggestion_id` 可空 + 板块标识（迁移 `u9c0d1e2f3a4`） |
 | 回收站 Agent 来源 | `deleted_by_type='admin_agent'`（迁移 `v0d1e2f3a4b5`） |
 | builtin 工具写路径补齐 | `BuiltinToolService.set_tool_enabled` + `_builtin_tool_update` 放开 enabled |
-| 机制文档 | [rbac.md §9.7](../rbac.md)、[architecture-design.md](./architecture-design.md) |
+| 机制文档 | [rbac.md §9.7](../../rbac.md)、[architecture-design.md](../../prd/architecture-design.md) |
 
 **执行模型**：`AdminAgentExecutionService.run` 执行四步——① 权限/熔断校验（拒绝并记审计）② 按 `automation_policy` 分流（`supervised` 产草稿不执行 / `autonomous` 直接执行 / `blocked` 熔断）③ 调板块实现体 ④ 写 `actor_type=agent` 审计。未配置板块一律 `supervised`（fail closed）。
 

@@ -78,8 +78,16 @@ docker/
 | `llmops-kkfileview` | kkFileView 多格式文件在线预览 | `keking/kkfileview:latest` | `127.0.0.1:${KKFILEVIEW_PORT:-8012}` |
 | `llmops-neo4j` | 记忆系统 TKG 时序知识图谱（含 APOC 插件） | `neo4j:2026-community` | `127.0.0.1:${NEO4J_HTTP_PORT:-7474}` / `127.0.0.1:${NEO4J_BOLT_PORT:-7687}` |
 | `llmops-minio` | 记忆系统对象存储 | `minio/minio` | `${MINIO_API_PORT:-9000}` / `${MINIO_CONSOLE_PORT:-9001}` |
-| `llmops-browser-worker` | 浏览器自动化 worker（`profile: local-workers`） | `llmops-worker:${IMAGE_VERSION:-0.1.0}` | `127.0.0.1:${BROWSER_AUTOMATION_PORT:-8766}` |
-| `llmops-computer-worker` | 电脑控制 worker（`profile: local-workers`） | `llmops-worker:${IMAGE_VERSION:-0.1.0}` | `127.0.0.1:${COMPUTER_CONTROL_PORT:-8767}` |
+| `llmops-browser-worker` | 浏览器自动化 worker（**默认启动**；Web 端「内部浏览器」回退通道） | `llmops-worker:${IMAGE_VERSION:-0.1.0}` | `127.0.0.1:${BROWSER_AUTOMATION_PORT:-8766}` |
+| `llmops-computer-worker` | 电脑控制 worker（**默认不启动**，`profile: local-workers`；仅容器内 xvfb 虚拟桌面） | `llmops-worker:${IMAGE_VERSION:-0.1.0}` | `127.0.0.1:${COMPUTER_CONTROL_PORT:-8767}` |
+
+> **两个 worker 的定位差异（勿混淆）**：
+> - `llmops-browser-worker` = 服务端 headless Chromium，即 Web 端能用的「**内部浏览器**」，是未安装桌面端用户的浏览器能力回退通道，**默认启动**。
+> - `llmops-computer-worker` 跑的是**容器内 xvfb 虚拟桌面**，**操作不到用户的真实电脑**；真正的「操作我的电脑」由**桌面客户端**提供（自带 worker + cua-driver）。故它**默认不启动**，需要时显式启用：
+>   ```bash
+>   docker compose -f docker/docker-compose.yaml --profile local-workers up -d llmops-computer-worker
+>   ```
+> - 两者的鉴权 token 均**无弱默认**：不配置时 worker 拒绝启动、api 侧工具返回诚实「未配置」。请在 `docker/.env` 配置强随机 token（模板见 `docker/.env.example`）。
 
 说明：
 
@@ -188,6 +196,27 @@ docker/ui-prod.sh         # 或 Windows: docker\ui-prod.ps1
 - `llmops-ui` 以 dev 镜像运行 Vite 开发服务器（http://localhost:3000，热更新，源码挂载，保存即生效）
 - 不变更 `container_name` 与端口，外层 `llmops-nginx`（http://localhost:80）无需改动即透传
 
+### 方式三：后端热重载（DEV_RELOAD，配合源码挂载）
+
+> 后端源码虽以 volume 挂载（`../api → /app/api`），但 **Python 模块不会自动重载**。
+> 在 `api/.env` 里设 `DEV_RELOAD=1` 即可让 API / Celery / Beat 改代码后自动生效，
+> **无需重建镜像、无需手动 restart**（默认 `0`，**生产必须保持 `0`**）。
+
+```bash
+# api/.env
+DEV_RELOAD=1
+```
+
+```bash
+cd docker
+docker compose up -d llmops-api llmops-celery llmops-celery-beat   # 让开关生效
+```
+
+- `MODE=asgi` → `uvicorn --reload --reload-dir /app/api`（**强制单 worker**，忽略 `ASGI_WORKER_AMOUNT`）
+- `MODE=celery` / `celery-beat` → 由 `watchfiles` 托管（`api/scripts/dev_reload.py`），`.py` 变更即重启进程树
+- 忽略目录：`DEV_RELOAD_SKIP_DIRS`（冒号分隔，默认 `/app/api/test`）——改测试用例不会触发重启
+- **reload 覆盖不到、仍需手动处理**：alembic 迁移（改迁移需 `docker restart llmops-api`）；入口脚本 `api/docker/entrypoint.sh` 与依赖 `requirements.txt`（需 `docker compose build llmops-api` 重建镜像）；`browser-worker` / `computer-worker`（由 compose `command:` 启动，不在热重载范围）
+
 ## 常见场景
 
 ### 场景 1：修改 LLM API Key / 业务配置
@@ -279,6 +308,13 @@ docker compose ps
 - 生产环境未配置 `MODEL_KEY_ENCRYPTION_KEY` 会 fail-fast，生成方式：
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
 - 缺少 `JWT_SECRET_KEY`、`REDIS_HOST` / `REDIS_PORT`、`SQLALCHEMY_DATABASE_URI` 时入口脚本直接报错退出
+
+### 改了后端代码但行为没变（“旧代码”假象）
+
+`llmops-api` / `llmops-celery` **默认不热重载**：源码挂载只对「运行时读取的文件」（如 `api/internal/core/prompts/*.yaml`、技能包）即时生效，**Python 模块改动必须重启进程**。典型症状：新增的 admin 路由/权限被全局 RBAC 门禁 fail-closed 成 `403 无权限访问该管理接口`，而角色与权限配置完全正确（根因只是进程还是旧代码）。
+
+- 快速修复：`docker compose restart llmops-api llmops-celery llmops-celery-beat`
+- 长期开发：在 `api/.env` 设 `DEV_RELOAD=1`（见「本地开发 → 方式三」），此后改 `.py` 自动生效
 
 ### API Key 无效 / LangSmith 403 刷屏
 

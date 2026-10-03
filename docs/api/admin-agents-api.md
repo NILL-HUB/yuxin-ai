@@ -51,7 +51,7 @@
 
 ```json
 {
-  "boards": ["builtin_tool"],
+  "boards": ["builtin_tool", "schedule_task"],
   "actions": [
     {
       "board": "builtin_tool",
@@ -289,8 +289,8 @@ feature 未启用 / 会话不属于该 Agent（续聊传了别个 Agent 的 `con
 
 实现：`api/internal/core/admin_agent_budget.py` 的 `AdminAgentBudgetGate`。计数存 Redis
 周期键 `budget:{agent_id}:{metric}:{YYYYMMDD|YYYYMM}`（`incr` 累计），超限抛
-`AdminAgentBudgetExceeded`（HTTP 层转 `403`）并记审计 `BUDGET_REJECTED`。
-**Redis 不可用 → fail-open**（放行 + 记日志，不阻断既有行为）。
+`AdminAgentBudgetExceeded`（`invoke` 入口 HTTP 层转 `403`；`chat` 入口转 SSE `error` 帧并原样透出闸门文案）。
+**Redis 不可用 → fail-open**（放行 + 记日志，不阻断既有行为）。超限**不写专属审计 action**（当前仅抛错 / 错误帧）。
 
 **施加点（三入口）**：`POST /admin/agents/<id>/invoke`、`POST /admin/agents/<id>/chat`
 （`AdminAgentChatService.chat` 入口）、admin 定时任务执行（`schedule_execution_service`

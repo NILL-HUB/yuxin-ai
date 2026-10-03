@@ -85,6 +85,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/system-knowledge', label: t('admin.adminLayout.menu.systemKnowledge'), permission: 'system_knowledge:read' },
       { to: '/admin/tools', label: t('admin.adminLayout.menu.tools'), permission: 'tool:read' },
       { to: '/admin/mcp', label: t('admin.adminLayout.menu.mcp'), permission: 'mcp:read' },
+      { to: '/admin/cli', label: t('admin.adminLayout.menu.cli'), permission: 'cli:read' },
       { to: '/admin/skills', label: t('admin.adminLayout.menu.skills'), permission: 'skill:read' },
       { to: '/admin/schedules', label: t('admin.adminLayout.menu.schedules'), permission: 'schedule_task:read' },
     ],

@@ -614,12 +614,21 @@ class ScheduleTaskService(BaseService):
         return runs, total
 
     def scan_due_tasks(self) -> list[ScheduleTask]:
-        """扫描到期任务（next_run_at <= now 且 enabled），按到期时间升序保证执行顺序稳定"""
+        """扫描到期任务（next_run_at <= now 且 enabled），按到期时间升序保证执行顺序稳定。
+
+        排除归属账号已删除（deleted）或已进回收站锁定（recycled）的任务：
+        锁定期间不派发、不产生新数据；账号从回收站恢复后自动重新纳入扫描
+        （不改任务 enabled，无需任何还原动作）。
+        """
         now = _utcnow_naive()
+        blocked_accounts = self.db.session.query(Account.id).filter(
+            Account.status.in_(("deleted", "recycled")),
+        )
         return self.db.session.query(ScheduleTask).filter(
             ScheduleTask.enabled.is_(True),
             ScheduleTask.next_run_at.isnot(None),
             ScheduleTask.next_run_at <= now,
+            ~ScheduleTask.account_id.in_(blocked_accounts),
         ).order_by(ScheduleTask.next_run_at.asc()).limit(50).all()
 
     def advance_next_run(self, task: ScheduleTask) -> ScheduleTask:

@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from typing import Callable, Optional
 
@@ -6,6 +7,16 @@ from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
 
 logger = logging.getLogger(__name__)
+
+# 子代理「无法完成」约定标记：模型按系统提示词要求在确实无法完成任务时，
+# 于回答中输出「无法完成：<原因>」。零成本检测此标记即可把「跑完但没做成」
+# 与「真的成功」区分开，进而在编排层触发指挥官重规划。
+_BLOCK_MARKER_PATTERN = re.compile(r"无法完成\s*[:：]\s*(?P<reason>[^\n\r]*)")
+
+# 「可疑」零成本判定阈值：回答短于该长度、且任务描述足够具体时，补一次
+# LLM 自评，兜底捕捉「模型未按约定标记、但实际没做成」的情况。
+_SUSPICIOUS_ANSWER_MAX_LEN = 20
+_MIN_TASK_DESCRIPTION_LEN = 20
 
 
 class AgentTaskExecutor:
@@ -27,6 +38,9 @@ class AgentTaskExecutor:
         long_term_memory="",
         user_memory="",
         event_emitter: Optional[Callable[[AgentThought], None]] = None,
+        # 申请追加工具的 provider：(query, reason, current_tools) -> (说明文本, 新工具列表)。
+        # 由上层（assistant_agent_service）注入；为 None 时不挂载 request_more_tools。
+        extra_tool_provider: Optional[Callable[..., object]] = None,
     ):
         self.agent_class = agent_class
         self.agent_config = agent_config
@@ -39,6 +53,7 @@ class AgentTaskExecutor:
         # 实时事件回调：每次从 agent.stream() 收到 AgentThought 时调用一次
         # 用于把推理/工具调用/记忆召回等中间事件实时推给前端
         self.event_emitter = event_emitter
+        self.extra_tool_provider = extra_tool_provider
 
     def execute(self, item, context: dict | None = None) -> dict:
         """执行单个 Agent 任务（带一次安全续跑）。
@@ -78,10 +93,80 @@ class AgentTaskExecutor:
         metadata = result.get("metadata") or {}
         return bool(metadata.get("terminal_failure"))
 
+    @staticmethod
+    def _detect_blocked(answer: str) -> tuple[bool, str]:
+        """检测子代理是否按约定标记申明「无法完成」。
+
+        返回 (blocked, reason)。仅命中约定标记时 blocked=True；未命中表示
+        「未申明阻塞」，由上游按可疑度判断是否补一次语义自评。
+        """
+        if not answer:
+            return False, ""
+        match = _BLOCK_MARKER_PATTERN.search(answer)
+        if not match:
+            return False, ""
+        reason = (match.group("reason") or "").strip()
+        return True, reason
+
+    @staticmethod
+    def _looks_suspicious(item, answer: str) -> bool:
+        """零成本可疑度判定：回答为空/极短，且任务描述足够具体。
+
+        只对「本该有实质产出却没产出」的情况补一次语义自评，trivial 任务
+        （如“输出 hello”）不触发额外 LLM 调用。
+        """
+        text = (answer or "").strip()
+        if len(text) >= _SUSPICIOUS_ANSWER_MAX_LEN:
+            return False
+        description = str(getattr(item, "description", "") or "").strip()
+        return len(description) >= _MIN_TASK_DESCRIPTION_LEN
+
+    def _evaluate_completion(self, item, answer: str) -> tuple[bool, str] | None:
+        """可疑时补一次 LLM 自评，判定子任务是否真正完成。
+
+        返回 ``(blocked, blocking_reason)``；返回 None 表示自评不可用
+        （无模型 / 调用异常），此时保持原判定，避免误报阻塞。
+        """
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            from internal.service.language_model_service import LanguageModelService
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+            llm = LanguageModelService.get_feature_model("subtask_completion_evaluation")
+            if llm is None:
+                return None
+            system_prompt = SystemPromptLibraryService().get_prompt_or_default(
+                "subtask_completion_evaluator"
+            )
+            description = str(getattr(item, "description", "") or "").strip()
+            response = llm.invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(
+                    content=(
+                        f"子任务描述：\n{description}\n\n"
+                        f"子代理回答：\n{answer.strip() or '（空）'}"
+                    )
+                ),
+            ])
+            text = str(getattr(response, "content", "") or "").strip()
+            if not text:
+                return None
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            headline = (lines[0] if lines else "").upper()
+            if "NOT_COMPLETED" in headline or "NOT COMPLETED" in headline:
+                reason = lines[1] if len(lines) > 1 else ""
+                return True, (reason or "自评判定子任务未完成")
+            return False, ""
+        except Exception:
+            logger.warning("子任务完成度自评失败，保持原判定", exc_info=True)
+            return None
+
     def _run_once(self, item, context: dict | None = None) -> dict:
         try:
             agent_config = self._resolve_agent_config(item)
             agent = self.agent_class(llm=self.llm, agent_config=agent_config)
+            self._attach_meta_tools(agent)
 
             collected_answer = ""
             tool_calls: list[dict] = []
@@ -186,6 +271,13 @@ class AgentTaskExecutor:
                 "cached_input_tokens": total_cached_tokens,
             }
 
+            blocked, blocking_reason = self._detect_blocked(collected_answer)
+            # 约定标记未命中时，对「可疑」结果补一次语义自评（覆盖模型未按约定
+            # 输出标记、但实际并未完成任务的情况）。
+            if not blocked and self._looks_suspicious(item, collected_answer):
+                evaluated = self._evaluate_completion(item, collected_answer)
+                if evaluated is not None:
+                    blocked, blocking_reason = evaluated
             return {
                 "agent_id": item.task_id,
                 "task_id": item.task_id,
@@ -195,6 +287,8 @@ class AgentTaskExecutor:
                 "tool_calls": tool_calls,
                 "warnings": [],
                 "errors": [],
+                "blocked": blocked,
+                "blocking_reason": blocking_reason,
                 "cost": {
                     "total_tokens": total_token_count,
                     "total_price": total_price,
@@ -205,6 +299,7 @@ class AgentTaskExecutor:
                     "token_usage": tokens,
                     "latency": latency,
                     "terminal_failure": saw_terminal_failure,
+                    "agent_blocked": blocked,
                 },
             }
         except Exception as e:
@@ -217,6 +312,80 @@ class AgentTaskExecutor:
                 "warnings": [],
                 "confidence": 0,
             }
+
+    def _attach_meta_tools(self, agent) -> None:
+        """把 ``request_more_tools`` 元工具注入 Agent 实例的工具列表。
+
+        追加的工具直接写回 ``agent.agent_config.tools``：``FunctionCallAgent`` 每轮
+        LLM 调用都会重读该列表，因此本轮申请到的工具在**同一执行的后续轮次**即生效。
+        未注入 provider（如无编排链路）时不挂载，保持原行为。
+        """
+        provider = self.extra_tool_provider
+        if provider is None:
+            return
+        config = getattr(agent, "agent_config", None)
+        if config is None or not hasattr(config, "model_copy"):
+            return
+        try:
+            from internal.core.agent.meta_tools.request_more_tools import (
+                REQUEST_MORE_TOOLS_NAME,
+                build_request_more_tools_tool,
+            )
+        except Exception:
+            logger.warning("加载 request_more_tools 元工具失败", exc_info=True)
+            return
+
+        def _provide(query: str, reason: str) -> str:
+            current = list(
+                getattr(getattr(agent, "agent_config", None), "tools", None) or []
+            )
+            try:
+                result = provider(query, reason, current)
+            except Exception:
+                logger.warning("申请追加工具失败", exc_info=True)
+                return "申请追加工具失败，请继续用现有工具尽力完成。"
+            text, new_tools = "", []
+            if isinstance(result, tuple) and len(result) == 2:
+                text, new_tools = result
+            elif isinstance(result, str):
+                text = result
+            if new_tools:
+                self._merge_into_agent_tools(agent, new_tools)
+            return text or "已处理工具申请，请继续完成任务。"
+
+        existing = list(getattr(config, "tools", None) or [])
+        if any(
+            getattr(tool, "name", "") == REQUEST_MORE_TOOLS_NAME for tool in existing
+        ):
+            return
+        meta_tool = build_request_more_tools_tool(_provide)
+        try:
+            agent.agent_config = config.model_copy(
+                update={"tools": [*existing, meta_tool]}
+            )
+        except Exception:
+            logger.warning("挂载 request_more_tools 失败", exc_info=True)
+
+    @staticmethod
+    def _merge_into_agent_tools(agent, new_tools) -> None:
+        """把新工具并入 Agent 实例的工具列表（按工具名去重）。"""
+        config = getattr(agent, "agent_config", None)
+        if config is None or not hasattr(config, "model_copy"):
+            return
+        current = list(getattr(config, "tools", None) or [])
+        names = {getattr(tool, "name", "") for tool in current}
+        merged = list(current)
+        for tool in new_tools:
+            name = getattr(tool, "name", "")
+            if name and name not in names:
+                merged.append(tool)
+                names.add(name)
+        if len(merged) == len(current):
+            return
+        try:
+            agent.agent_config = config.model_copy(update={"tools": merged})
+        except Exception:
+            logger.warning("追加工具到 Agent 失败", exc_info=True)
 
     def _resolve_query(self, item, context: dict | None = None) -> str:
         base_query = item.description or self.query

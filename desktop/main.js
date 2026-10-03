@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session, Menu, screen } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session, Menu, screen } = require('electron')
 const { spawn, execSync } = require('child_process')
 const net = require('net')
 const crypto = require('crypto')
@@ -21,13 +21,14 @@ const {
   resolveCuaDriverExe,
 } = require('./cua-driver-host')
 const { createTray } = require('./tray')
-const { setupUpdater, checkForUpdates, autoUpdater } = require('./updater')
+const { setupUpdater, configureUpdater, checkForUpdates, schedulePeriodicChecks, autoUpdater } = require('./updater')
 const { computeWindowOptions, loadState, saveState } = require('./window-state')
 
 let mainWindow = null
 let workers = new Map()
 let bridgeServer = null
 let tray = null
+let deviceHeartbeatTimer = null
 let isQuitting = false
 
 let credentialStore = null
@@ -271,9 +272,30 @@ function syncConfig() {
   return desktopConfigCache
 }
 
-async function registerThisDevice() {
+// 设备心跳间隔：服务端按 last_seen_at 判定租约（DEVICE_ONLINE_TTL_SECONDS = 180s），
+// 本值须显著小于服务端租约；改动时需与服务端 desktop_device_service.py 同步核对。
+const DEVICE_HEARTBEAT_INTERVAL_MS = 60_000
+
+function startDeviceHeartbeat() {
+  if (deviceHeartbeatTimer) return
+  deviceHeartbeatTimer = setInterval(() => {
+    void registerThisDevice({ silent: true })
+  }, DEVICE_HEARTBEAT_INTERVAL_MS)
+  // 心跳定时器不应阻止进程退出
+  if (typeof deviceHeartbeatTimer.unref === 'function') deviceHeartbeatTimer.unref()
+}
+
+function stopDeviceHeartbeat() {
+  if (!deviceHeartbeatTimer) return
+  clearInterval(deviceHeartbeatTimer)
+  deviceHeartbeatTimer = null
+}
+
+async function registerThisDevice({ silent = false } = {}) {
   // 登录后把本机 bridge 地址与随机 token 上报服务端，按账号动态解析，
   // 解决「随机 token 无法与静态 DESKTOP_BRIDGE_* 对齐」的断链问题。
+  // 该接口同时承担**心跳**职责：定时重复调用以刷新服务端 last_seen_at，
+  // 使服务端能在本机关机/休眠后将其判为离线，不再向已离线的设备派发任务。
   if (!bridgeAccessInfo || !credentialStore) return { ok: false, reason: 'not_ready' }
   const accessToken = credentialStore.load()
   if (!accessToken) return { ok: false, reason: 'no_credential' }
@@ -292,7 +314,8 @@ async function registerThisDevice() {
   if (!result.ok) {
     console.warn(`[desktop] 设备注册失败: ${result.reason}`)
   } else {
-    console.log('[desktop] 设备注册成功')
+    if (!silent) console.log('[desktop] 设备注册成功')
+    startDeviceHeartbeat()
   }
   return result
 }
@@ -506,6 +529,8 @@ app.whenReady().then(async () => {
     recycleToken: tokens.os,
     snapshotPort: osPort,
     snapshotToken: tokens.os,
+    execPort: osPort,
+    execToken: tokens.os,
     browserPort,
     browserToken: tokens.browser,
     computerPort,
@@ -550,6 +575,8 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('desktop:clear-credential', async () => {
     // 先吊销设备（需要 token），再清本地凭证；否则服务端仍会向已登出设备转发本机操作。
+    // 同时停止心跳：登出后不应再上报，避免服务端把已登出设备判为在线。
+    stopDeviceHeartbeat()
     await revokeThisDevice()
     if (credentialStore) credentialStore.clear()
     return true
@@ -572,7 +599,16 @@ app.whenReady().then(async () => {
     if (!autoUpdater) {
       return { ok: false, reason: 'updater_disabled' }
     }
-    checkForUpdates()
+    checkForUpdates({ manual: true })
+    return { ok: true }
+  })
+  ipcMain.handle('desktop:quit-and-install', () => {
+    if (!autoUpdater) {
+      return { ok: false, reason: 'updater_disabled' }
+    }
+    // 仅在 update-downloaded 之后调用有效；置 isQuitting 让窗口关闭走正常退出而非最小化到托盘
+    isQuitting = true
+    setImmediate(() => autoUpdater.quitAndInstall())
     return { ok: true }
   })
 
@@ -633,20 +669,37 @@ app.whenReady().then(async () => {
       app.quit()
     },
     getStatus: workerStatusSnapshot,
+    onCheckUpdates: () => checkForUpdates({ manual: true }),
   })
 
+  // 更新检查前先读取服务端门控清单（admin 可关推送 / 切换更新包地址）
+  configureUpdater({ getApiBase: () => (syncConfig() || {}).apiBase })
+
   setupUpdater({
-    onStatus: (status) => {
+    onStatus: (status, meta) => {
       if (status === 'available') notify('钰见我 有更新可用', '正在后台下载，完成后将提示安装')
       if (status === 'downloaded') notify('钰见我 更新已就绪', '重启应用即可完成更新')
+      // 仅手动检查时提示「已是最新」；自动巡检每天都会 not-available，无差别提示会变成噪音
+      if (status === 'not-available' && meta && meta.manual) {
+        notify('钰见我 已是最新版本', '当前无需更新')
+      }
       for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('desktop:update-status', status)
+        win.webContents.send('desktop:update-status', {
+          status,
+          version: (meta && meta.version) || null,
+          releaseNotes: (meta && meta.releaseNotes) || '',
+          manual: Boolean(meta && meta.manual),
+        })
       }
     },
     onError: (err) => {
       console.warn(`[desktop] updater error: ${err && err.message}`)
     },
   })
+
+  // 启动延迟检查一次 + 此后每日巡检；此前 checkForUpdates 仅有 IPC 手动触发，
+  // 用户不主动点就永远不会检查更新，导致新版本无法到达用户。
+  schedulePeriodicChecks()
 
   // 自绘标题栏的窗口控制：从 event.sender 反查窗口，不收窗口 id 参数（安全）
   ipcMain.on('window:minimize', (event) => {
@@ -689,6 +742,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  stopDeviceHeartbeat()
   for (const name of [...workers.keys()]) stopWorker(name)
   stopCuaDriver()
   if (bridgeServer) bridgeServer.close()

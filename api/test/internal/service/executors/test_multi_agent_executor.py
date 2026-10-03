@@ -364,3 +364,114 @@ class TestMultiAgentExecutor:
 
         item = TaskPlanItem(task_id="t1", title="t", model_tier="3")
         assert executor._resolve_llm_for_item(item) == "host-llm"
+
+    @staticmethod
+    def _subtask_host(tools, resolver):
+        return SimpleNamespace(
+            agent_class=object,
+            agent_config={},
+            tools=tools,
+            history=[],
+            llm="host-llm",
+            long_term_memory=None,
+            user_memory=None,
+            subtask_registry=None,
+            query="q",
+            subtask_tool_resolver=resolver,
+        )
+
+    def test_subtask_tools_resolved_per_item_and_exposed_in_sse(self):
+        """子任务按自身描述自检索工具，并写回 item.tools 供 SSE 展示。"""
+        from internal.entity.execution_orchestration_entity import TaskPlanItem
+        from internal.service.executors.multi_agent_executor import _SubtaskTaskExecutor
+
+        class _FakeTool:
+            def __init__(self, name):
+                self.name = name
+
+        class _ListQueue:
+            def __init__(self):
+                self.items = []
+
+            def put(self, value):
+                self.items.append(value)
+
+        resolved_queries = []
+
+        def _resolver(item):
+            resolved_queries.append(item.description)
+            return [_FakeTool("resolved_tool")]
+
+        sse_queue = _ListQueue()
+        executor = _SubtaskTaskExecutor(
+            host=self._subtask_host([_FakeTool("host_tool")], _resolver),
+            event_emitter=None,
+            sse_queue=sse_queue,
+            conversation_id="c1",
+            message_id="m1",
+        )
+        item = TaskPlanItem(task_id="t1", title="t", description="分析数据")
+
+        with patch(
+            "internal.service.executors.multi_agent_executor.AgentTaskExecutor"
+        ) as mock_class:
+            mock_class.return_value.execute.return_value = {
+                "agent_id": "t1",
+                "task_id": "t1",
+                "answer": "ok",
+                "errors": [],
+                "warnings": [],
+                "sources": [],
+                "confidence": 1.0,
+            }
+            executor.execute(item)
+
+        assert resolved_queries == ["分析数据"]
+        assert [t.name for t in mock_class.call_args.kwargs["tools"]] == ["resolved_tool"]
+        assert item.tools == ["resolved_tool"]
+        running = _parse_payload(sse_queue.items[0])
+        assert running["tools"] == ["resolved_tool"]
+
+    def test_subtask_tools_fall_back_to_host_when_resolver_fails(self):
+        """解析器抛错时回退主 Agent 基线工具集，子任务不会失去工具。"""
+        from internal.entity.execution_orchestration_entity import TaskPlanItem
+        from internal.service.executors.multi_agent_executor import _SubtaskTaskExecutor
+
+        class _FakeTool:
+            def __init__(self, name):
+                self.name = name
+
+        class _ListQueue:
+            def __init__(self):
+                self.items = []
+
+            def put(self, value):
+                self.items.append(value)
+
+        def _broken_resolver(item):
+            raise RuntimeError("boom")
+
+        executor = _SubtaskTaskExecutor(
+            host=self._subtask_host([_FakeTool("host_tool")], _broken_resolver),
+            event_emitter=None,
+            sse_queue=_ListQueue(),
+            conversation_id="c1",
+            message_id="m1",
+        )
+        item = TaskPlanItem(task_id="t1", title="t", description="分析数据")
+
+        with patch(
+            "internal.service.executors.multi_agent_executor.AgentTaskExecutor"
+        ) as mock_class:
+            mock_class.return_value.execute.return_value = {
+                "agent_id": "t1",
+                "task_id": "t1",
+                "answer": "ok",
+                "errors": [],
+                "warnings": [],
+                "sources": [],
+                "confidence": 1.0,
+            }
+            executor.execute(item)
+
+        assert [t.name for t in mock_class.call_args.kwargs["tools"]] == ["host_tool"]

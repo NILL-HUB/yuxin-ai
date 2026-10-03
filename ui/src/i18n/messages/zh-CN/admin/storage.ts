@@ -26,6 +26,7 @@ export default  {
       activateFailed: '切换存储源失败',
       configTitle: '配置 {backend}',
       configPlaceholder: '请输入配置项（JSON）',
+      jsonInvalid: 'JSON 格式不正确',
       configSaved: '配置已保存',
       configSaveFailed: '保存配置失败',
       loadFailed: '加载存储概览失败，请重试',

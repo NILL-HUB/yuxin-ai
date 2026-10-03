@@ -18,6 +18,11 @@ function createBridge(options = {}) {
       token: options.snapshotToken || process.env.OS_AUTOMATION_TOKEN || '',
       path: '/snapshot',
     },
+    '/exec': {
+      port: Number(options.execPort || process.env.OS_AUTOMATION_PORT || 8765),
+      token: options.execToken || process.env.OS_AUTOMATION_TOKEN || '',
+      path: '/exec',
+    },
     '/browser': {
       port: Number(options.browserPort || process.env.BROWSER_AUTOMATION_PORT || 8766),
       token: options.browserToken || process.env.BROWSER_AUTOMATION_TOKEN || '',

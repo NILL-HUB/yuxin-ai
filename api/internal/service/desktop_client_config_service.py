@@ -1,7 +1,14 @@
-"""桌面客户端连接配置服务：单行 JSONB 存储（id=1）。
+"""桌面客户端连接与更新推送配置服务：单行 JSONB 存储（id=1）。
 
-admin 端配置桌面端 API 地址（api_origin）：开发环境配本地地址，
-生产环境换域名；桌面端启动时经 GET /desktop-config 自动跟随。
+admin 端配置项：
+- api_origin：桌面端 API 服务器地址（开发配本地、生产换域名），
+  启动时经 GET /desktop-config 自动跟随；
+- update_feed_url：更新包托管地址（electron-builder generic provider 的 base url，
+  目录下需有 latest.yml / *.exe / *.blockmap）；
+- update_enabled：是否向客户端下发更新。关闭后客户端检查更新被静默跳过，
+  是「管理员决定是否推送」的开关。
+
+客户端运行时读取点为公开接口 GET /desktop/update-manifest。
 """
 from __future__ import annotations
 
@@ -12,22 +19,31 @@ from internal.model.auth_channel_config import DesktopClientConfig
 
 DEFAULT_KEYS = {
     "api_origin": "",
+    "update_feed_url": "",
+    "update_enabled": False,
 }
 
 
-def _normalize_api_origin(value) -> str:
-    """校验并规整 api_origin：空值或合法 http(s) URL，其余抛 ValueError。"""
+def _normalize_http_url(value, field_label: str) -> str:
+    """校验并规整 http(s) URL：空值或合法地址，其余抛 ValueError。"""
     raw = str(value or "").strip().rstrip("/")
     if not raw:
         return ""
     parsed = urlparse(raw)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("api_origin 必须是 http(s):// 开头的合法地址，或留空")
+        raise ValueError(f"{field_label}必须是 http(s):// 开头的合法地址，或留空")
     return raw
 
 
+def _normalize_bool(value) -> bool:
+    """把表单/JSON 传入的任意真值表示归一为 bool。"""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 class DesktopClientConfigService:
-    """桌面客户端连接配置：单行记录（id=1），configs JSONB 持久化 api_origin。"""
+    """桌面客户端连接与更新推送配置：单行记录（id=1），configs JSONB 持久化。"""
 
     def __init__(self, session=None):
         self.session = session or db.session
@@ -49,10 +65,12 @@ class DesktopClientConfigService:
 
     def update_config(self, payload: dict) -> dict:
         cfg = self.get_config()
-        for k in DEFAULT_KEYS:
-            if k not in payload:
-                continue
-            cfg[k] = _normalize_api_origin(payload[k])
+        if "api_origin" in payload:
+            cfg["api_origin"] = _normalize_http_url(payload["api_origin"], "连接地址")
+        if "update_feed_url" in payload:
+            cfg["update_feed_url"] = _normalize_http_url(payload["update_feed_url"], "更新包地址")
+        if "update_enabled" in payload:
+            cfg["update_enabled"] = _normalize_bool(payload["update_enabled"])
         row = self._row()
         row.configs = cfg
         self.session.commit()
@@ -62,3 +80,11 @@ class DesktopClientConfigService:
         """桌面端引导用：返回配置的 api_origin；未配置时回退同源。"""
         configured = str(self.get_config().get("api_origin") or "").strip().rstrip("/")
         return configured or fallback_origin
+
+    def resolve_update_manifest(self) -> dict:
+        """客户端检查更新前的门控清单：管理员关闭推送时 enabled=False，客户端静默跳过。"""
+        cfg = self.get_config()
+        return {
+            "enabled": bool(cfg.get("update_enabled")),
+            "feed_url": str(cfg.get("update_feed_url") or "").strip().rstrip("/"),
+        }

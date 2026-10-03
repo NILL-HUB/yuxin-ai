@@ -130,7 +130,7 @@ AgentPolicyFilter 负责做硬过滤。
 | 输入能力 | 不支持图片/文件/长上下文的 Agent 不能处理对应任务 | `input_modality_not_supported` |
 | 工具策略 | 任务需要工具但 Agent 不允许该工具类别时过滤 | `tool_category_not_allowed` |
 
-**候选收集必须 fail closed**：`CrossPoolAgentSubsetBuilder.build()` 收集候选抛异常时，必须退化为**空候选**，不得回退到 `AgentPoolService.list_agents()` 这类"直读子池清单、不过滤、不按 account 隔离"的路径——那等于在异常时静默放行全部 Agent，使上表全部规则集体失效。该行为与工具侧 `_build_tool_subset` 一致（异常即空候选），回归防护见 `test/internal/service/test_orchestrator_service.py::test_agent_candidate_collection_failure_fails_closed`。
+**候选收集必须 fail closed**：`CrossPoolAgentSubsetBuilder.build()` 收集候选抛异常时，必须退化为**空候选**，不得回退到 `AgentPoolService.list_agents()` 这类"直读子池清单、不过滤、不按 account 隔离"的路径——那等于在异常时静默放行全部 Agent，使上表全部规则集体失效。该行为与工具侧 `build_tool_subset` 一致（异常即空候选），回归防护见 `test/internal/service/test_orchestrator_service.py::test_agent_candidate_collection_failure_fails_closed`。
 
 过滤输出必须保留原因：
 
@@ -393,6 +393,10 @@ RuntimeToolMountService 负责把工具子集转换成 Agent 可调用的运行�
 Agent 只能看到本次挂载的工具，不知道完整工具子池集合。
 ```
 
+**multi_agent 子任务的工具子集逐子任务解析**：`MultiAgentExecutor` 通过注入的 `subtask_tool_resolver`（由 `assistant_agent_service._build_subtask_tool_resolver` 构造）为每个子任务按**其自身 `description`** 调用同一入口 `OrchestratorService.build_tool_subset`，再交给本服务挂载，因此每个子任务看到的是各自相关的工具集（而非所有子任务共用主链路工具集）。resolver 为空或抛错时回退主链路工具集（fail safe）。
+
+**执行中按需追加（request_more_tools）**：子任务开始前已按描述挂载一批工具；若执行中发现仍不够用，子代理可调用运行时注入的元工具 `request_more_tools`（`internal/core/agent/meta_tools/request_more_tools.py`）按能力描述再申请一批。追加路径与上述同源：`OrchestratorService.build_tool_subset`（唯一选择入口）→ `RuntimeToolMountService`（唯一治理入口）→ 由 `AgentTaskExecutor._attach_meta_tools` 写回 `agent.agent_config.tools`，本次执行的后续轮次即生效。provider 由 `assistant_agent_service._build_extra_tool_provider` 构造并注入（`AgentTaskExecutor.extra_tool_provider`，经 `MultiAgentExecutor` / `SingleAgentExecutor` 传递），**不经过指挥官**；工具池无匹配能力时明确告知缺什么能力。该元工具不属于 builtin provider 注册体系（无需 `.yaml` / `providers.yaml` 登记）。
+
 ### 8.7 执行前约束与执行后校验
 
 在 Agent 执行前，需要固化三类约束：
@@ -553,13 +557,14 @@ Agent 池第一阶段复用现有 App：
 
 #### 10.1.1 工具来源类型（完整版）
 
-基于 钰见我 底座已有的能力，工具来源类型扩展为以下 7 类：
+基于 钰见我 底座已有的能力，工具来源类型扩展为以下 8 类：
 
 | 来源类型 | 底座实现 | 治理方式 | 说明 |
 | --- | --- | --- | --- |
 | builtin | builtin_provider_manager + providers.yaml | 纳入 ToolSourceType | 平台内置基础能力（搜索、翻译、天气等） |
 | api_tool | ApiTool + ApiToolProvider + OpenAPI 解析 | 纳入 ToolSourceType | 企业业务 API、第三方服务 API |
 | mcp | McpProvider + McpToolFactory | 纳入 ToolSourceType | 外部能力接入和标准化工具调用 |
+| cli | CliProvider + CliTool（管理员注册，`tool_schema` 为能力说明书） | 纳入 ToolSourceType | 本地 CLI 工具；管理员注册后全量子命令进池，复用 `McpStdioClient` 的 `protocol=raw` 执行 |
 | knowledge | KnowledgeBase + KnowledgeDocument + KnowledgeSegment 检索 | 纳入 ToolSourceType | 知识库检索工具 |
 | workflow | WorkflowToolAdapter(BaseTool) 从已发布 Workflow 构建 | 纳入 ToolSourceType | 多步骤业务自动化，本质是组合工具 |
 | skill | SkillToolFactory + SkillPackage | 纳入 ToolSourceType | 技能包，本质是组合工具 |
@@ -570,7 +575,7 @@ Agent 池第一阶段复用现有 App：
 工具按内部复杂度分为三类（基于底座真实实现，非理论分类）：
 
 **原子工具**：直接执行单个操作，不可再分，底座已通过 LangChain BaseTool 完成统一抽象。
-- builtin / api_tool / mcp / knowledge 属于此类
+- builtin / api_tool / mcp / cli / knowledge 属于此类
 - 每个工具独立挂载、独立治理、独立审计
 
 **工具包（Package）**：多个原子工具的命名空间集合，**不递归引用其他工具**，由远端执行器统一调度。
@@ -588,13 +593,13 @@ Agent 池第一阶段复用现有 App：
 | 组合工具 | 内部可引用的工具类型 | 数据来源 | 是否需扩展 |
 | --- | --- | --- | --- |
 | workflow | builtin_tool / api_tool（ToolNode）+ knowledge（DatasetRetrievalNode 独立节点） | `Workflow.graph["nodes"]` | 已支持 |
-| workflow | mcp / skill / workflow / agent_binding | `ToolNodeData.tool_type` 已扩展为 7 种（含上述四类） | **已支持** |
+| workflow | mcp / skill / workflow / agent_binding | `ToolNodeData.tool_type` 已扩展为 8 种（含上述四类） | **已支持** |
 | agent_binding（私有 App） | builtin / api_tool / mcp / skill / knowledge / workflow / 嵌套 agent_binding | 递归调用 `_build_runtime_tools` | 已支持 |
 | agent_binding（公开 App） | 不在本地解析，走 A2A 远端协议 | `PublicAgentA2AService.send_message` | 已支持（黑盒） |
 
 组合工具的真实嵌套关系（反映底座现状）：
 ```text
-原子工具：builtin / api_tool / mcp / knowledge
+原子工具：builtin / api_tool / mcp / cli / knowledge
     │
     ├─→ 工具包：skill（manifest 内多个叶子工具，SCF 远端执行，不递归）
     │
@@ -625,7 +630,7 @@ class RuntimeToolDescriptor(SerializableMixin):
     runtime_name: str      # 运行时挂载名
     name: str              # 工具名称
     description: str       # 工具描述
-    source_type: str       # 扩展为 7 类：builtin/api_tool/mcp/knowledge/workflow/skill/agent_binding
+    source_type: str       # 扩展为 8 类：builtin/api_tool/mcp/cli/knowledge/workflow/skill/agent_binding
     provider_id: str       # 来源提供者 ID
     provider_name: str     # 来源提供者名
     input_schema: list     # 参数定义（简化字段列表）
@@ -660,10 +665,21 @@ tool_id 格式约定（与底座现有实现对齐）：
 - builtin：`builtin:{provider}:{tool_name}`
 - api_tool：`api_tool:{uuid}`
 - mcp：`mcp:{provider_id}:{tool_name}`
+- cli：`cli:{provider_id}:{tool_name}`
 - knowledge：`knowledge:{dataset_id}`
 - workflow：`workflow:{workflow_id}`
 - skill：`skill:{skill_package_id}`（整体治理）/ `skill:{skill_package_id}:{tool_name}`（细粒度治理）
 - agent_binding：`agent_binding:{app_id}`
+
+**cli 管理面与挂载面（2026-10-03 实测）**：
+- admin UI 已落地：`/admin/cli`（资源编排菜单「CLI 管理」，权限 `cli:read`）——列表/注册/编辑/启停/删除；
+  能力说明书（`tool_schema`）表格化行编辑（工具 ID + 描述 + 参数 JSON，可切 JSON 模式）；
+  env 加密不回显、未编辑不提交（PUT 仅处理传入字段）。前端 12 例 + i18n parity 全绿。
+- 执行面：CLI 候选项经 `ToolSelectorService` 选择后，在**助手链路**挂载执行
+  （`assistant_agent_service._load_non_mcp_tool` → `CliService.build_selected_tools` → `McpStdioClient protocol=raw`）。
+- 未接面（各有政策原因，非漏接线）：app runtime 的 `tool_subset` 自动注入**按策略仅取 builtin**；
+  管理端 Agent 板块注册表（`BOARD_ACTIONS`）未含 cli（未登记即拒绝）；工作流 `tool_node` 的 `tool_type` 枚举未含 cli。
+  如需在这些面启用 CLI，属独立的产品/治理决策（凭证与本地依赖边界）。
 
 **关键设计**：CompositeComponentRef 只持有引用（tool_id + ref_path），不持有完整 RuntimeToolDescriptor。组合工具的治理透传通过 CompositeToolResolver（见 10.1.4）按需递归解析，避免一次性展开深嵌套导致内存膨胀。
 
@@ -1174,7 +1190,7 @@ MCP 工具同步此前**失败被两层静默吞掉**：`McpToolFactory.list_rem
     内置工具列表（`BuiltinToolService.get_builtin_tools`）随之返回 `credential_status` / `credential_missing`，
     前端在卡片标红「依赖未配置」——避免"工具 `enabled=true` 却根本跑不通"的静默失效。
     **占位符 env（`.env.example` 默认值如 `your-tavily-key-here`）视为未配置**；`web_tools` 因键"任一即可"+免费 ddgs 兜底恒为 `ready`。
-  - 详见 [工具凭证收编 admin 设计](../superpowers/specs/2026-09-29-tool-provider-credential-admin-design.md)。
+  - 详见 [工具凭证收编 admin 设计](../../archive/superpowers-specs/2026-09-29-tool-provider-credential-admin-design.md)。
 - 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
   **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。
 

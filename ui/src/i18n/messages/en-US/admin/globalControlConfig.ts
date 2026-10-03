@@ -1,7 +1,7 @@
 export default {
   title: 'Global Control Config',
   description:
-    'Centralized management of platform-wide behavior: model runtime fallback, external media fetching, conversation checkpoints, skill catalog sync, image request policy, vision fallback model, routing confidence gating, and the desktop client connection address.',
+    'Centralized management of platform-wide behavior: model runtime fallback, external media fetching, conversation checkpoints, skill catalog sync, image request policy, vision fallback model, routing confidence gating, and desktop client connection and update pushing.',
   loadFailed: 'Failed to load global control config',
   saved: 'Global control config saved',
   saveFailed: 'Failed to save global control config',
@@ -41,8 +41,9 @@ export default {
         'Falls back to a conservative path when LLM routing/classification confidence is below the threshold (task classification falls back to keyword decision; intent recognition falls back to the default intent).',
     },
     desktopClient: {
-      title: 'Desktop Client Connection',
-      description: 'Sets the API server address for the desktop client. Leave empty to connect to the current server origin.',
+      title: 'Desktop Client',
+      description:
+        'Sets the desktop client API server address and update pushing (package address, whether to push).',
     },
   },
   fields: {
@@ -73,5 +74,19 @@ export default {
     routingConfidenceInvalid: 'Confidence threshold must be between 0 and 1',
     apiOrigin: 'Connection Address (API Server)',
     apiOriginPlaceholder: 'e.g. http://127.0.0.1 or https://your-domain.com',
+    updateFeedUrl: 'Update package address',
+    updateFeedUrlPlaceholder: 'e.g. https://openllm.cloud/desktop-updates',
+    updateFeedUrlHint:
+      'Directory hosting the build artifacts (*.exe, latest.yml, *.blockmap). Leave empty to disable auto-update.',
+    updateEnabled: 'Push updates to clients',
+    updateEnabledHint:
+      'When on, clients check for new versions, show release notes in a dialog, and download/install automatically. When off, clients skip the check silently.',
+    checkUpdate: 'Check for updates',
+    updateLatestVersion: 'Latest upstream version: {version}',
+    updatePublishedAt: 'Published at: {date}',
+    updateNotes: "What's new",
+    updateNotesEmpty: 'This version has no release notes.',
+    updateNoVersion: 'No version found upstream',
+    updateCheckFailed: 'Check failed. Verify the update package address is reachable.',
   },
 }

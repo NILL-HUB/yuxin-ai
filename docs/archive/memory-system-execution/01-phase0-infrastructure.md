@@ -3,7 +3,7 @@
 
 > **创建日期**：2026-07-09
 > **Track**：Phase 0（基础设施，I1-I6）
-> **关联架构**：[01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) | [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) | [03-consolidation-skill-policy-api.md](../../03-consolidation-skill-policy-api.md) | [00-overview.md](./00-overview.md)
+> **关联架构**：[01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) | [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) | [03-consolidation-skill-policy-api.md](../../prd/memory-system/03-consolidation-skill-policy-api.md) | [00-overview.md](./00-overview.md)
 > **执行原则**：二开阶段，无生产环境，不做向后兼容；所有新增组件需可独立验证；配置项支持环境变量覆盖。
 > **前置条件**：无（Phase 0 为所有后续 Track 的前置）
 
@@ -152,7 +152,7 @@ services:
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) §存储基础设施（Neo4j TKG / PostgreSQL pgvector 向量 / 冷存储）
+- [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) §存储基础设施（Neo4j TKG / PostgreSQL pgvector 向量 / 冷存储）
 - [00-overview.md](./00-overview.md) §代码目录结构规划
 
 ---
@@ -394,9 +394,9 @@ settings = Settings()  # 模块级单例
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) §SalienceScorer 五因子权重 / §写入路径阈值
-- [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) §检索权重 / §衰减参数 / §漏斗配置 / §Digest 配置
-- [03-consolidation-skill-policy-api.md](../../03-consolidation-skill-policy-api.md) §巩固参数 / §技能涌现阈值 / §冷存储阈值
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §SalienceScorer 五因子权重 / §写入路径阈值
+- [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) §检索权重 / §衰减参数 / §漏斗配置 / §Digest 配置
+- [03-consolidation-skill-policy-api.md](../../prd/memory-system/03-consolidation-skill-policy-api.md) §巩固参数 / §技能涌现阈值 / §冷存储阈值
 
 ---
 
@@ -501,7 +501,7 @@ self.CELERY = {
 
 ### 关联架构文档章节
 
-- [03-consolidation-skill-policy-api.md](../../03-consolidation-skill-policy-api.md) §巩固引擎定时任务（每日巩固 / 权重扫描）
+- [03-consolidation-skill-policy-api.md](../../prd/memory-system/03-consolidation-skill-policy-api.md) §巩固引擎定时任务（每日巩固 / 权重扫描）
 - [00-overview.md](./00-overview.md) §代码目录结构规划（`task/consolidation_tasks.py`）
 
 ---
@@ -594,8 +594,8 @@ CREATE FULLTEXT INDEX entityFullText IF NOT EXISTS FOR (n:Entity) ON EACH [n.nam
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) §1.3 MemoryNode / §1.4 MemoryEdge（字段定义）
-- [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) §检索器（全文索引用于 BM25）
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §1.3 MemoryNode / §1.4 MemoryEdge（字段定义）
+- [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) §检索器（全文索引用于 BM25）
 
 ---
 
@@ -698,8 +698,8 @@ if __name__ == "__main__":
 
 ### 关联架构文档章节
 
-- [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) §向量存储（pgvector user_memory.embedding 列 / HNSW 索引设计）
-- [01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) §写入路径（向量写入字段）
+- [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) §向量存储（pgvector user_memory.embedding 列 / HNSW 索引设计）
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §写入路径（向量写入字段）
 
 ---
 
@@ -938,9 +938,9 @@ EntityResolutionResult           # 01 §实体消解
 
 ### 关联架构文档章节
 
-- [01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) §1.1-1.6（核心模型） / §写入路径 / §实体消解
-- [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) §检索结果 / §扩展激活 / §漏斗 / §Digest / §衰减 / §冷存储 / §重建
-- [03-consolidation-skill-policy-api.md](../../03-consolidation-skill-policy-api.md) §巩固引擎 / §冲突检测 / §技能涌现 / §审计 / §PII
+- [01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §1.1-1.6（核心模型） / §写入路径 / §实体消解
+- [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) §检索结果 / §扩展激活 / §漏斗 / §Digest / §衰减 / §冷存储 / §重建
+- [03-consolidation-skill-policy-api.md](../../prd/memory-system/03-consolidation-skill-policy-api.md) §巩固引擎 / §冲突检测 / §技能涌现 / §审计 / §PII
 - [00-overview.md](./00-overview.md) §关键风险与对策（类型冲突由 I6 统一）
 
 ---

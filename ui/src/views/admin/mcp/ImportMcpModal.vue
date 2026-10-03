@@ -3,6 +3,8 @@ import { ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { getErrorMessage } from '@/utils/error'
+import KeyValueEditor from '@/components/config-editors/KeyValueEditor.vue'
+import type { KeyValueItem } from '@/components/config-editors/types'
 import {
   importAdminMcpJson,
   importAdminMcpJsonConfig,
@@ -31,7 +33,7 @@ const urlDescription = ref('')
 const urlTransport = ref('http')
 const urlCategory = ref('')
 const urlIcon = ref('')
-const urlHeaders = ref<Array<{ key: string; value: string }>>([{ key: '', value: '' }])
+const urlHeaders = ref<KeyValueItem[]>([])
 const urlPreviewLoading = ref(false)
 const urlPreviewTools = ref<Array<{ name: string; label?: string; description?: string }>>([])
 // Tab 3
@@ -56,7 +58,7 @@ const resetForm = () => {
   urlTransport.value = 'http'
   urlCategory.value = ''
   urlIcon.value = ''
-  urlHeaders.value = [{ key: '', value: '' }]
+  urlHeaders.value = []
   urlPreviewTools.value = []
   jsonConfigText.value = ''
   jsonConfigOverwrite.value = false
@@ -70,14 +72,6 @@ watch(
     }
   },
 )
-
-const addHeader = () => {
-  urlHeaders.value.push({ key: '', value: '' })
-}
-
-const removeHeader = (index: number) => {
-  urlHeaders.value.splice(index, 1)
-}
 
 const getCleanHeaders = () => {
   return urlHeaders.value
@@ -240,43 +234,11 @@ const handleOk = async () => {
       </div>
       <div>
         <div class="mb-1 text-sm text-slate-700">{{ t('admin.mcpAdmin.importHeadersLabel') }}</div>
-        <div class="space-y-2">
-          <div
-            v-for="(header, idx) in urlHeaders"
-            :key="idx"
-            class="flex items-center gap-2"
-          >
-            <a-input
-              v-model="header.key"
-              class="flex-1"
-              :placeholder="t('admin.mcpAdmin.importHeaderKeyPlaceholder')"
-              allow-clear
-            />
-            <a-input
-              v-model="header.value"
-              class="flex-1"
-              :placeholder="t('admin.mcpAdmin.importHeaderValuePlaceholder')"
-              allow-clear
-            />
-            <a-button
-              v-if="urlHeaders.length > 1"
-              status="danger"
-              type="text"
-              size="small"
-              @click="removeHeader(idx)"
-            >
-              <template #icon>
-                <icon-delete />
-              </template>
-            </a-button>
-          </div>
-          <a-button type="text" size="small" @click="addHeader">
-            <template #icon>
-              <icon-plus />
-            </template>
-            {{ t('admin.mcpAdmin.importHeaderAdd') }}
-          </a-button>
-        </div>
+        <KeyValueEditor
+          v-model="urlHeaders"
+          :key-placeholder="t('admin.mcpAdmin.importHeaderKeyPlaceholder')"
+          :value-placeholder="t('admin.mcpAdmin.importHeaderValuePlaceholder')"
+        />
       </div>
       <div class="flex justify-end">
         <a-button :loading="urlPreviewLoading" @click="handlePreviewUrl">

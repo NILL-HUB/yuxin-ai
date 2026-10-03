@@ -13,6 +13,7 @@ export default  {
         systemKnowledge: 'System Knowledge',
         tools: 'API Tool Management',
         mcp: 'MCP Management',
+        cli: 'CLI Management',
         skills: 'Skills Management',
         resourceOps: 'Resource Operations',
         appStore: 'App Store',

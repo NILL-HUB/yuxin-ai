@@ -146,39 +146,46 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers 1.
 | `llmops-db`（pgvector） | 129 MB | **99 MB** | 445 MB | 保留 | 核心 |
 | `llmops-ui` | 47 MB | **66 MB** | 102 MB | 保留 | 生产用 nginx 静态版 |
 | `llmops-celery-beat` | 26 MB | **63 MB** | 1.48 GB | 保留 | 定时任务调度 |
-| `llmops-computer-worker` | 11 MB | **28 MB** | 1.8 GB（与 browser 共用 `llmops-worker`） | **保留** | 无桌面端用户的电脑控制回退通道；关则 Web 侧无此能力 |
+| `llmops-computer-worker` | 11 MB | **28 MB** | 1.8 GB（与 browser 共用 `llmops-worker` 镜像） | **默认不启动**（`profiles: ["local-workers"]`，见 §2 修正） | 容器内 xvfb 虚拟桌面 + pyautogui，**操作不到用户真实电脑**；「操作我的电脑」由桌面客户端承担，故默认关闭 |
 | `llmops-redis` | 16 MB | **24 MB** | 114 MB | 保留 | 核心 |
 | `llmops-browser-worker` | 6 MB | **17 MB** | 同上（共用同一镜像） | **保留** | 无桌面端用户的浏览器自动化回退通道 |
 | `llmops-nginx` | 5 MB | **7 MB** | 62 MB | 保留 | 入口 |
 
-**全部容器常驻合计（稳态，含 render 空闲）** ≈ **4.09 G**
-（celery 1.54 + api 0.998 + neo4j 0.808 + kkfileview 0.583 + render 空闲 0.524 + db 0.099 + ui 0.066 + beat 0.063 + computer 0.028 + redis 0.024 + browser 0.017 + nginx 0.007 ≈ 4.09 G）
+**全部默认启动容器常驻合计（稳态，含 render 空闲）** ≈ **4.06 G**
+（celery 1.54 + api 0.998 + neo4j 0.808 + kkfileview 0.583 + render 空闲 0.524 + db 0.099 + ui 0.066 + beat 0.063 + redis 0.024 + browser 0.017 + nginx 0.007 ≈ 4.06 G）
 
 > ⚠️ 上表含 `render` 空闲 524 MB。**默认形态下 render worker 不启动**（`profiles: ["cloud-render"]`），
-> 故实际常驻 ≈ **3.57 G**（见下）。接通云端渲染后才会回到 4.09 G。
+> 故实际常驻 ≈ **3.54 G**（见下）。接通云端渲染后才会回到 4.06 G。`computer worker` 默认关闭，
+> 上表与合计均**不含**它（显式启用后 +0.028 G，回到 4.09 / 3.57 G）。
 
-**其中不含 render 的基础服务** ≈ **3.57 G**。
+**其中不含 render 的基础服务** ≈ **3.54 G**。
 
-> 默认形态（云端 render worker 不启动）下，服务器只承担这 3.57 G；渲染走用户本机。
+> 默认形态（云端 render worker 不启动）下，服务器只承担这 3.54 G；渲染走用户本机。
 > 下面关于「渲染峰值叠加」的紧张测算，适用于**接通云端渲染**后的场景。
 
-> ⚠️ 渲染还没开始，**3.57 G 就已逼近 4G 上限**。渲染 peak 0.9–1.4 G 一旦叠加，
+> ⚠️ 渲染还没开始，**3.54 G 就已逼近 4G 上限**。渲染 peak 0.9–1.4 G 一旦叠加，
 > 总量直奔 4.5–5.0 G。因此 4C4G 单机**必须同时做两件事**：
 > 1. `llmops-celery` 由默认 `-c 4` 降到 `-c 2`（省 ~0.6 G）；
 > 2. 渲染严格串行（闸门已保证并发=1）且不与大文件上传/L2 解析同时发生。
 >
 > 即便两件都做，余量也仅 ~1 G；**§7.1 的「拆机」是更稳的选择**（但不强制——见 §0）。
 
-> ⚠️ **browser / computer worker 也不是裁减项**（此前误列为「默认已关」，已纠正）：
-> 二者是「未安装桌面端的纯 Web 用户」使用浏览器自动化 / 电脑控制的**唯一通道**。关掉它们，
-> 这类用户直接失去该能力。代价仅 ~45 MB（1.8 GB 是镜像体积，与内存无关）。
+> ⚠️ **browser worker 不是裁减项**（此前误列为「默认已关」，已纠正）：
+> 它是「未安装桌面端的纯 Web 用户」使用浏览器自动化的**唯一通道**。关掉它，这类用户直接失去该能力。
+> 代价仅 ~17 MB（1.8 GB 是镜像体积，与内存无关）。
+>
+> ⚠️ **computer worker 为默认关闭（2026-10 修正）**：`docker-compose.yaml` 中带
+> `profiles: ["local-workers"]`，默认不启动。原因不是省资源（空闲仅 ~8 MiB），而是它**做不到产品承诺**：
+> 容器内跑的是 xvfb 虚拟桌面 + pyautogui，**操作不到用户的真实电脑**——真正的「操作我的电脑」
+> 只能由桌面客户端完成。需要这条虚拟桌面通道时显式启用：
+> `docker compose --profile local-workers up -d llmops-computer-worker`。
 >
 > **与桌面客户端的关系（容易混淆，务必分清）**：桌面客户端**自带**这两个 worker
 > （`desktop/main.js` 的 `startWorker` 启动本机子进程，token 每次随机生成），
 > 电脑控制经本机 bridge（`host.docker.internal:9876`）回传，**完全不经过这两个容器**。
 > 所以「桌面端有没有电脑控制」与「这两个容器开不开」是两件独立的事：
 > - 桌面端场景 → 靠桌面端自带 worker（且 cua-driver 提供后台定向控制）；
-> - 纯 Web 场景 → 靠容器内的 `BROWSER_AUTOMATION_URL` / `COMPUTER_CONTROL_URL` 回退。
+> - 纯 Web 场景 → 浏览器自动化靠容器内 `BROWSER_AUTOMATION_URL`；电脑控制**无容器回退**（默认关闭），需引导安装桌面端。
 
 > ⚠️ **不要关 neo4j / kkfileview**。二者是功能必需项，不是可选组件：
 > - `neo4j` 是整个记忆系统 TKG 的存储底座（`ledger_writer` / `consolidation_engine` /
@@ -412,9 +419,11 @@ cd docker
 docker compose up -d llmops-db llmops-redis llmops-neo4j llmops-kkfileview
 
 # 2) 业务镜像（3M 下建议逐个，耐心等）
-docker compose pull llmops-api llmops-ui llmops-nginx llmops-worker
+docker compose pull llmops-api llmops-ui llmops-nginx llmops-browser-worker
 docker compose up -d llmops-api llmops-celery llmops-celery-beat \
-  llmops-ui llmops-nginx llmops-browser-worker llmops-computer-worker
+  llmops-ui llmops-nginx llmops-browser-worker
+# computer worker 默认不启动（容器虚拟桌面操作不到真实电脑）；需要时显式启用：
+# docker compose --profile local-workers up -d llmops-computer-worker
 ```
 
 ```bash
@@ -435,7 +444,7 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 > 云端该服务加 `profiles: ["cloud-render"]` **默认不启动**。需要云端回退时，用
 > `docker compose --profile cloud-render up -d llmops-render-worker` 显式启用。
 
-**首台默认启动清单**：`llmops-api`、`llmops-celery`、`llmops-celery-beat`、`llmops-ui`、`llmops-nginx`、`llmops-db`、`llmops-redis`、`llmops-neo4j`、`llmops-kkfileview`、`llmops-browser-worker`、`llmops-computer-worker`（**全部默认启动**，compose 中已无 `profiles` 裁减项）。`llmops-render-worker` 带 `cloud-render` profile，**默认不启动**，仅在需要云端渲染回退时于首台或第二台显式启用。
+**首台默认启动清单**：`llmops-api`、`llmops-celery`、`llmops-celery-beat`、`llmops-ui`、`llmops-nginx`、`llmops-db`、`llmops-redis`、`llmops-neo4j`、`llmops-kkfileview`、`llmops-browser-worker`。`llmops-render-worker`（`profiles: ["cloud-render"]`）与 `llmops-computer-worker`（`profiles: ["local-workers"]`）**均默认不启动**：前者仅在需要云端渲染回退时于首台或第二台显式启用，后者仅在需要容器内虚拟桌面通道时显式启用。
 
 ---
 
@@ -444,7 +453,7 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | # | 改动 | 类型 | 状态 |
 | --- | --- | --- | --- |
 | 1 | 主 worker 设 `CELERY_QUEUES` 排除 render | compose | ✅ 已落地（`celery,mail,consolidation`） |
-| 2 | `neo4j`/`kkfileview`/`browser-worker`/`computer-worker` 曾加 `profiles` → **已全部回滚** | compose | ❌ 已回滚：四者均为功能必需项（见 §2），compose 中已无 `profiles` 裁减项 |
+| 2 | `neo4j`/`kkfileview`/`browser-worker` 的 `profiles` 已回滚（功能必需，默认启动）；`computer-worker` 改为 `profiles: ["local-workers"]` **默认关闭** | compose | ✅ 2026-10 修正：容器内虚拟桌面操作不到用户真实电脑，「操作我的电脑」由桌面客户端承担（见 §2） |
 | 3 | render worker 加 `deploy.resources.limits` + `NODE_OPTIONS` | compose | ✅ 已落地（cpus 2 / mem 2800M / V8 堆 2048） |
 | 4 | 每账号渲染并发上限 = 1 | 代码 | ✅ `RenderGuardService.MAX_CONCURRENT_RENDERS_PER_ACCOUNT` |
 | 5 | 渲染防重锁（Redis SETNX，脚本指纹） | 代码 | ✅ `RenderGuardService.admit` |
@@ -509,12 +518,12 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 
 | # | 事项 | 改法 |
 | --- | --- | --- |
-| 1 | **消息代理**：新机器要收 `render` 队列 | `REDIS_HOST` 指向首台 Redis。注意 compose 里 Redis 端口绑在 `127.0.0.1`（[docker-compose.yaml:L262-L263](file:///d:/DEMO/openagent-main/docker/docker-compose.yaml#L262-L263)），需改为内网可达 + 防火墙白名单，**不要**暴露公网 |
-| 2 | **数据库**：渲染任务要读账号、写成品文档 | 同上，`POSTGRES_HOST` 指向首台 Postgres（现也绑 `127.0.0.1`，[L281-L282](file:///d:/DEMO/openagent-main/docker/docker-compose.yaml#L281-L282)） |
+| 1 | **消息代理**：新机器要收 `render` 队列 | `REDIS_HOST` 指向首台 Redis。注意 compose 里 Redis 端口绑在 `127.0.0.1`（[docker-compose.yaml:L278](file:///d:/DEMO/openagent-main/docker/docker-compose.yaml#L278)），需改为内网可达 + 防火墙白名单，**不要**暴露公网 |
+| 2 | **数据库**：渲染任务要读账号、写成品文档 | 同上，`POSTGRES_HOST` 指向首台 Postgres（现也绑 `127.0.0.1`，[L297](file:///d:/DEMO/openagent-main/docker/docker-compose.yaml#L297)） |
 | 3 | **成品落盘**：`store_render_output` 走**激活存储后端** | ① **激活后端 = `cos`/`oss`（推荐）**：产物经 SDK 直传对象存储，两机无需共享磁盘；② 激活后端 = `local`：渲染机写的 `/app/api/storage/uploads` 首台 API 看不见 → **必须挂共享存储**（NAS/对象存储网关），否则出片后检索/预览 404 |
 
 > **关键前提**：`store_render_output` 的上传走 `RuntimeStorageProxy`，落的永远是**当时激活的后端**
-> （[knowledge_base_service.py:L478-L480](file:///d:/DEMO/openagent-main/api/internal/service/knowledge_base_service.py#L478-L480) →
+> （[knowledge_base_service.py:L330](file:///d:/DEMO/openagent-main/api/internal/service/knowledge_base_service.py#L330) →
 > [module.py:L108-L121](file:///d:/DEMO/openagent-main/api/app/http/module.py#L108-L121) 的
 > `binder.bind(CosService, to=RuntimeStorageProxy)`；默认 `STORAGE_BACKEND=local`）。
 > 所以**拆机前建议先把激活后端切到 COS/OSS**，否则会踩第 3 条的坑。

@@ -70,6 +70,7 @@ from .orchestration_feature_flag_service import OrchestrationFeatureFlagService
 from .result_synthesizer_service import ResultSynthesizerService
 from .retrieval_service import RetrievalService
 from .runtime_tool_mount_service import RuntimeToolMountService
+from .cli_service import CliService
 from internal.entity.runtime_tool_entity import RuntimeToolDescriptor
 from .public_agent_a2a_service import PublicAgentA2AService
 from .public_agent_registry_service import PublicAgentRegistryService
@@ -191,6 +192,7 @@ class AssistantAgentService(BaseService):
     result_synthesizer_service: ResultSynthesizerService | None = None
     retrieval_service: RetrievalService | None = None
     runtime_tool_mount_service: RuntimeToolMountService | None = None
+    cli_service: CliService | None = None
     routing_log_service: RoutingLogService | None = None
     subtask_registry_service: SubtaskRegistryService | None = None
     _introduction_prewarm_lock = Lock()
@@ -628,6 +630,10 @@ class AssistantAgentService(BaseService):
                 subtask_registry=self.subtask_registry_service,
                 cancel_token=cancel_token,
                 plan_repairer=self._build_plan_repairer(),
+                extra_tool_provider=self._build_extra_tool_provider(
+                    account=account,
+                    message_id=str(message.id),
+                ),
             )
             billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
@@ -763,6 +769,15 @@ class AssistantAgentService(BaseService):
                 subtask_registry=self.subtask_registry_service,
                 cancel_token=cancel_token,
                 plan_repairer=self._build_plan_repairer(),
+                subtask_tool_resolver=self._build_subtask_tool_resolver(
+                    account=account,
+                    message_id=str(message.id),
+                    base_tools=tools,
+                ),
+                extra_tool_provider=self._build_extra_tool_provider(
+                    account=account,
+                    message_id=str(message.id),
+                ),
             )
             billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
@@ -992,13 +1007,20 @@ class AssistantAgentService(BaseService):
                 self.app_config_service.get_langchain_tools_by_mcp_bindings(assistant_mcp_bindings)
             )
 
-        # 本机 OS 文件操作：通过宿主机 worker（/file、/recycle、/snapshot 端点）执行，纯 Python，不依赖外部 CLI。
+        # 本机 OS 操作：通过宿主机 worker（/file、/recycle、/snapshot、/exec 端点）执行。
         # 删除类操作（os_recycle_bin / 纯删除补丁）已全部走本机回收站，可随时恢复；
-        # 写操作（os_file_task）写前自动快照，改错可用 os_snapshot 回滚。因此 agent
-        # 可全自动执行而无需用户逐次确认（os_file_task 不在高风险名单内，不再弹确认）。
+        # 写操作（os_file_task）写前自动快照，改错可用 os_snapshot 回滚；终端
+        # （os_terminal）在 worker 端有删除命令硬阻断（fail-closed），删除只能走
+        # os_recycle_bin，不会绕过回收站。因此 agent 可全自动执行而无需用户逐次确认
+        # （以上工具均不在高风险名单内，不弹确认）。
         if self.app_config_service is not None:
             try:
-                for tool_name in ("os_file_task", "os_recycle_bin", "os_snapshot"):
+                for tool_name in (
+                    "os_file_task",
+                    "os_recycle_bin",
+                    "os_snapshot",
+                    "os_terminal",
+                ):
                     os_tool_factory = (
                         self.app_config_service.builtin_provider_manager.get_tool(
                             "host_os",
@@ -1305,6 +1327,91 @@ class AssistantAgentService(BaseService):
 
         return tools
 
+    def _build_subtask_tool_resolver(self, *, account, message_id: str, base_tools: list):
+        """构造 multi_agent 子任务工具解析器（每个子任务按自身描述自检索工具）。
+
+        复用主链路既有能力，不引入第二套实现：
+        OrchestratorService.build_tool_subset（ToolSelectorService：关键词快通道 + LLM 兜底）
+          → _mount_runtime_tools（RuntimeToolMountService 治理 → 按 source_type 加载）
+          → 与基线工具合并去重（返回结果已含 base_tools）。
+        """
+
+        def _resolve(item):
+            query = (getattr(item, "description", "") or "").strip()
+            if not query or self.orchestrator_service is None:
+                return base_tools
+            try:
+                tool_subset = self.orchestrator_service.build_tool_subset(
+                    account.id, query=query
+                )
+            except Exception:
+                logger.warning("子任务工具选择失败，回退基线工具集", exc_info=True)
+                return base_tools
+            if not (tool_subset or {}).get("selected_tools"):
+                return base_tools
+            return self._mount_runtime_tools(
+                prebound_tools=base_tools,
+                routing_decision={"tool_subset": tool_subset},
+                account_id=str(account.id),
+                message_id=message_id,
+            )
+
+        return _resolve
+
+    def _build_extra_tool_provider(self, *, account, message_id: str):
+        """构造 request_more_tools 的 provider（子代理执行中按需追加工具）。
+
+        复用主链路唯一入口，不引入第二套实现：
+        OrchestratorService.build_tool_subset（按能力描述选择）
+          → _mount_runtime_tools（RuntimeToolMountService 治理 → 按 source_type 加载）
+        返回 ``(说明文本, 新工具列表)``，由 AgentTaskExecutor 写回 Agent 实例；
+        工具池无匹配能力时明确告知缺什么（承接原 handle_escalation 的缺能力告知语义）。
+        """
+
+        def _provide(query: str, reason: str, current_tools: list):
+            description = (query or "").strip()
+            if not description:
+                return "申请无效：请描述你需要的能力（例如「企业工商信息查询」）。", []
+            if self.orchestrator_service is None:
+                return "当前环境不支持动态追加工具，请用现有工具尽力完成。", []
+            # 单次追加上限：取保守默认值（编排层无档位信息时的口径）
+            max_tools = 5
+            try:
+                tool_subset = self.orchestrator_service.build_tool_subset(
+                    account.id,
+                    query=description,
+                    max_tools=max_tools,
+                )
+            except Exception:
+                logger.warning("申请追加工具选择失败", exc_info=True)
+                return "申请追加工具失败，请继续用现有工具尽力完成。", []
+            if not (tool_subset or {}).get("selected_tools"):
+                return (
+                    "当前工具池没有匹配该能力的工具，请说明缺少的能力或换一种方式完成。",
+                    [],
+                )
+            try:
+                loaded = self._mount_runtime_tools(
+                    prebound_tools=[],
+                    routing_decision={"tool_subset": tool_subset},
+                    account_id=str(account.id),
+                    message_id=message_id,
+                )
+            except Exception:
+                logger.warning("申请追加工具挂载失败", exc_info=True)
+                return "申请追加工具失败，请继续用现有工具尽力完成。", []
+            existing_names = {getattr(t, "name", "") for t in (current_tools or [])}
+            added = [
+                tool for tool in loaded
+                if getattr(tool, "name", "") not in existing_names
+            ]
+            if not added:
+                return "申请的候选工具均已挂载，无新增工具。", []
+            names = "、".join(getattr(t, "name", "") for t in added[:10])
+            return f"已追加 {len(added)} 个工具：{names}。请继续完成任务。", added
+
+        return _provide
+
     def _mount_runtime_tools(
         self,
         *,
@@ -1397,6 +1504,7 @@ class AssistantAgentService(BaseService):
                 "builtin_tool",
                 "knowledge",
                 "skill",
+                "cli",
             )
         ]
 
@@ -1460,6 +1568,26 @@ class AssistantAgentService(BaseService):
         runtime_name = getattr(descriptor, "runtime_name", "") or getattr(descriptor, "name", "") or ""
 
         try:
+            if source_type == "cli":
+                # CLI 工具来源：provider_id 定位 cli_provider，按选中工具名装配
+                # （复用 McpToolFactory 的 protocol=raw 通道执行）
+                if self.cli_service is None:
+                    logger.warning("CLI service 未注入，跳过 CLI 工具: %s", tool_id)
+                    return None
+                provider_id = getattr(descriptor, "provider_id", "") or ""
+                tool_name = getattr(descriptor, "name", "") or ""
+                if not provider_id or not tool_name:
+                    logger.warning("CLI 工具缺少 provider_id/tool_name: %s", tool_id)
+                    return None
+                provider = self.cli_service.get_provider(provider_id)
+                if provider is None:
+                    logger.warning("CLI provider 未找到: %s", provider_id)
+                    return None
+                cli_tools = self.cli_service.build_selected_tools(
+                    [provider], tool_names=[tool_name]
+                )
+                return cli_tools[0] if cli_tools else None
+
             if source_type in ("builtin", "builtin_tool"):
                 # builtin 工具 ID 格式: "builtin:{provider_name}:{tool_name}"
                 # provider_id 字段在 builtin 候选里存的就是 provider_name
@@ -1561,7 +1689,7 @@ class AssistantAgentService(BaseService):
 
     def _load_skill_tools(self, descriptor, *, account_id: str = "") -> list[BaseTool]:
         """把 skill 类型候选展开为 LangChain 工具列表。"""
-        from internal.core.skills import SkillScfClient, SkillToolFactory
+        from internal.core.skills import SkillExecutor, SkillToolFactory
         from internal.model import SkillPackage, SkillPackageVersion
 
         provider_id = (
@@ -1601,7 +1729,7 @@ class AssistantAgentService(BaseService):
             "version": version.version,
         }
         try:
-            return SkillToolFactory(SkillScfClient()).build_tools(
+            return SkillToolFactory(SkillExecutor()).build_tools(
                 package_payload,
                 manifest.get("tools") or [],
                 runtime_context={"account_id": account_id},

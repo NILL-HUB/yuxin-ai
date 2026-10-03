@@ -10,6 +10,7 @@ import datasetDocuments from './datasetDocuments'
 import datasetDocumentImport from './datasetDocumentImport'
 import datasetSegments from './datasetSegments'
 import mcpAdmin from './mcpAdmin'
+import adminCli from './adminCli'
 import skillsAdmin from './skillsAdmin'
 import toolsAdmin from './toolsAdmin'
 import routingQuality from './routingQuality'
@@ -53,6 +54,7 @@ export default {
   datasetDocumentImport,
   datasetSegments,
   mcpAdmin,
+  adminCli,
   skillsAdmin,
   toolsAdmin,
   routingQuality,

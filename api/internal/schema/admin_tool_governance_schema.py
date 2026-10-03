@@ -7,7 +7,7 @@ from internal.schema import ListField
 from internal.entity.tool_inventory_entity import RISK_LEVEL_VALUES
 
 RISK_LEVELS = list(RISK_LEVEL_VALUES)
-SOURCE_TYPES = ["api_tool", "mcp", "skill", "builtin", "knowledge", "workflow", "agent_binding"]
+SOURCE_TYPES = ["api_tool", "mcp", "skill", "cli", "builtin", "knowledge", "workflow", "agent_binding"]
 VISIBILITIES = ["private", "tenant", "public"]
 INVOCATION_STATUSES = ["success", "failed", "blocked", "timeout"]
 

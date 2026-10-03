@@ -19,6 +19,7 @@ export default  {
         external_data_source: '外部数据源',
         conversation: '会话',
         memory: '记忆',
+        account: '用户账号',
       },
       deletedByTypes: {
         admin: '管理员内容',

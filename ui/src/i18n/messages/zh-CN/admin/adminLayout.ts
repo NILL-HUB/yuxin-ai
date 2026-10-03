@@ -13,6 +13,7 @@ export default  {
         systemKnowledge: '系统知识库',
         tools: 'API工具管理',
         mcp: 'MCP管理',
+        cli: 'CLI管理',
         skills: 'Skills管理',
         resourceOps: '资源运营',
         appStore: '应用商店',

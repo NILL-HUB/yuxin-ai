@@ -63,31 +63,38 @@
 | 优先级 | 条件 | 接入方式 | 代码改动 |
 |---|---|---|---|
 | **首选** | 应用暴露 MCP | 现有 MCP 工厂（McpToolFactory） | 零代码，admin 配置即用 |
-| **次选** | 应用发布为本地 CLI | 现有 MCP 工厂的 `transport=cli`（复用 stdio client 的 `protocol=raw`） | 零代码，admin 配置即用（需声明 `tool_schema`） |
+| **次选** | 应用发布为本地 CLI | **独立 CLI 工具来源**（`source_type=cli`）：admin 注册 `cli_provider`（含能力说明书 `tool_schema`），工具全量进池；执行复用 stdio client 的 `protocol=raw` | admin 注册即可用（需声明 `tool_schema`） |
 | **次选** | 应用有 REST API | 现有 API Tool 工厂（ApiProviderManager） | 零代码，admin 配置即用 |
 | **兜底** | 应用只有 SDK/库 | 实现 ToolProvider 协议 + 注册 | ~100 行 |
 
-### 3.2.1 CLI 本地进程接入（2026-09-25 落地）
+### 3.2.1 CLI 工具来源（独立来源，2026-09-24 落地）
 
-本地 CLI 作为工具接入**只有一条通道**：`McpStdioClient` 的本地进程能力，按协议分两种模式：
+CLI 是与 `builtin` / `api_tool` / `mcp` / `skill` 并列的**独立工具来源**（`source_type=cli`）：
 
-| transport | protocol | 工具来源 | 适用 |
+- **数据/服务/路由/UI 独立**：`cli_provider` / `cli_tool` 两张表 + `CliService` + `/admin/cli`，不寄生 `mcp_provider`。
+- **能力说明书**：`cli_provider.tool_schema`（`{tool_name: {description, parameters}}`）在注册/更新时展开写入 `cli_tool`（候选唯一事实源）。
+- **全量进池**：`cli_tool` 全部子命令以工具级 description 进入工具池候选，经 `ToolSelectorService`（关键词快通道 + LLM 兜底）选择，与其它来源同池竞争。
+- **执行复用**：选中后由 `CliService.build_selected_tools` 构造 binding 交给 `McpToolFactory`（内部走 `McpStdioClient` 的 `protocol=raw`）执行。
+
+本地 CLI 作为工具接入，按协议分两种模式：
+
+| 来源 | protocol | 工具来源 | 适用 |
 | --- | --- | --- | --- |
-| `stdio` | `mcp`（默认） | CLI 自身实现 MCP `tools/list` 自描述 | 已支持 MCP 的 CLI（如 `qwen-mm-plugins-api`） |
-| `cli` | `raw`（自动） | admin 在 `mcp_provider.tool_schema` 显式声明 | 纯 CLI（无 MCP 协议），按 `args` 模板执行、取 stdout |
+| `mcp`（transport=stdio） | `mcp`（默认） | CLI 自身实现 MCP `tools/list` 自描述 | 已支持 MCP 的 CLI（如 `qwen-mm-plugins-api`） |
+| `cli` | `raw`（自动） | admin 在 `cli_provider.tool_schema` 显式声明 | 纯 CLI（无 MCP 协议），按 `args` 模板执行、取 stdout |
 
-两种模式的运行链路：
+运行链路：
 
 - `McpToolFactory.get_tools` →（cli 时注入 `protocol="raw"`）→ `McpStdioClient.list_tools_sync` / `call_tool_sync`。
-- `raw` 模式的工具定义不做进程探测，直接读 `mcp_provider.tool_schema`（`{tool_name: {description, parameters}}`）；调用时按 `args` 模板做 `{参数名}` 替换后 `subprocess.run`，取 stdout（非零退出码 → `isError`）。
+- `raw` 模式的工具定义不做进程探测，直接读 `cli_provider.tool_schema`；调用时按 `args` 模板做 `{参数名}` 替换后 `subprocess.run`，取 stdout（非零退出码 → `isError`）。
 
 硬约束：
 
-- **无平行实现**：两种模式共用 `_build_stdio_params` / `_build_subprocess_env` / 超时与进程回收；`cli` 只是 `stdio` 的模式别名，**禁止**新建第二个 CLI client。
-- **`env` 走加密链路，不在前端手写明文**：provider 注册与**应用层绑定**（`app_service._validate_draft_app_config`）都会对 `env`/`headers` 调用 `encrypt_env`/`encrypt_headers` 落库（幂等），运行时由 `decrypt_env`/`decrypt_headers` 还原后注入子进程。**明文 `env` 会令 `decrypt_env` 抛 `ValueError`，导致绑定调用失败**——因此密钥写进绑定的 `env`（经弹窗表单填写）即可，由子进程 `os.environ` 继承，无需改容器环境。
-- **`cli` 必须声明 `tool_schema`**：纯 CLI 无自描述能力，不声明即不可用（服务端与前端均校验）。
+- **执行原语不重复实现**：两种模式共用 `McpStdioClient` 的 `_build_stdio_params` / `_build_subprocess_env` / 超时与进程回收；**禁止**新建第二个本地进程执行器——CLI 只是它的一个调用方。
+- **`env` 走加密链路**：CLI 注册时对 `env` 调用 `ensure_encrypted_env` 落库（幂等；**加密失败显式抛错**，不静默存空 env）；MCP provider 注册与应用层绑定同理（`encrypt_env` / `encrypt_headers`）。运行时由 `decrypt_env` 还原后注入子进程——密钥写进 provider 的 `env` 即可，由子进程 `os.environ` 继承，无需改容器环境。
+- **`cli` 必须声明 `tool_schema`**：纯 CLI 无自描述能力，不声明即不可用（服务端强校验）。
 - **`args` 模板替换规则**：字符串原样、`None`→空串、非标量按 JSON 序列化；占位符名按长度倒序替换（避免 `{text}` 抢占 `{text_long}`）。**缺失占位符不再静默传字面量**：整 token 即 `{name}` 且未提供时，连同其前置 `--flag` 一起丢弃（适配可选参数，让 CLI 走自身默认值）；内联出现且未提供时抛 `ValueError` 转结构化错误。占位符名以 `tool_schema` 声明的参数名为准，避免把 CLI 自身的花括号字面量误判为占位符。
-- **admin 入口**：MCP 编辑弹窗的 transport 下拉选 `cli`，下方 `tool_schema` 文本框填 JSON；运行时读取点为 `McpToolFactory.get_tools → McpStdioClient(protocol=raw)`。
+- **admin 入口**：系统配置 → CLI 管理（`/admin/cli`，权限 `cli:*`）；运行时读取点为 `CliService.build_selected_tools → McpToolFactory.get_tools → McpStdioClient(protocol=raw)`。
 
 ### 3.3 典型项目集成示例
 
@@ -356,7 +363,7 @@ class ToolSourceType(str, Enum):
 
 ## 7. Admin 管理面
 
-复用现有 admin 资源编排板块（详见 [admin-refactor-plan.md](./admin-refactor-plan.md)），新增"已注册扩展"列表页：
+复用现有 admin 资源编排板块（详见 [admin-refactor-plan.md](../archive/admin-refactor-plan.md)），新增"已注册扩展"列表页：
 
 | 管理项 | 说明 | 数据来源 |
 |---|---|---|

@@ -31,7 +31,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 │     持久化稳定 device_id（userData/device-id）；登录后 POST /desktop/devices/register
 │     上报 bridge_origin（默认 http://host.docker.internal:9876）+ 随机 bridge token
 ├─ 本地能力桥（bridge.js，127.0.0.1:9876）
-│     /file /recycle /snapshot → os worker；/browser → browser；/control → computer；
+│     /file /recycle /snapshot /exec → os worker；/browser → browser；/control → computer；
 │     /render /artifact → render worker（本机出片与产物取回）
 ├─ 原生体验
 │     托盘 tray.js（关闭驻留/显示/真退出停 worker）
@@ -89,8 +89,11 @@ Electron 主进程（desktop/main.js，唯一入口）
   - `resolveBridgePublicOrigin`：桥的对外地址；默认 `http://host.docker.internal:9876`（Bridge 仅监听 `127.0.0.1`，容器经 `host.docker.internal` 可达宿主回环，已实测），可用 `DESKTOP_BRIDGE_PUBLIC_ORIGIN` 覆盖。
   - `registerDevice(...)`：`POST {apiBase}/desktop/devices/register`，Bearer = 登录 access_token，body `{device_id, bridge_origin, bridge_token, name, platform}`。
 - `main.js`：`app.whenReady` 内记录 `bridgeAccessInfo` 并尝试注册；`desktop:set-credential`（登录同步）与新增 `desktop:register-device` IPC 均触发注册（凭证落盘后再注册，避免竞态）。
+- **设备心跳（2026-09-30）**：注册成功后 `main.js` 启动 `setInterval`，每 60s（`DEVICE_HEARTBEAT_INTERVAL_MS`）复用 `registerDevice` 上报一次以刷新服务端 `last_seen_at`；登出（`desktop:clear-credential`）与退出（`before-quit`）时停止。心跳是「设备在线」的唯一凭据——没有心跳，服务端无法区分设备是在线还是已关机。
 - UI：`desktop-credential-sync.ts` 在 `setCredential` 成功后调用 `registerDevice()`（可选桥方法）。
 - 服务端：`desktop_device` 表 + `DesktopDeviceService`（幂等 UPSERT / 按账号解析默认在线设备 / list / revoke）+ `resolve_desktop_bridge(account_id, purpose)`；工具层（os_* / computer_action / 渲染 / 浏览器自动化）统一经该解析器取 bridge，静态配置回退。详见 [08-os-automation.md](./08-os-automation.md) 与 [product-vision.md §4.1](../product-vision.md)。
+- **设备租约（2026-09-30）**：`resolve_bridge` 在 `status = online` 之外，还要求 `last_seen_at` 落在 `DEVICE_ONLINE_TTL_SECONDS`（180s）内；`list_devices` 返回的 `status` 为**读时计算**（`_effective_status`，心跳超期显示 `offline`，不写库）。修复「`status` 由注册直接置位、无心跳维持」导致设备关机后仍被判在线、任务被派给死设备的主链路缺陷。约束：TTL 必须显著大于客户端心跳间隔（当前取 3 倍），改动需两端同步核对。
+- **兼容性**：旧版客户端（无心跳）在服务端升级后，注册满 TTL 即被判离线，本机操作将回退静态配置或返回明确错误；服务端与客户端需同批升级。
 - `browser_action` 已接入 `resolve_desktop_bridge`（按账号动态解析在线设备）并已在
   `assistant_agent_service` 挂载（`requester=account_id`），不再依赖静态 env 才能可用；
   未注册设备时回退 `BROWSER_AUTOMATION_URL/TOKEN` 并返回明确错误（默认关闭）。
@@ -135,7 +138,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 | `DESKTOP_DEVICE_NAME` | 主机名 | 设备展示名（注册时上报） |
 | `CUA_DRIVER_EXE` | 自动探测 | cua-driver 可执行文件路径（未设则探测安装包/用户目录/PATH） |
 | `COMPUTER_CONTROL_BACKEND` | `auto` | computer worker 后端：auto（daemon 可达则 cua，否则 pyautogui）/ cua / pyautogui |
-| `VITE_DEV_SERVER_URL` | — | dev 模式连 Vite dev server |
+| `VITE_DEV_SERVER_URL` | — | dev 模式连 Vite dev server（标准端口 3000，对应 `docker/ui-dev`；`desktop/package.json` 的 `dev` script 已对齐） |
 
 ## 构建与分发
 
@@ -145,15 +148,48 @@ Electron 主进程（desktop/main.js，唯一入口）
 - 打包环境变量（NSIS 资源下载失败时）：`ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`。
 - 签名：`signAndEditExecutable: false`，正式发布需代码签名证书；`publish` 已指向 `https://openllm.cloud/desktop-updates`（generic provider），更新服务器目录需自行托管安装包与 `latest.yml`。
 
+### 自动更新与发布
+
+**检查时机（2026-09-30 补全）**：启动后延迟 30s 检查一次 + 每 24h 巡检（`desktop/updater.js` 的 `schedulePeriodicChecks`，由 `main.js` 在 `setupUpdater` 之后调用）。另有两条手动入口：托盘「检查更新」菜单项（`tray.js` → `onCheckUpdates`）与 IPC `desktop:check-for-updates`。手动触发传 `manual: true`，**仅此时**才提示「已是最新版本」——自动巡检每天都会 `not-available`，无差别提示会变成噪音。补全前 `checkForUpdates()` 只有 IPC 一个调用点、且托盘无入口，用户不主动点就永远不会检查更新（新版本无法到达用户）。
+
+**下载与安装**：`autoDownload = true`、`autoInstallOnAppQuit = true`（`updater.js`）。发现新版本即后台下载，完成后托盘通知，退出应用时安装——**全程无需用户操作**。
+
+**更新弹窗与更新历程（2026-09-30 补全）**：发现新版本时渲染进程弹出 `ui/src/components/DesktopUpdateModal.vue`（挂载于 `App.vue`，仅桌面环境），展示目标版本号与更新内容；下载完成后弹窗内状态切为「更新已就绪」，并提供可选的「立即重启并安装」（加速入口，不做也不影响下次启动自动安装）。数据链路为**单向透传**：
+
+1. 发布端 `build.releaseInfo.releaseNotesFile = release-notes.md`（`desktop/package.json`）→ `electron-builder` 把 `desktop/release-notes.md` 内容写入 `latest.yml` 的 `releaseNotes` 字段；
+2. 客户端 `updater.js` 的 `pickUpdateInfo` / `normalizeReleaseNotes` 把 `UpdateInfo` 归一为 `{ version, releaseNotes }`（`releaseNotes` 兼容 string / `Array<{version,note}>` / null）；
+3. `main.js` 的 `setupUpdater.onStatus` 向全部窗口 `webContents.send('desktop:update-status', { status, version, releaseNotes, manual })`；
+4. `preload.js` 暴露 `onUpdateStatus(callback)` 订阅与 `quitAndInstall()`；**两个消费方订阅同一事件**——更新弹窗（`DesktopUpdateModal.vue`：仅 `available` 时弹出，`downloaded` 只更新弹窗内状态）与设备面板的「检查更新」按钮（`DesktopDevicePanel.vue`：把 `checking` / `available` / `not-available` / `downloaded` / `error` 映射为即时文案，修复此前成功后永久停在「正在检查」的缺陷；`not-available` 仅在 `manual:true` 时提示「已是最新」，自动巡检不打扰）。主进程在检查失败（`error` 事件）时同样广播 `status='error'`，否则按钮无从知晓失败。
+
+**推送门控与 admin 检查（2026-09-30 新增）**：更新是否下发由 **admin 决定**，而非「上传即生效」。
+
+- 配置落库 `desktop_client_config`（复用既有单行 JSONB，**未新建平行表**）：`update_feed_url`（更新包目录地址）、`update_enabled`（推送开关）；admin 入口为「全局控制配置 → 桌面客户端」卡片（`GlobalControlConfigView.vue`）。
+- **客户端运行时读取点**：公开接口 `GET /desktop/update-manifest`（`desktop_routes.py`）返回 `{ enabled, feed_url }`；`updater.js` 的 `checkForUpdates` 在检查前先拉取该清单——`enabled=false` 时静默跳过，`feed_url` 非空时 `autoUpdater.setFeedURL({ provider: 'generic', url })` 覆盖打包内置 feed（便于随时切换托管位置）。接口不可达时按既有行为降级（用打包内置 feedUrl），不倒退。
+- **admin 检查更新**：`POST /admin/desktop-update/check`（权限 `system_config:manage`）由服务端拉取 `${update_feed_url}/latest.yml` 并解析（版本号 / 更新内容 / 发布时间），供管理员在开启推送前核对上游是否已有版本——读的是客户端将要读的同一份 `latest.yml`。
+- **兼容性**：门控只对**已升级到本版**的客户端生效；旧版客户端仍直连打包内置 feed（`package.json` 的 `publish.url`），不受开关约束，需覆盖升级后纳入管控。
+
+**发布步骤**：
+
+1. 递增 `desktop/package.json` 的 `version`（**必须递增**，`electron-updater` 依据 `latest.yml` 中的版本比对），并更新 `desktop/release-notes.md` 写明本次更新历程（该文件内容即客户端弹窗展示的文案）；
+2. `cd desktop && npm run dist` → 产物在 `dist-nsis/`，含 `钰见我 Setup <版本>.exe`、`latest.yml`、`*.blockmap`；
+3. 将 **`*.exe` + `latest.yml` + `*.blockmap` 三者同批**上传到更新包目录（默认 `https://openllm.cloud/desktop-updates/`）；
+4. 在 admin「全局控制配置 → 桌面客户端」填入该更新包地址并**打开「向客户端推送更新」开关**——开关关闭时客户端静默跳过检查，新版本不会下发。
+
+**三个易踩的坑**：① `latest.yml` 必须与新 exe 同批上传，只换 exe 会让客户端判定无更新；② 旧的 exe 不要删除——`.blockmap` 差分更新依赖它们，删除后客户端退化为全量下载；③ 版本号只能单调递增，回滚需发布更高版本号的新包，不能降号。
+
+**未签名的影响**：`signAndEditExecutable: false` 时安装会触发 SmartScreen「未知发布者」警告。内部合伙人规模下手动分发可以接受，但要实现静默自动更新，代码签名基本是前提。
+
+**部署前提（代码之外）**：更新包目录需由运维托管（nginx location 或对象存储）并可从公网读取，目录中须含 `latest.yml` 与安装包。目录地址不再写死在代码里——改用 admin 的 `update_feed_url` 指向任意可达位置即可；但**目录本身**仍需部署。截至 2026-09-30 实测 `https://openllm.cloud/desktop-updates/latest.yml` 返回错误页，说明该目录尚未部署或未配好路由——这是整条更新链路上唯一不在代码内的环节。
+
 ## 验证
 
 - 桌面单元测试：`cd desktop && node --test test/*.test.js`（server-config 缓存回退、credential-store 加解密、bridge）。
-- UI 测试：`cd ui && npx vitest run`（含 desktop-credential-sync、DesktopDevicePanel、config desktop override）。
+- UI 测试：`cd ui && npx vitest run`（含 desktop-credential-sync、DesktopDevicePanel、DesktopUpdateModal、config desktop override）。
 - 冒烟：开发模式 `cd desktop && npm start`；桌面版产物（相对路径）需经 Electron 加载验证——`file://` 下资源/API 正常（CORS 头经主进程注入）；NSIS 安装后启动 → 托盘 → 登录/登出/重启保持登录态。
 
 ## 首版范围与后续
 
-- 已交付（2026-09-08）：单 exe worker 托管、服务器地址注入、托盘/通知/自启/更新框架、safeStorage 凭证同步、设备面板完善、NSIS 打包验证（`desktop/package.json` 未设 `productName`，安装包名取自 `name=yujianwo-desktop`；仓库内 `desktop/dist-nsis/` 现存产物为更名前构建的 `钰心AI Setup 0.1.0.exe`，重新构建会按当前配置产出新名）。
+- 已交付（2026-09-08）：单 exe worker 托管、服务器地址注入、托盘/通知/自启/更新框架、safeStorage 凭证同步、设备面板完善、NSIS 打包验证（`desktop/package.json` 当时未设 `productName`，安装包名取自 `name=yujianwo-desktop`；仓库内 `desktop/dist-nsis/` 现存产物为更名前构建的 `钰心AI Setup 0.1.0.exe`。**现状（2026-09-30 核对）**：`build.productName` 已设为 `钰见我`，产物名为 `钰见我 Setup <版本>.exe`）。
 - 已交付（2026-09-09，窗口原生化，对标 Hermes）：移除默认应用菜单栏（`Menu.setApplicationMenu(null)`）；`titleBarStyle:'hidden'` + Windows `titleBarOverlay`（系统原生 min/max/close 叠加层，renderer 经 `navigator.windowControlsOverlay` 读取按钮区宽度避让）；自绘标题栏组件 `DesktopTitleBar.vue`（拖拽区 + 双击最大化 + 品牌名，fixed 毛玻璃悬浮，仅桌面环境渲染）；窗口位置/尺寸/最大化状态持久化（`window-state.js`）；布局以 CSS 变量 `--desktop-titlebar-h` 适配（Web 为 0，零影响）；worker 宿主存活看门狗修复（`GetExitCodeProcess` 探活替代 Windows 下不可用的 `os.kill(pid,0)`，宿主退出即自杀，含 PyInstaller onefile 双层进程）。
 - 已交付（2026-09-09，连接配置与 CORS 修复）：admin 端新增"桌面客户端连接地址"配置（`desktop_client_config` 表单行 JSONB + `GET/PUT /admin/desktop-client-config`），`/desktop-config` 优先返回配置地址、未配置/DB 异常回退同源；`DESKTOP_ENTRY_ORIGIN` 支持环境变量覆盖；修复 `onHeadersReceived` CORS 通配符 + 凭据非法组合（改为回显请求 Origin）。2026-09-23 起该配置的 UI 入口并入「全局控制配置」页面「桌面客户端连接」卡片（`GlobalControlConfigView.vue`），数据/接口不变。
 - 已交付（2026-09-11，电脑控制开箱可用）：worker exe 打包 `pyautogui`/`Pillow` 依赖族，桌面端无需额外装 Python 依赖即可真实操作鼠标/键盘/截屏（实测移动鼠标与截图通过）；重新产出 NSIS 安装包。

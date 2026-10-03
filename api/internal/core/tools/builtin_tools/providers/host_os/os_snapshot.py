@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from ..worker_client import call_host_worker
 
 
 logger = logging.getLogger(__name__)
@@ -68,47 +68,11 @@ def _normalize_text(value: Any) -> str:
 
 
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
-    from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
-    from internal.service.tool_credential_resolver import get_tool_credential
-
-    resolved = resolve_desktop_bridge(payload.get("requester"), purpose="/snapshot")
-    if resolved:
-        bridge_url, bridge_token = resolved
-        endpoint = bridge_url.rstrip("/") + "/snapshot"
-        token = bridge_token
-    else:
-        endpoint = get_tool_credential("OS_AUTOMATION_URL")
-        token = get_tool_credential("OS_AUTOMATION_TOKEN")
-    if not endpoint or not token:
-        return {
-            "ok": False,
-            "error": "未找到可用的桌面设备连接（当前账号未注册在线设备），"
-                     "且 DESKTOP_BRIDGE_URL/TOKEN、OS_AUTOMATION_URL/TOKEN 均未配置",
-        }
-    url = endpoint if endpoint.rstrip("/").endswith("/snapshot") else endpoint.rstrip("/") + "/snapshot"
-    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json; charset=utf-8",
-            "Authorization": f"Bearer {token}",
-        },
+    return call_host_worker(
+        payload,
+        purpose="/snapshot",
+        error_prefix="调用本机快照回滚失败",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            raw = response.read().decode("utf-8", errors="replace")
-            return json.loads(raw)
-    except urllib.error.HTTPError as exc:
-        try:
-            error_payload = json.loads(exc.read().decode("utf-8", errors="replace"))
-        except Exception:
-            error_payload = {"error": str(exc)}
-        return {"ok": False, "error": error_payload.get("error", str(exc))}
-    except Exception as exc:
-        return {"ok": False, "error": f"调用本机快照回滚失败: {exc}"}
 
 
 class OsSnapshotTool(BaseTool):

@@ -971,7 +971,7 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 ### 11.18 外部素材获取（KB-P6 已落地）
 
 **入口**：对话内置 builtin 工具 `fetch_media`（provider `media_fetch_tools`，挂载点
-[assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py)
+[assistant_agent_service.py](../../../api/internal/service/assistant_agent_service.py)
 `_build_assistant_runtime_tools`）。用户给一个公开媒体网页链接，小钰下载→上传→建档→自动触发
 L1 解析，形成「链接直达素材入库」的旁路。
 
@@ -985,12 +985,12 @@ admin 全局控制配置的「外部素材获取」开关（系统配置 → `/a
 
 **Async 执行**：工具经 `media_fetch_task.delay(...)` 派发到 Celery
 （任务 name=`internal.task.media_fetch_tasks.media_fetch_task`，见
-[media_fetch_tasks.py](../../api/internal/task/media_fetch_tasks.py)），返回后立即回任务号；
+[media_fetch_tasks.py](../../../api/internal/task/media_fetch_tasks.py)），返回后立即回任务号；
 下载完成自动入库并触发解析。任务为薄委托：只取 service/kb + 委托 +
 重试（`MediaFetchError` 业务失败不重试，其余 `max_retries=2`）。格式按板块
 `base_type` 推断：`audio` → `ba`，其他（video/mixed）→ `bv*+ba/b`。
 
-**核心服务**：[media_fetch_service.py](../../api/internal/service/media_fetch_service.py)
+**核心服务**：[media_fetch_service.py](../../../api/internal/service/media_fetch_service.py)
 `MediaFetchService.import_document` 流程：
 
 - `validate_url` 前置校验：仅 http/https；
@@ -1007,7 +1007,7 @@ admin 全局控制配置的「外部素材获取」开关（系统配置 → `/a
   **自动触发 L1 解析**），返回的 document 即素材记录；
 - 平台字幕经 `upload_bytes` 建 `UploadFile` 记录，id 写入 `document.metadata_["subtitle_upload_file_id"]`。
 
-**字幕优先（提取器增强）**：[knowledge_media_extractor_service.py](../../api/internal/service/knowledge_media_extractor_service.py)
+**字幕优先（提取器增强）**：[knowledge_media_extractor_service.py](../../../api/internal/service/knowledge_media_extractor_service.py)
 `_extract_video` 经 `_consume_subtitle_first` 优先消费平台字幕——读
 `document.metadata_["subtitle_upload_file_id"]` 下载字幕文件，解析 vtt/srt 为与 ASR 同构的
 cues，transcript Segment 的来源 `source=platform_subtitle`（省 ASR 转写成本）；无字幕或解析失败
@@ -1023,6 +1023,6 @@ cues，transcript Segment 的来源 `source=platform_subtitle`（省 ASR 转写�
 > → `create_document_from_upload_file`（L1 触发）→ 字幕 id 落 `metadata_` 供 `_consume_subtitle_first` 消费。
 > 任务在 `celery_app.py` `TASK_MODULES` + 显式 import 双重注册；工具在 `providers.yaml` 登记 + 挂载点受 admin 公共 AI 配置 `media_fetch` 开关门控。
 > **封面未接入**：`cover_upload_file_id` / `writethumbnail` 在当前代码中均无实现（见
-> [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp已落地kb-p6)）。
+> [knowledge-base-product-form-design.md §5.3](../knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp已落地kb-p6)）。
 
 

@@ -117,13 +117,53 @@ if [[ "${MIGRATION_ENABLED}" == "true" ]]; then
 fi
 
 # 6.检测运行的模式(api/celery/celery-beat/asgi) 以执行不同的脚本
+
+# 开发热重载开关（DEV_RELOAD）：源码已挂载（../api → /app/api），开启后改 Python 代码
+# 即自动生效，无需重建镜像、也无需手动 restart。**默认关闭，生产务必保持关闭**：
+#   - MODE=asgi                → uvicorn --reload（会强制单 worker，忽略 ASGI_WORKER_AMOUNT）
+#   - MODE=celery/celery-beat  → 由 watchfiles 托管，文件变更即重启进程树
+# 注意：alembic 迁移仍只在容器启动时执行一次；改了 migration 仍需 `docker restart`。
+is_dev_reload_enabled() {
+  case "$(printf '%s' "${DEV_RELOAD:-}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+DEV_RELOAD_WATCH_DIR="${DEV_RELOAD_WATCH_DIR:-/app/api}"
+# 热重载忽略目录（冒号分隔的路径前缀）：默认忽略测试目录，避免"改测试用例也重启 API/worker"。
+# 注意：uvicorn 的 --reload-exclude 必须传**绝对目录**——其 FileFilter 以
+# `exclude_dir in path.parents` 判定，glob 形式（如 test/*）对 test/internal/... 这类
+# 嵌套路径不生效。
+DEV_RELOAD_SKIP_DIRS="${DEV_RELOAD_SKIP_DIRS:-${DEV_RELOAD_WATCH_DIR}/test}"
+export DEV_RELOAD_SKIP_DIRS
+DEV_RELOAD_EXCLUDE_ARGS=()
+IFS=':' read -r -a _dev_reload_skip_dirs <<< "${DEV_RELOAD_SKIP_DIRS}"
+for _skip_dir in "${_dev_reload_skip_dirs[@]}"; do
+  if [[ -n "${_skip_dir}" ]]; then
+    DEV_RELOAD_EXCLUDE_ARGS+=(--reload-exclude "${_skip_dir}")
+  fi
+done
+unset _dev_reload_skip_dirs _skip_dir
+
+# 长驻进程统一以 exec 顶替 shell（让业务进程成为 PID 1 的直接后继），
+# 确保 `docker restart`/`docker stop` 的 SIGTERM 能直达进程并优雅退出。
 if [[ "${MODE}" == "asgi" ]]; then
   # 全量 Quart 迁移完成：app.http.asgi_app.quart_app 承载全部 393 个端点（含 SSE）。
   # HTTP 层仅走 ASGI；Http 容器仅作为 Celery/SocketIO 的依赖宿主。
   # 并发扩展：ASGI_WORKER_AMOUNT 起多 worker（每 worker 独立事件循环），
   # 同时按需放大 SQLALCHEMY_POOL_SIZE（默认 30，受 PostgreSQL max_connections 约束）。
+  if is_dev_reload_enabled; then
+    echo "Starting ASGI server (DEV_RELOAD=1 → uvicorn --reload，监听 ${DEV_RELOAD_WATCH_DIR})..."
+    exec uvicorn \
+      --host "${LLMOPS_BIND_ADDRESS:-0.0.0.0}" \
+      --port "${LLMOPS_PORT:-5001}" \
+      --reload --reload-dir "${DEV_RELOAD_WATCH_DIR}" \
+      "${DEV_RELOAD_EXCLUDE_ARGS[@]}" \
+      --timeout-keep-alive 75 \
+      app.http.asgi_app:app
+  fi
   echo "Starting ASGI server (uvicorn + quart_app + socketio)..."
-  uvicorn \
+  exec uvicorn \
     --host "${LLMOPS_BIND_ADDRESS:-0.0.0.0}" \
     --port "${LLMOPS_PORT:-5001}" \
     --workers ${ASGI_WORKER_AMOUNT:-1} \
@@ -143,16 +183,32 @@ elif [[ "${MODE}" == "celery" ]]; then
   else
     echo "[celery] 未设 CELERY_QUEUES，消费全部已声明队列"
   fi
-  celery -A app.http.celery_app:celery_app worker -P ${CELERY_WORKER_CLASS:-prefork} -c ${CELERY_WORKER_AMOUNT:-1} ${CELERY_QUEUE_ARGS} --loglevel DEBUG
+  CELERY_ARGS=(
+    celery -A app.http.celery_app:celery_app worker
+    -P "${CELERY_WORKER_CLASS:-prefork}"
+    -c "${CELERY_WORKER_AMOUNT:-1}"
+    ${CELERY_QUEUE_ARGS}
+    --loglevel DEBUG
+  )
+  if is_dev_reload_enabled; then
+    echo "[dev] DEV_RELOAD=1：celery 交给 watchfiles 托管（变更即重启，监听 ${DEV_RELOAD_WATCH_DIR}）"
+    exec python scripts/dev_reload.py "${CELERY_ARGS[@]}"
+  fi
+  exec "${CELERY_ARGS[@]}"
 elif [[ "${MODE}" == "celery-beat" ]]; then
   # 7b.运行Celery Beat调度器
-  celery -A app.http.celery_app:celery_app beat --loglevel DEBUG
+  if is_dev_reload_enabled; then
+    echo "[dev] DEV_RELOAD=1：celery-beat 交给 watchfiles 托管（监听 ${DEV_RELOAD_WATCH_DIR}）"
+    exec python scripts/dev_reload.py celery -A app.http.celery_app:celery_app beat --loglevel DEBUG
+  fi
+  exec celery -A app.http.celery_app:celery_app beat --loglevel DEBUG
 else
   echo "Starting ASGI server (uvicorn + quart_app + socketio) [MODE=${MODE}]..."
-  uvicorn \
+  exec uvicorn \
     --host "${LLMOPS_BIND_ADDRESS:-0.0.0.0}" \
     --port "${LLMOPS_PORT:-5001}" \
     --workers ${ASGI_WORKER_AMOUNT:-1} \
     --timeout-keep-alive 75 \
     app.http.asgi_app:app
 fi
+

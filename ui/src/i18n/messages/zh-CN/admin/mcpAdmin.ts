@@ -91,7 +91,6 @@ export default  {
       importHeadersLabel: '请求头',
       importHeaderKeyPlaceholder: 'Header Key',
       importHeaderValuePlaceholder: 'Header Value',
-      importHeaderAdd: '新增请求头',
       importCategoryPlaceholder: '可选，请输入分类',
       importIconPlaceholder: '可选，请输入图标 URL',
       icon: '图标',

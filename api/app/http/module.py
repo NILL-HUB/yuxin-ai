@@ -57,6 +57,7 @@ from internal.service.tool_inventory_service import (
 )
 from internal.service.builtin_tool_sync_service import BuiltinToolSyncService
 from internal.service.tool_selector_service import ToolSelectorService
+from internal.service.cli_service import CliService
 from internal.entity.tool_pool_entity import ToolSubPoolRegistry
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.composite_tool_resolver import CompositeToolResolver
@@ -178,6 +179,8 @@ class ExtensionModule(Module):
         binder.bind(RuntimeToolMountService, to=RuntimeToolMountService)
         # 注册 LLM 工具选择器（替代硬编码关键词映射，实现语义化工具选择）
         binder.bind(ToolSelectorService, to=ToolSelectorService)
+        # 注册 CLI 工具来源服务（source_type=cli，与 builtin/api_tool/mcp/skill 并列）
+        binder.bind(CliService, to=CliService)
 
         # 注册 builtin 工具 YAML→DB 同步服务（启动时调用，admin 后台元数据编辑依赖）
         binder.bind(BuiltinToolSyncService, to=BuiltinToolSyncService, scope=singleton)

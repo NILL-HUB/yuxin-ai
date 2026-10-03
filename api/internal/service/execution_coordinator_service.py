@@ -126,7 +126,7 @@ class ExecutionCoordinatorService:
                 failures = [
                     result.to_user_safe_dict()
                     for result in results
-                    if result.errors
+                    if result.failed
                 ]
                 repaired = self.plan_repairer(plan.original_query, failures)
                 if repaired is not None and repaired.items:
@@ -138,7 +138,12 @@ class ExecutionCoordinatorService:
 
     @staticmethod
     def _has_failures(results: list[OrchestratedAgentResult]) -> bool:
-        return any(result.errors for result in results)
+        """是否需要重规划：任一子任务硬失败或主动申明「无法完成」。
+
+        历史实现只看 errors，而正常跑完的子任务 errors 恒空、confidence 恒 1.0，
+        导致「跑完但没做成」永远触发不了修复回路。
+        """
+        return any(result.failed for result in results)
 
     def _run_plan(
         self,
@@ -167,7 +172,7 @@ class ExecutionCoordinatorService:
         failed_ids: set[str] = {
             task_id
             for task_id, result in results_by_id.items()
-            if result.errors
+            if result.failed
         }
         remaining = [
             item for item in items
@@ -200,7 +205,7 @@ class ExecutionCoordinatorService:
             for task_id, result in wave_results.items():
                 results_by_id[task_id] = result
                 completed_ids.add(task_id)
-                if result.errors:
+                if result.failed:
                     failed_ids.add(task_id)
         if not results_by_id:
             return []
@@ -259,7 +264,7 @@ class ExecutionCoordinatorService:
         failed_ids: set[str] = {
             task_id
             for task_id, result in results_by_id.items()
-            if result.errors
+            if result.failed
         }
         for item in items:
             if item.task_id in results_by_id:
@@ -279,7 +284,7 @@ class ExecutionCoordinatorService:
             )
             results.append(result)
             results_by_id[item.task_id] = result
-            if result.errors:
+            if result.failed:
                 failed_ids.add(item.task_id)
         if not results_by_id:
             return []
@@ -390,7 +395,7 @@ class ExecutionCoordinatorService:
 
     @staticmethod
     def _apply_global_fallback(results) -> list:
-        if results and all(result.errors for result in results):
+        if results and all(result.failed for result in results):
             return [ExecutionCoordinatorService._global_fallback_result()]
         return results
 
@@ -403,7 +408,7 @@ class ExecutionCoordinatorService:
                 routing_log_id,
                 {
                     "result_count": len(results),
-                    "failed_count": sum(1 for r in results if r.errors),
+                    "failed_count": sum(1 for r in results if r.failed),
                 },
             )
         except Exception:
@@ -422,7 +427,7 @@ class ExecutionCoordinatorService:
                 self._mark_running(item)
                 result = self._execute_item_with_timeout(item, execution_mode, context)
                 self._mark_completed(item, result)
-                if not result.errors:
+                if not result.failed:
                     return result
             except Exception:
                 result = self._failure_result(item)
@@ -433,7 +438,7 @@ class ExecutionCoordinatorService:
                     time.sleep(interval)
         if result is None:
             result = self._failure_result(item)
-        if attempts > 1 and result.errors:
+        if attempts > 1 and result.failed:
             result.warnings.append(f"retried:{attempts - 1}")
         return result
 

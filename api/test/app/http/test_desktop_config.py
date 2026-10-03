@@ -65,3 +65,45 @@ def test_desktop_config_uses_configured_api_origin():
         assert data["data"]["api_origin"] == "http://127.0.0.1:5001"
     finally:
         _set_desktop_api_origin("")
+
+
+def _set_desktop_update_config(enabled: bool, feed_url: str) -> None:
+    from internal.service.desktop_client_config_service import DesktopClientConfigService
+
+    DesktopClientConfigService().update_config(
+        {"update_enabled": enabled, "update_feed_url": feed_url}
+    )
+
+
+def test_update_manifest_defaults_to_disabled():
+    _set_desktop_update_config(False, "")
+    try:
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/desktop/update-manifest")
+                return resp, await resp.json
+
+        resp, data = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert data["code"] == "success"
+        assert data["data"] == {"enabled": False, "feed_url": ""}
+    finally:
+        _set_desktop_update_config(False, "")
+
+
+def test_update_manifest_exposes_feed_url_when_enabled():
+    _set_desktop_update_config(True, "https://openllm.cloud/desktop-updates/")
+    try:
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/desktop/update-manifest")
+                return resp, await resp.json
+
+        resp, data = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert data["data"] == {
+            "enabled": True,
+            "feed_url": "https://openllm.cloud/desktop-updates",
+        }
+    finally:
+        _set_desktop_update_config(False, "")

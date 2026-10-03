@@ -173,7 +173,7 @@ class TestArchiveOnceTask:
         assert called[0]["resource_id"] == task_id
         assert called[0]["deleted_by_type"] == "user"
         assert called[0]["deleted_by"] == str(account_id)
-        # 未显式传 retention_days → 跟随回收站系统默认（30 天）
+        # 未显式传 retention_days → 跟随回收站人工删除默认（7 天）
         assert called[0].get("retention_days") is None
 
     def test_admin_once_task_is_archived_as_admin(self, monkeypatch):

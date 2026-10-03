@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from langchain_core.tools import Tool
@@ -315,3 +315,265 @@ def test_execute_does_not_replay_on_success():
 
     assert agent_class.call_count == 1
     assert result["answer"] == "正常答案"
+
+
+def test_execute_flags_blocked_when_marker_present():
+    """子代理按约定输出「无法完成：原因」时，结果须标记 blocked 并携带原因。"""
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+
+    blocked_thought = _make_thought(
+        answer="我尝试检索了知识库，但无法完成：缺少该平台的访问凭证。",
+        event="agent_message",
+    )
+    agent = MagicMock()
+    agent.stream.return_value = iter([blocked_thought])
+    agent_class = MagicMock(return_value=agent)
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+    )
+
+    item = TaskPlanItem(task_id="task-blocked", title="标题", description="描述")
+    result = executor.execute(item)
+
+    assert result["blocked"] is True
+    assert result["blocking_reason"] == "缺少该平台的访问凭证。"
+    assert result["metadata"]["agent_blocked"] is True
+
+
+def test_execute_does_not_flag_blocked_without_marker():
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+
+    ok_thought = _make_thought(answer="任务已完成，结果为 42。", event="agent_message")
+    agent = MagicMock()
+    agent.stream.return_value = iter([ok_thought])
+    agent_class = MagicMock(return_value=agent)
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+    )
+
+    item = TaskPlanItem(task_id="task-ok-2", title="标题", description="描述")
+    result = executor.execute(item)
+
+    assert result["blocked"] is False
+    assert result["blocking_reason"] == ""
+
+
+def test_detect_blocked_supports_both_colon_styles():
+    assert AgentTaskExecutor._detect_blocked("无法完成：缺少工具") == (True, "缺少工具")
+    assert AgentTaskExecutor._detect_blocked("无法完成: 缺少工具") == (True, "缺少工具")
+    assert AgentTaskExecutor._detect_blocked("一切正常") == (False, "")
+    assert AgentTaskExecutor._detect_blocked("") == (False, "")
+
+
+_LONG_TASK_DESCRIPTION = "请统计上月各渠道转化率并给出可执行的优化建议"
+
+
+def _executor_with_answer(answer: str) -> AgentTaskExecutor:
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+    thought = _make_thought(answer=answer, event="agent_message")
+    agent = MagicMock()
+    agent.stream.return_value = iter([thought])
+    agent_class = MagicMock(return_value=agent)
+    return AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+    )
+
+
+def test_execute_uses_llm_evaluation_when_result_suspicious():
+    """约定标记未命中但结果可疑（回答极短、任务描述具体）时，补一次 LLM 自评。"""
+    executor = _executor_with_answer("嗯")
+    item = TaskPlanItem(
+        task_id="t-sus", title="标题", description=_LONG_TASK_DESCRIPTION
+    )
+
+    evaluator_llm = MagicMock()
+    evaluator_llm.invoke.return_value = MagicMock(
+        content="NOT_COMPLETED\n缺少各渠道转化率数据，未给出优化建议"
+    )
+
+    with patch(
+        "internal.service.language_model_service.LanguageModelService.get_feature_model",
+        return_value=evaluator_llm,
+    ), patch(
+        "internal.service.system_prompt_library_service.SystemPromptLibraryService.get_prompt_or_default",
+        return_value="评审提示词",
+    ):
+        result = executor.execute(item)
+
+    assert result["blocked"] is True
+    assert "缺少各渠道转化率数据" in result["blocking_reason"]
+    evaluator_llm.invoke.assert_called_once()
+
+
+def test_execute_keeps_unblocked_when_evaluator_reports_completed():
+    executor = _executor_with_answer("嗯")
+    item = TaskPlanItem(
+        task_id="t-sus-ok", title="标题", description=_LONG_TASK_DESCRIPTION
+    )
+
+    evaluator_llm = MagicMock()
+    evaluator_llm.invoke.return_value = MagicMock(content="COMPLETED\n任务已达成")
+
+    with patch(
+        "internal.service.language_model_service.LanguageModelService.get_feature_model",
+        return_value=evaluator_llm,
+    ), patch(
+        "internal.service.system_prompt_library_service.SystemPromptLibraryService.get_prompt_or_default",
+        return_value="评审提示词",
+    ):
+        result = executor.execute(item)
+
+    assert result["blocked"] is False
+    assert result["blocking_reason"] == ""
+
+
+def test_execute_keeps_unblocked_when_evaluator_unavailable():
+    """自评不可用（无模型）时保持原判定，不误报阻塞。"""
+    executor = _executor_with_answer("嗯")
+    item = TaskPlanItem(
+        task_id="t-sus-na", title="标题", description=_LONG_TASK_DESCRIPTION
+    )
+
+    with patch(
+        "internal.service.language_model_service.LanguageModelService.get_feature_model",
+        return_value=None,
+    ):
+        result = executor.execute(item)
+
+    assert result["blocked"] is False
+    assert result["blocking_reason"] == ""
+
+
+def test_execute_skips_llm_evaluation_for_trivial_task():
+    """任务描述很短（trivial）时不触发自评，避免无谓的 LLM 调用。"""
+    executor = _executor_with_answer("嗯")
+    item = TaskPlanItem(task_id="t-trivial", title="标题", description="输出 hello")
+
+    with patch(
+        "internal.service.language_model_service.LanguageModelService.get_feature_model",
+        return_value=None,
+    ) as mock_get_model:
+        result = executor.execute(item)
+
+    assert result["blocked"] is False
+    mock_get_model.assert_not_called()
+
+
+def test_request_more_tools_tool_delegates_to_provider():
+    from internal.core.agent.meta_tools.request_more_tools import (
+        REQUEST_MORE_TOOLS_NAME,
+        build_request_more_tools_tool,
+    )
+
+    calls = []
+
+    def _provider(query, reason):
+        calls.append((query, reason))
+        return "已追加 2 个工具：a、b"
+
+    tool = build_request_more_tools_tool(_provider)
+
+    assert tool.name == REQUEST_MORE_TOOLS_NAME
+    assert tool.invoke({"query": "企业信息", "reason": "缺数据"}) == "已追加 2 个工具：a、b"
+    assert calls == [("企业信息", "缺数据")]
+
+
+def test_request_more_tools_tool_handles_provider_failure():
+    from internal.core.agent.meta_tools.request_more_tools import (
+        build_request_more_tools_tool,
+    )
+
+    def _boom(query, reason):
+        raise RuntimeError("boom")
+
+    tool = build_request_more_tools_tool(_boom)
+
+    assert "申请追加工具失败" in tool.invoke({"query": "x"})
+
+
+def test_attach_meta_tools_appends_requested_tools_to_agent():
+    """执行中申请到的工具写回 agent.agent_config.tools（后续轮次即生效）。"""
+    from langchain_core.tools import StructuredTool
+
+    from internal.core.agent.entities.agent_entity import AgentConfig
+    from internal.core.agent.meta_tools.request_more_tools import REQUEST_MORE_TOOLS_NAME
+
+    new_tool = StructuredTool.from_function(
+        func=lambda x="": "ok", name="web_search", description="搜索"
+    )
+    holder: dict = {}
+
+    def _provider(query, reason, current_tools):
+        holder["current_names"] = [getattr(t, "name", "") for t in current_tools]
+        return "已追加 1 个工具：web_search。", [new_tool]
+
+    class _AgentClass:
+        def __init__(self, llm=None, agent_config=None):
+            self.agent_config = agent_config
+            holder["agent"] = self
+
+        def stream(self, _input):
+            meta = next(
+                t for t in self.agent_config.tools if t.name == REQUEST_MORE_TOOLS_NAME
+            )
+            holder["meta_result"] = meta.invoke({"query": "搜索", "reason": ""})
+            return iter([])
+
+    executor = AgentTaskExecutor(
+        agent_class=_AgentClass,
+        agent_config=AgentConfig(user_id=uuid4()),
+        tools=[],
+        llm=MagicMock(),
+        extra_tool_provider=_provider,
+    )
+    item = TaskPlanItem(task_id="t-meta", title="标题", description="描述")
+
+    executor.execute(item)
+
+    names = [t.name for t in holder["agent"].agent_config.tools]
+    assert REQUEST_MORE_TOOLS_NAME in names
+    assert "web_search" in names
+    assert "已追加 1 个工具" in holder["meta_result"]
+    # provider 拿到的 current_tools 已包含元工具自身
+    assert REQUEST_MORE_TOOLS_NAME in holder["current_names"]
+
+
+def test_attach_meta_tools_skipped_without_provider():
+    """未注入 provider 时不挂载元工具，保持原工具列表。"""
+    from internal.core.agent.entities.agent_entity import AgentConfig
+
+    holder: dict = {}
+
+    class _AgentClass:
+        def __init__(self, llm=None, agent_config=None):
+            self.agent_config = agent_config
+
+        def stream(self, _input):
+            holder["tools"] = list(self.agent_config.tools)
+            return iter([])
+
+    executor = AgentTaskExecutor(
+        agent_class=_AgentClass,
+        agent_config=AgentConfig(user_id=uuid4()),
+        tools=[],
+        llm=MagicMock(),
+    )
+    item = TaskPlanItem(task_id="t-no-meta", title="标题", description="描述")
+
+    executor.execute(item)
+
+    assert holder["tools"] == []

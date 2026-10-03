@@ -118,7 +118,7 @@ const saveConfig = async () => {
     try {
       parsed = configText.value.trim() ? JSON.parse(configText.value) : {}
     } catch {
-      Message.error('JSON 格式不正确')
+      Message.error(t('admin.storage.jsonInvalid'))
       return
     }
     await updateStorageConfig(configEditingBackend.value, parsed)

@@ -5,7 +5,7 @@
 > 来源分级：GitHub API / 官方 Release Notes / 官方博客为第一方来源；其余为二手整理
 
 > **v2 修订（2026-08-13）**：本文只保留结论与矩阵；逐子系统、源码落点和运行状态的完整深度盘点见
-> `docs/research/hermes-v0.20-capability-deep-dive.md`。本文同时修正了几处已过时状态：
+> `docs/archive/research-completed/hermes-v0.20-capability-deep-dive.md`。本文同时修正了几处已过时状态：
 > 标准 A2A v1.0、HMAC 出站 webhook、审批历史挖掘已落地，不再属于“不存在的能力”。
 
 ## 1. 开源结论
@@ -369,7 +369,7 @@ Hermes v0.20 已开源（MIT，正式版，活跃维护），但它与钰见我 
    已形成闭环，registry 已升级为 Redis 优先、内存兜底，支撑多 worker 部署；新增
    `POST /subtasks/<request_id>/cancel` 公共取消接口。
 
-完整逐项盘点见 `docs/research/hermes-v0.20-capability-deep-dive.md`。
+完整逐项盘点见 `docs/archive/research-completed/hermes-v0.20-capability-deep-dive.md`。
 
 ### 11.3 许可证与归属
 

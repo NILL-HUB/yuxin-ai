@@ -941,6 +941,22 @@ class TestVariableAssignerAndParameterExtractorNodes:
         assert result["node_results"][0].outputs["count"] == 0
 
 
+def _patch_http_sandbox(monkeypatch, *, endpoint="https://sandbox.example.com", post=None):
+    """把 CodeNode 的 HTTP 沙箱入口切到确定的句柄/假响应（统一入口后的测试接缝）。
+
+    接缝一：`code_node.build_sandbox_backend`（工厂）→ 返回 HttpSandboxHandle 或 None；
+    接缝二：`factory.requests.post`（`HttpSandboxHandle.execute` 的底层传输）。
+    """
+    from internal.core.agent.backends import HttpSandboxHandle
+
+    monkeypatch.setattr(
+        "internal.core.workflow.nodes.code.code_node.build_sandbox_backend",
+        lambda _runtime: HttpSandboxHandle(endpoint=endpoint) if endpoint else None,
+    )
+    if post is not None:
+        monkeypatch.setattr("internal.core.agent.backends.factory.requests.post", post)
+
+
 class TestCodeNode:
     def test_code_node_invoke_should_map_outputs_and_fill_default(self, monkeypatch):
         node_data = CodeNodeData(
@@ -994,17 +1010,16 @@ class TestCodeNode:
     def test_execute_function_should_raise_when_sandbox_url_not_configured(
         self, monkeypatch
     ):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "")
-        with pytest.raises(FailException, match="SANDBOX_URL环境变量未配置"):
+        _patch_http_sandbox(monkeypatch, endpoint="")
+        with pytest.raises(FailException, match="工作流代码沙箱未配置"):
             CodeNode._execute_function(
                 "def main(params):\n    return params", params={}
             )
 
     def test_execute_function_should_return_result_on_success(self, monkeypatch):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post",
-            lambda *_args, **_kwargs: SimpleNamespace(
+        _patch_http_sandbox(
+            monkeypatch,
+            post=lambda *_args, **_kwargs: SimpleNamespace(
                 status_code=200, json=lambda: {"result": {"x": 1}}
             ),
         )
@@ -1019,15 +1034,12 @@ class TestCodeNode:
         captured = {}
 
         def _fake_post(_url, *args, **kwargs):
-            captured["payload"] = json.loads(kwargs["data"])
+            captured["payload"] = kwargs["json"]
             return SimpleNamespace(
                 status_code=200, json=lambda: {"result": {"ok": True}}
             )
 
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post", _fake_post
-        )
+        _patch_http_sandbox(monkeypatch, post=_fake_post)
 
         result = CodeNode._execute_function(
             "def main(a, b):\n    return {'sum': a + b}", 1, 2
@@ -1042,15 +1054,12 @@ class TestCodeNode:
         captured = {}
 
         def _fake_post(_url, *args, **kwargs):
-            captured["payload"] = json.loads(kwargs["data"])
+            captured["payload"] = kwargs["json"]
             return SimpleNamespace(
                 status_code=200, json=lambda: {"result": {"ok": True}}
             )
 
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post", _fake_post
-        )
+        _patch_http_sandbox(monkeypatch, post=_fake_post)
 
         result = CodeNode._execute_function("def main():\n    return {'ok': True}")
 
@@ -1059,10 +1068,9 @@ class TestCodeNode:
         assert captured["payload"]["kwargs"] == {}
 
     def test_execute_function_should_raise_on_http_error(self, monkeypatch):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post",
-            lambda *_args, **_kwargs: SimpleNamespace(
+        _patch_http_sandbox(
+            monkeypatch,
+            post=lambda *_args, **_kwargs: SimpleNamespace(
                 status_code=500,
                 json=lambda: {"msg": "boom"},
                 text="boom",
@@ -1077,10 +1085,9 @@ class TestCodeNode:
     def test_execute_function_should_fallback_raw_text_when_http_error_body_not_json(
         self, monkeypatch
     ):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post",
-            lambda *_args, **_kwargs: SimpleNamespace(
+        _patch_http_sandbox(
+            monkeypatch,
+            post=lambda *_args, **_kwargs: SimpleNamespace(
                 status_code=502,
                 json=lambda: (_ for _ in ()).throw(ValueError("bad json")),
                 text="gateway error",
@@ -1093,10 +1100,9 @@ class TestCodeNode:
             )
 
     def test_execute_function_should_raise_when_response_is_not_json(self, monkeypatch):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post",
-            lambda *_args, **_kwargs: SimpleNamespace(
+        _patch_http_sandbox(
+            monkeypatch,
+            post=lambda *_args, **_kwargs: SimpleNamespace(
                 status_code=200,
                 json=lambda: (_ for _ in ()).throw(ValueError("not json")),
                 text="<html>oops</html>",
@@ -1122,10 +1128,9 @@ class TestCodeNode:
     def test_execute_function_should_raise_on_invalid_result_payload(
         self, monkeypatch, payload, message
     ):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post",
-            lambda *_args, **_kwargs: SimpleNamespace(
+        _patch_http_sandbox(
+            monkeypatch,
+            post=lambda *_args, **_kwargs: SimpleNamespace(
                 status_code=200, json=lambda: payload
             ),
         )
@@ -1146,10 +1151,9 @@ class TestCodeNode:
     def test_execute_function_should_map_requests_and_generic_errors(
         self, monkeypatch, error, message
     ):
-        monkeypatch.setattr(CodeNode, "Sandbox_URL", "https://sandbox.example.com")
-        monkeypatch.setattr(
-            "internal.core.workflow.nodes.code.code_node.requests.post",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+        _patch_http_sandbox(
+            monkeypatch,
+            post=lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
         )
 
         with pytest.raises(FailException, match=message):

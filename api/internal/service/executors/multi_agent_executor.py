@@ -52,6 +52,12 @@ class MultiAgentExecutor:
     cancel_token: object = None
     collected_thoughts: list = field(default_factory=list)
     plan_repairer: object = None
+    # 子任务工具解析器：callable(item: TaskPlanItem) -> list[BaseTool]。
+    # 由上层注入（复用主链路工具选择 + 挂载链路）；为 None 时所有子任务共用 self.tools。
+    subtask_tool_resolver: object = None
+    # 申请追加工具的 provider：(query, reason, current_tools) -> (说明文本, 新工具列表)。
+    # 供子代理执行中用 request_more_tools 动态追加工具（与 subtask_tool_resolver 同源）。
+    extra_tool_provider: object = None
 
     def execute(
         self,
@@ -336,6 +342,8 @@ class MultiAgentExecutor:
             "task_id": item.task_id,
             "agent_id": item.agent_id or item.task_id,
             "status": "running",
+            # 子任务自检索后的实际工具名列表（执行前解析，故此处已填充）
+            "tools": list(item.tools),
             "conversation_id": conversation_id,
             "message_id": message_id,
         }
@@ -489,8 +497,36 @@ class _SubtaskTaskExecutor:
             logger.warning("子任务按档位实例化失败 tier=%s，回退 host llm", tier, exc_info=True)
             return self.host.llm
 
+    def _resolve_tools_for_item(self, item: TaskPlanItem) -> list:
+        """子任务自检索：按子任务描述解析工具（与主 Agent 基线工具合并）。
+
+        解析器由上层注入，复用主链路的工具选择（ToolSelectorService，关键词优先、
+        LLM 兜底）与挂载链路（RuntimeToolMountService）。未注入或解析失败时回退
+        host.tools，保证子任务始终有基线工具可用。
+        """
+        base_tools = self.host.tools or []
+        resolver = getattr(self.host, "subtask_tool_resolver", None)
+        if resolver is None:
+            return base_tools
+        try:
+            resolved = resolver(item)
+            if resolved:
+                return list(resolved)
+        except Exception:
+            logger.warning("子任务工具自检索失败，回退基线工具集", exc_info=True)
+        return base_tools
+
     def execute(self, item: TaskPlanItem, context: dict | None = None) -> dict:
         try:
+            resolved_tools = self._resolve_tools_for_item(item)
+            # 写回工具名（item.tools 是名称列表），使 SSE 展示与实际执行一致
+            tool_names = [
+                getattr(tool, "name", "")
+                for tool in resolved_tools
+                if getattr(tool, "name", "")
+            ]
+            if tool_names:
+                item.tools = tool_names
             self.sse_queue.put(
                 MultiAgentExecutor._subtask_running_sse(
                     item,
@@ -514,13 +550,14 @@ class _SubtaskTaskExecutor:
             task_executor = AgentTaskExecutor(
                 agent_class=self.host.agent_class,
                 agent_config=self.host.agent_config,
-                tools=self.host.tools or [],
+                tools=resolved_tools,
                 llm=self._resolve_llm_for_item(item),
                 history=self.host.history or [],
                 query=item.description or self.host.query,
                 long_term_memory=self.host.long_term_memory,
                 user_memory=self.host.user_memory,
                 event_emitter=_event_emitter_with_activity,
+                extra_tool_provider=getattr(self.host, "extra_tool_provider", None),
             )
             if getattr(item, "model_id_hint", ""):
                 if context is None:

@@ -3,7 +3,7 @@
 
 > **创建日期**：2026-07-09
 > **Track**：H（监控与集成测试，H1-H5）
-> **关联架构**：[01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) | [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) | [03-consolidation-skill-policy-api.md](../../03-consolidation-skill-policy-api.md) | [00-overview.md](./00-overview.md)
+> **关联架构**：[01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) | [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) | [03-consolidation-skill-policy-api.md](../../prd/memory-system/03-consolidation-skill-policy-api.md) | [00-overview.md](./00-overview.md)
 > **执行原则**：监控指标覆盖 RED/USE 两套基线；集成测试覆盖全链路 happy path 与降级场景；指标埋点与功能开发同步推进。
 
 ---

@@ -12,7 +12,7 @@ from internal.model.tool_governance_entity import ToolGovernancePolicy, ToolInvo
 
 
 RISK_LEVELS = list(RISK_LEVEL_VALUES)
-SOURCE_TYPES = ["api_tool", "mcp", "skill", "builtin", "knowledge", "workflow", "agent_binding"]
+SOURCE_TYPES = ["api_tool", "mcp", "skill", "cli", "builtin", "knowledge", "workflow", "agent_binding"]
 VISIBILITIES = ["private", "tenant", "public"]
 INVOCATION_STATUSES = ["success", "failed", "blocked", "timeout"]
 

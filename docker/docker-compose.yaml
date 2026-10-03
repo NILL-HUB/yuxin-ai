@@ -54,10 +54,13 @@ services:
       NEO4J_URI: bolt://llmops-neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       # 浏览器自动化 / 电脑控制 worker（Docker 网络内使用服务名互通）
+      # Token **不再内置弱默认**（历史值 dev-*-worker-token 属"生产弱密钥"）。
+      # 置空 = 未开通：worker 侧会拒绝启动（fail fast），api 侧工具返回诚实的「未配置」。
+      # 生产请在 docker/.env 配置强随机 token（模板见 docker/.env.example）。
       BROWSER_AUTOMATION_URL: http://llmops-browser-worker:8766
-      BROWSER_AUTOMATION_TOKEN: ${BROWSER_AUTOMATION_TOKEN:-dev-browser-worker-token}
+      BROWSER_AUTOMATION_TOKEN: ${BROWSER_AUTOMATION_TOKEN:-}
       COMPUTER_CONTROL_URL: http://llmops-computer-worker:8767
-      COMPUTER_CONTROL_TOKEN: ${COMPUTER_CONTROL_TOKEN:-dev-computer-worker-token}
+      COMPUTER_CONTROL_TOKEN: ${COMPUTER_CONTROL_TOKEN:-}
     ports:
       - "127.0.0.1:${API_PORT:-5001}:5001"
     healthcheck:
@@ -209,10 +212,11 @@ services:
       context: ../api
       dockerfile: Dockerfile.worker
     container_name: llmops-browser-worker
-    # 服务端浏览器自动化：给「未安装桌面端的纯 Web 用户」用的回退通道，默认启动。
-    # 注意：桌面客户端**自带**同名 worker 子进程（desktop/main.js startWorker），
-    # 其电脑控制经本机 bridge 回传，不依赖本容器；本容器只服务无桌面端场景。
-    restart: always
+    # 服务端浏览器自动化 = Web 端的「内部浏览器」（headless Chromium），是**未安装桌面端
+    # 的纯 Web 用户唯一的浏览器能力**（`browser_action` 的静态回退通道），故**默认启动**。
+    # 桌面客户端若注册了在线设备，会**优先**走其本机 bridge（见 browser_action._call_worker）。
+    # 关闭方式：docker compose stop llmops-browser-worker（或置空 token 令其 fail-fast 退出）。
+    restart: "on-failure:5"
     command: ["python", "scripts/browser_automation_worker.py"]
     volumes:
       - ../api:/app/api
@@ -221,7 +225,8 @@ services:
     environment:
       BROWSER_AUTOMATION_HOST: 0.0.0.0
       BROWSER_AUTOMATION_PORT: 8766
-      BROWSER_AUTOMATION_TOKEN: ${BROWSER_AUTOMATION_TOKEN:-dev-browser-worker-token}
+      # 无弱默认：置空即拒绝启动（fail fast），避免生产使用 dev token
+      BROWSER_AUTOMATION_TOKEN: ${BROWSER_AUTOMATION_TOKEN:-}
     ports:
       - "127.0.0.1:${BROWSER_AUTOMATION_PORT:-8766}:8766"
 
@@ -231,10 +236,14 @@ services:
       context: ../api
       dockerfile: Dockerfile.worker
     container_name: llmops-computer-worker
-    # 服务端计算机控制：给「未安装桌面端的纯 Web 用户」用的回退通道（xvfb + pyautogui），默认启动。
-    # 注意：桌面客户端**自带** computer worker（desktop/main.js startWorker），
-    # 且经 cua-driver 提供后台定向控制；本容器只是无桌面端时的降级通道。
-    restart: always
+    # ⚠️ 默认**不启动**（profile: local-workers）。原因不是省资源（空闲仅 ~8 MiB），
+    # 而是它**做不到产品承诺**：本服务跑的是容器内 xvfb 虚拟桌面 + pyautogui，
+    # **操作不到用户的真实电脑**——真正的「操作我的电脑」只能由桌面客户端完成
+    # （desktop 自带 computer worker + cua-driver 定向后台控制）。
+    # 需要这条「虚拟桌面」通道时：
+    #   docker compose --profile local-workers up -d llmops-computer-worker
+    profiles: ["local-workers"]
+    restart: "on-failure:5"
     command: ["sh", "-c", "xvfb-run -a python scripts/computer_control_worker.py"]
     volumes:
       - ../api:/app/api
@@ -243,7 +252,8 @@ services:
     environment:
       COMPUTER_CONTROL_HOST: 0.0.0.0
       COMPUTER_CONTROL_PORT: 8767
-      COMPUTER_CONTROL_TOKEN: ${COMPUTER_CONTROL_TOKEN:-dev-computer-worker-token}
+      # 无弱默认：置空即拒绝启动（fail fast），避免生产使用 dev token
+      COMPUTER_CONTROL_TOKEN: ${COMPUTER_CONTROL_TOKEN:-}
     ports:
       - "127.0.0.1:${COMPUTER_CONTROL_PORT:-8767}:8767"
 

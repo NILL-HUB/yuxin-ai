@@ -54,6 +54,8 @@ class SingleAgentExecutor:
     subtask_registry: object = None
     cancel_token: object = None
     plan_repairer: object = None
+    # 申请追加工具的 provider：(query, reason, current_tools) -> (说明文本, 新工具列表)。
+    extra_tool_provider: object = None
 
     def execute(
         self,
@@ -112,6 +114,7 @@ class SingleAgentExecutor:
                         long_term_memory=self.long_term_memory,
                         user_memory=self.user_memory,
                         event_emitter=_event_emitter,
+                        extra_tool_provider=self.extra_tool_provider,
                     )
                     coordinator = ExecutionCoordinatorService(
                         executor=executor,

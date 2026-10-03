@@ -39,6 +39,8 @@
 >   community_governance_enabled=True、profile_enabled=True、
 >   profile_promote_min_episodes=2。
 
+> **实现口径说明（2026-10-03 复核）**：§7~§10 的「完整 Python 实现 / FastAPI 路由定义」为 **v5.x 设计期参考实现**（async + FastAPI + `src.consolidation.engine` 风格），**与仓库当前实现不一致、不代表现状**。仓库当前实现为同步 + Quart：巩固引擎 `api/internal/service/memory/consolidation_engine.py`、冲突检测 `conflict_detector.py`、技能涌现 `skill_emergence.py`、策略路由 `policy_router.py`、记忆 API 路由在 `api/app/http/user_routes_9.py`（`/memory/*`）。读代码以仓库源码为准。
+
 ---
 
 7. 巩固引擎
@@ -65,20 +67,16 @@ logger = logging.getLogger(__name__)
 # ── 数据模型 ──────────────────────────────────────────────
 class ConsolidationPhase(str, Enum):
     """
-    巩固阶段
+    巩固引擎执行阶段（实现：api/internal/model/memory_models.py）
     """
 
-    EPISODIC_TO_SEMANTIC = "episodic_to_semantic"
-    # 阶段 1: 情景→语义
-    CONFLICT_DETECTION = "conflict_detection"
-    # 阶段 2: 冲突检测
-    WEIGHT_SCAN = "weight_scan"
-    # 阶段 3: 权重扫描
-    REDUNDANCY_MERGE = "redundancy_merge"
-    # 阶段 4: 冗余合并
-    STATS_SUMMARY = "stats_summary"
-
-    # 阶段 5: 统计摘要
+    EXTRACT = "extract"      # 提取：情景→语义
+    COMMUNITY = "community"  # 归纳：语义/实体簇→Community 高层主题（P5 新皮层层）
+    RESOLVE = "resolve"      # 冲突解决
+    MERGE = "merge"          # 冗余合并
+    TIER = "tier"            # 层级迁移
+    SKILL = "skill"          # 技能涌现：高频行为模式→Skill 节点
+    REPORT = "report"        # 报告生成
     class ConsolidationConfig(BaseModel):
         """
         巩固引擎配置
@@ -1440,13 +1438,13 @@ skill_tier2_enabled: bool = True        # Tier 2 开关
 
 ---
 
-### 8.7 Skill 生命周期治理（Curator + bump_use，v5.2 部分实施）
+### 8.7 Skill 生命周期治理（Curator + bump_use，v5.2 已实施）
 
 > **灵感来源**：Hermes Agent — "Skills self-improve during use"
 > **实施优先级**：P1
-> **实施状态**：Curator 周期剪枝已实施（断裂点 ⚠️-3 修复），bump_use 实时统计待实施
+> **实施状态**：Curator 周期剪枝已实施（断裂点 ⚠️-3 修复）；bump_use 实时统计**已实施**（`SkillEmergence.bump_use` + 每小时 `flush_bump_use_to_neo4j` Celery 任务 + beat 登记，见 `api/internal/task/consolidation_tasks.py`、`api/app/http/celery_app.py`）
 
-#### 8.7.1 实时使用统计（bump_use，待实施）
+#### 8.7.1 实时使用统计（bump_use，已实施）
 
 ```
 Agent 调用 Skill（SkillExecutor 执行）
@@ -1957,9 +1955,9 @@ class MemoryGovernor:
 | GET | /memory/graph/{user_id} | 获取记忆图谱数据（用于可视化） | 无（旧系统无图谱） |
 | GET | /memory/graph/{user_id}/cluster/{type} | 获取某聚类的子图 | 无 |
 | GET | /memory/{memory_id} | 获取单条记忆详情 | /user/memory/{id} (GET) |
-| PUT | /memory/{memory_id} | 编辑记忆内容（创建新节点+旧节点失效） | /user/memory/{id} (POST update) |
-| DELETE | /memory/{memory_id} | 软删除记忆 | /user/memory/{id} (DELETE) |
-| DELETE | /memory/{memory_id}/hard | 彻底删除记忆 | 无（旧系统只有硬删除） |
+| POST | /memory/{memory_id}/edit | 编辑记忆内容（创建新节点+旧节点失效） | /user/memory/{id} (POST update) |
+| POST | /memory/{memory_id}/soft-delete | 软删除记忆 | /user/memory/{id} (DELETE) |
+| POST | /memory/{memory_id}/hard-delete | 彻底删除记忆 | 无（旧系统只有硬删除） |
 | POST | /memory/{memory_id}/decay | 手动降低权重 | 无 |
 | GET | /memory/skills/{user_id} | 获取涌现技能列表 | 无 |
 | GET | /memory/health | 健康检查 | 无 |
@@ -1971,7 +1969,9 @@ class MemoryGovernor:
 - `GET /user/memory/settings` — 用户设置（不再需要候选确认设置）
 - `POST /user/memory/settings` — 更新设置（不再需要）
 
-### 10.1 FastAPI 路由定义
+### 10.1 FastAPI 路由定义（设计期参考实现，非仓库现状）
+
+> ⚠️ 以下为设计期参考实现（FastAPI 风格）；仓库实际路由为 Quart，挂在 `api/app/http/user_routes_9.py`，路径与请求/响应契约以该文件为准。
 
 ```python
 from __future__ import annotations
@@ -2293,11 +2293,12 @@ P0 ──→ P1 ──→ P2 ──→ P3 ──→ P4
 | `memory_retrieve_latency_seconds` | Histogram | user_id, path, intent | 检索延迟分布 |
 | `memory_retrieve_results_count` | Histogram | user_id, source | 每次检索返回结果数 |
 | `memory_consolidation_duration_seconds` | Histogram | user_id, phase | 巩固各阶段耗时 |
-| `memory_consolidation_items_processed` | Counter | user_id, phase | 巩固处理的条目数 |
 | `memory_consolidation_errors_total` | Counter | user_id, phase | 巩固错误数 |
+| `memory_explicit_detection_total` | Counter | category, stage | 显式陈述检测数 |
+| `memory_conflict_resolved_total` | Counter | type | 写时冲突解决数 |
 | `memory_storage_tier_nodes` | Gauge | user_id, tier | 各层级存储节点数 |
 | `memory_skill_count` | Gauge | user_id, status | 各状态技能数量 |
-| `memory_digest_cache_hit_ratio` | Gauge | user_id | Digest 缓存命中率 |
+| `memory_digest_cache_hit` | Gauge | （无标签） | Digest 缓存命中率（0-1 滚动值） |
 | `memory_conflict_detected_total` | Counter | user_id, type | 冲突检测数（type=contradiction/update/complement） |
 | `memory_spread_activation_depth` | Histogram | user_id | 图扩展实际跳数分布 |
 | `memory_llm_tokens_total` | Counter | model, operation | LLM token 消耗 |
@@ -2583,7 +2584,7 @@ async def prometheus_metrics() -> Response:
 | `early_stop_confidence` | float | 0.9 | FunnelCompressor | Early Stop 置信度 |
 | `llm_model` | str | "gpt-4o-mini" | FunnelCompressor | LLM 模型 |
 | `budget_tokens` | int | 2000 | FunnelCompressor | 输出 token 预算 |
-| `cache_ttl_seconds` | int | 300 | DigestManager | Digest 缓存 TTL |
+| `cache_ttl_seconds` | int | 86400 | DigestManager | Digest 缓存 TTL（实现值，见 `api/internal/config/memory_settings.py`） |
 | `max_tokens` | int | 2000 | DigestManager | Digest 最大 token 数 |
 | `episode_age_days` | int | 7 | ConsolidationEngine | Episode 转语义最低年龄 |
 | `semantic_min_examples` | int | 3 | ConsolidationEngine | 提取语义的最少 Episode |

@@ -191,7 +191,7 @@
 
 ### 24.4.1 `LanguageModelService.get_feature_model(feature_key)` 两级回退
 
-真实实现为 classmethod（[language_model_service.py](../../api/internal/service/language_model_service.py)）：
+真实实现为 classmethod（[language_model_service.py](../../../api/internal/service/language_model_service.py)）：
 
 ```python
 @classmethod
@@ -258,7 +258,7 @@ llm = LanguageModelService.get_feature_model("memory_explicit_detection")
 
 ### 24.5.1 `CreditService.consume_for_feature`
 
-真实签名（[credit_service.py](../../api/internal/service/credit_service.py)）：
+真实签名（[credit_service.py](../../../api/internal/service/credit_service.py)）：
 
 ```python
 def consume_for_feature(
@@ -284,7 +284,7 @@ def consume_for_feature(
     """
 ```
 
-实际调用方是 `BillingUsageAggregator.final()`（[billing_metering_service.py](../../api/internal/service/billing_metering_service.py)）与 `usage_utils.charge_for_feature()`，而非各业务服务直接调用——业务侧只负责上报 token 用量，扣费在任务收尾时统一结算（同 model_id 合并 token 后一次 ceil）。
+实际调用方是 `BillingUsageAggregator.final()`（[billing_metering_service.py](../../../api/internal/service/billing_metering_service.py)）与 `usage_utils.charge_for_feature()`，而非各业务服务直接调用——业务侧只负责上报 token 用量，扣费在任务收尾时统一结算（同 model_id 合并 token 后一次 ceil）。
 
 ### 24.5.2 8 个 billable 调用点的集成
 
@@ -465,7 +465,7 @@ fallback_tier 池 (Level 2)
 
 ### 24.8.3 与 §13 Orchestrator 的关系
 
-Orchestrator 的复杂度判断由 `TaskClassifierService` 承担（[task_classifier_service.py](../../api/internal/service/task_classifier_service.py)），其 LLM 分支使用 `get_feature_model("task_classification")`；工具选择由 `ToolSelectorService` 使用 `get_feature_model("tool_selection")`。这些是**同步路径**（用户等待），推荐配置为较低的模型池档位（如 `1`）保证响应速度。
+Orchestrator 的复杂度判断由 `TaskClassifierService` 承担（[task_classifier_service.py](../../../api/internal/service/task_classifier_service.py)），其 LLM 分支使用 `get_feature_model("task_classification")`；工具选择由 `ToolSelectorService` 使用 `get_feature_model("tool_selection")`。这些是**同步路径**（用户等待），推荐配置为较低的模型池档位（如 `1`）保证响应速度。
 
 > **历史注记**：文档早期版本此处列出的 `complexity_judge` / `intent_router` / `app_selection` / `web_search_decision` 四个名称在代码中**不存在**（全仓零命中），已按真实调用点更正。
 

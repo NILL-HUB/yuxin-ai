@@ -15,6 +15,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# 「无可用桌面连接」的**统一用户可见文案**（单一事实源，4 处消费方共用）：
+#   os_file_task / os_recycle_bin / os_snapshot（内置工具）与 recycle_bin_handlers（平台回收站）。
+# 收敛原因：此前四处各写一份、措辞不一（"均未配置" vs "…或…未配置"），且只讲内部 env 名，
+# 用户不知道该怎么办。这里统一为「可执行的引导」，并保留静态回退的准确出处。
+DESKTOP_UNAVAILABLE_MESSAGE = (
+    "未找到可用的本机连接：当前账号没有在线的桌面设备。"
+    "本机操作需要桌面客户端在线——请安装并登录桌面端、保持其在线；"
+    "管理员也可配置 OS_AUTOMATION_URL/TOKEN（或 DESKTOP_BRIDGE_URL/TOKEN）使用宿主机 worker。"
+)
+
 
 def _normalize(value: Any) -> str:
     return str(value or "").strip()

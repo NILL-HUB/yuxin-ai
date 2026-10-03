@@ -166,12 +166,17 @@ node --test desktop/test/bridge.test.js
 - `api/requirements-workers.txt`：browser/computer worker 可选依赖（playwright、
   pillow、pyautogui；唤醒词依赖按真机需要追加）。
 - `api/Dockerfile.worker`：worker 专用镜像，安装 Chromium 与 GUI 依赖。
-- compose 新增 `llmops-browser-worker` / `llmops-computer-worker`
-  （`profiles: ["local-workers"]`）。
+- compose 新增 `llmops-browser-worker` / `llmops-computer-worker`。
+  **（2026-09-30 更新，以下为当前实际状态）** `llmops-browser-worker` **默认启动**
+  （服务端 headless Chromium = Web 端「内部浏览器」回退通道）；`llmops-computer-worker`
+  属 `profiles: ["local-workers"]` **默认不启动**（它只是容器内 xvfb 虚拟桌面，
+  操作不到用户真实电脑——本机操作由桌面客户端提供）。
 - worker 镜像只装 `requirements-workers.txt`（playwright/pillow/pyautogui）与
   Chromium，不再重复安装完整 API 依赖；浏览器 worker 使用 `--with-deps` 自动补齐运行库。
-- browser/computer worker 默认使用开发 token（`dev-browser-worker-token` /
-  `dev-computer-worker-token`），生产环境请在 `api/.env` 覆盖。
+- **（2026-09-30 更新）** 两个 worker 的鉴权 token **不再内置弱默认**
+  （历史值 `dev-browser-worker-token` / `dev-computer-worker-token` 已移除）。
+  未配置时：worker **拒绝启动**（fail fast），api 侧工具返回诚实的「未配置」（fail closed）。
+  请在 `docker/.env` 配置强随机 token（模板见 `docker/.env.example`）。
 
 让修改生效：
 

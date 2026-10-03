@@ -17,6 +17,7 @@ from .workflow import Workflow, WorkflowResult, WorkflowVersion, WorkflowRun, Wo
 from .platform import WechatConfig, WechatEndUser, WechatMessage
 from .tag import Tag, AppTag, WorkflowTag
 from .tool_confirmation import ToolConfirmation
+from .cli import CliProvider, CliTool
 from .mcp import McpProvider, McpTool
 from .skill import SkillPackage, SkillPackageVersion
 from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, RolePermission, AuditLog
@@ -36,7 +37,6 @@ from .distribution import (
     ReturnRequest,
     WithdrawalRequest,
 )
-from .resource_vector_index import ResourceVectorIndex
 from .routing_quality import (
     PolicyChangeDraftModel,
     RoutingOptimizationSuggestionModel,
@@ -72,6 +72,7 @@ __all__ = [
     "Workflow", "WorkflowResult", "WorkflowVersion", "WorkflowRun", "WorkflowNodeExecution",
     "WechatConfig", "WechatEndUser", "WechatMessage",
     "Tag", "AppTag", "WorkflowTag",
+    "CliProvider", "CliTool",
     "McpProvider", "McpTool",
     "SkillPackage", "SkillPackageVersion",
     "AdminUser", "AdminSession", "Role", "Permission", "AdminUserRole", "RolePermission", "AuditLog",
@@ -81,7 +82,6 @@ __all__ = [
     "ReferralCode", "DistributionRelation", "BalanceAccount", "BalanceTransaction", "WithdrawalRequest",
     "PaymentProviderConfig", "PurchaseOrder", "ReturnRequest", "AutoRenewal",
     "RoutingLog", "OrchestrationFeatureFlagModel",
-    "ResourceVectorIndex",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
     "PolicyChangeDraftModel",
     "PromptTemplate",

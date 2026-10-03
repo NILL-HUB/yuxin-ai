@@ -77,6 +77,8 @@ tinycss2
 uvicorn
 # Quart：异步 Web 框架（兼容 Flask API 风格，阶段 3 全量迁移目标）
 quart
+# 开发热重载（DEV_RELOAD）：uvicorn --reload 的 inotify 后端 + celery/beat 的变更即重启托管
+watchfiles
 
 # 监控指标
 prometheus_client

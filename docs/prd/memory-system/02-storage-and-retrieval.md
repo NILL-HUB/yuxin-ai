@@ -2141,10 +2141,13 @@ admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_
 `AdminCustomerUserService._cleanup_user_runtime_data` 做 PG + Neo4j 清理但**完全不碰 Redis**，
 故注销后 `memory:digest:` / `skill:*` / `nudge:*` 等键只能靠 TTL 兜底存活（digest 最久 86400s）。
 
-**修复（P3c-4）**：`_cleanup_user_runtime_data` 末尾追加 Redis 清理段——构造 `MemoryGovernor()`
-调 `_clear_all_user_cache(str(account_id))`（用户态 owner_key=裸 UUID，与历史键逐字节一致），
-结果计入 `stats["redis_keys"]`，best-effort 失败不阻断注销。注销入口：
-`AdminCustomerUserService.delete_customer_user` → `_cleanup_user_runtime_data`（P3c-4）。
+**修复（P3c-4；2026-09-30 迁移时点）**：清理动作现统一收敛到**账号到期销毁阶段**——
+用户删除改为「进入回收站 + 锁定（`status='recycled'`），不清任何数据」（见 `docs/prd/modules/05-security-risk-decisions.md` §21.1），
+留存期（人工手动删默认 7 天）到期后由 `purge_account`（`api/internal/service/recycle_bin_handlers.py`）
+一次性清理 PG `user_memory`、Neo4j 图节点（含独占 Skill 与画像节点）与 Redis 主体键
+（`MemoryGovernor._clear_all_user_cache(str(account_id))`，用户态 owner_key=裸 UUID，与历史键逐字节一致）。
+原 `AdminCustomerUserService._cleanup_user_runtime_data` 已随该改造删除；注销入口
+`AdminCustomerUserService.delete_customer_user` 现只做「锁定 + 入回收站」，不做任何数据清理。
 
 **补入口（ADMIN-P4，2026-09-20）**：`POST /admin/memory/gdpr-delete`（`admin_routes_7.py`，
 `agent_pool:manage`）——路由收主体分解字段（`subject_type` / `subject_id` / `agent_id`），

@@ -24,6 +24,7 @@ from internal.model.builtin_tool import BuiltinToolProvider
 from internal.service.tool_credential_encryptor import (
     encrypt_env,
     is_encrypted,
+    is_placeholder_secret,
     mask_env,
 )
 from pkg.sqlalchemy import SQLAlchemy
@@ -52,18 +53,6 @@ PROVIDER_CREDENTIAL_KEYS: dict[str, list[str]] = {
     "computer_control": ["COMPUTER_CONTROL_URL", "COMPUTER_CONTROL_TOKEN"],
     "host_os": ["OS_AUTOMATION_URL", "OS_AUTOMATION_TOKEN"],
 }
-
-
-# 占位符标记：`.env.example` 的默认值（your-xxx-key-here 等）不是真实凭证
-_PLACEHOLDER_MARKERS = ("your-", "your_", "-here", "changeme", "placeholder", "example-", "<changeme")
-
-
-def _is_placeholder_secret(value: str) -> bool:
-    """判断凭证值是否为占位符或空（视为"未配置"）。"""
-    text = str(value or "").strip().lower()
-    if not text:
-        return True
-    return any(marker in text for marker in _PLACEHOLDER_MARKERS)
 
 
 @inject
@@ -193,7 +182,7 @@ class BuiltinToolCredentialService(BaseService):
             return True
         # env 兜底：占位符（`.env.example` 默认值，如 `your-tavily-key-here`）视为**未配置**，
         # 否则会把"看起来有值实则 401"的占位符标成已配置，误导依赖判定与列表展示。
-        return not _is_placeholder_secret(os.getenv(env_name, ""))
+        return not is_placeholder_secret(os.getenv(env_name, ""))
 
     # ------------------------------------------------------------------
     # 依赖联动（P1-1）：工具 enabled=true 但依赖缺失时如实标记未配置

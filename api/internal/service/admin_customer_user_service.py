@@ -77,8 +77,9 @@ class AdminCustomerUserService:
         if status:
             query = query.filter(Account.status == status)
         else:
-            # 默认不展示已删除账号（避免列表被注销用户占满；可显式按 status=deleted 查）
-            query = query.filter(Account.status != "deleted")
+            # 默认不展示已删除（注销）与已在回收站（锁定）的账号，
+            # 避免列表被这两类账号占满；可显式按 status=deleted / recycled 查询
+            query = query.filter(~Account.status.in_(("deleted", "recycled")))
         total = query.count()
         accounts = query.order_by(Account.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
         return {
@@ -112,6 +113,8 @@ class AdminCustomerUserService:
         account = self._get_account_or_raise(account_id)
         if account.is_deleted:
             raise FailException("账号已删除，无法操作")
+        if account.is_recycled:
+            raise FailException("账号已在回收站中（锁定态），请先从回收站恢复后再操作")
         before_data = {"status": account.status, "disabled_reason": account.disabled_reason or ""}
         now = self._now()
         revoked_sessions = self._revoke_active_sessions(account.id, now)
@@ -142,6 +145,9 @@ class AdminCustomerUserService:
         account = self._get_account_or_raise(account_id)
         if account.is_deleted:
             raise FailException("账号已删除，无法启用")
+        if account.is_recycled:
+            # 必须经回收站恢复（否则「已启用但仍会被到期销毁」的语义错位）
+            raise FailException("账号在回收站中，请通过回收站恢复账号")
         before_data = {"status": account.status, "disabled_reason": account.disabled_reason or ""}
         account.status = "active"
         account.disabled_at = None
@@ -279,22 +285,25 @@ class AdminCustomerUserService:
         operator_id=None,
         ip: str = "",
         user_agent: str = "",
+        retention_days: int | None = None,
     ) -> dict[str, object]:
-        """删除（注销）用户账号：status='deleted'，不可逆。
+        """删除用户账号：进入回收站并锁定（status='recycled'）。
 
         与 disable（停用、可逆、保留数据）区分：
-        - disable：可随时 enable 恢复，名下数据保留
-        - delete：注销账号，禁止登录、吊销全部会话、清理记忆数据，不可恢复
+        - disable：停用，可随时 enable 恢复，账号**不进回收站**
+        - delete：进入回收站 + 锁定，账号**当即无法登录**；**不清任何数据与资产**，
+          留存期内可随时从回收站恢复（status 回删除前的值，资产原样保留）；
+          留存期到期后由回收站定时任务全量清空该账号所有资产与附属数据
+          （``purge_account``：知识库/文档/文件/应用/工作流/会话/记忆/任务/数据源/
+          工具/授权/密钥/设备/分销/计费等），不留任何孤儿。
 
-        数据处置：
-        - PG user_memory 投影行删除（向量分表 CASCADE）
-        - Neo4j 记忆图节点按 user_id 清理（同 ghost 清理）
-        - 名下 app/knowledge_base 等业务数据保留行但不再可被该账号访问
-          （账号已 deleted 无法登录，天然隔离）；如需物理清理需另行编排。
+        留存期：人工手动删除默认 7 天，可由调用方在允许档位内指定。
         """
         account = self._get_account_or_raise(account_id)
         if account.is_deleted:
             raise FailException("账号已删除，请勿重复操作")
+        if account.is_recycled:
+            raise FailException("账号已在回收站中，请勿重复操作")
         before_data = {
             "status": account.status,
             "name": account.name,
@@ -302,13 +311,25 @@ class AdminCustomerUserService:
         }
         now = self._now()
         revoked_sessions = self._revoke_active_sessions(account.id, now)
-        # 置为 deleted（不可逆）
-        account.status = "deleted"
+        # 进入回收站：快照账号 + 锁定（status='recycled'）+ 吊销全部会话；
+        # 数据与资产一概保留，恢复与到期销毁由回收站统一编排。
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        deleted = RecycleBinService().delete_resource(
+            resource_type="account",
+            resource_id=account.id,
+            resource_key=str(account.id),
+            resource_name=account.name or account.username or account.email,
+            deleted_by=operator_id,
+            deleted_by_type="admin",
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("用户不存在")
+        # 补写删除原因（锁定态在回收站快照中已有 status，此处仅留痕业务字段）
         account.deleted_at = now
         account.deleted_by = operator_id
         account.deleted_reason = reason or ""
-        # 清理该用户的运行态数据（记忆 + 定时任务，best-effort）
-        cleanup_stats = self._cleanup_user_runtime_data(account.id)
         self._emit_audit(
             operator_id=operator_id,
             action="delete",
@@ -317,10 +338,9 @@ class AdminCustomerUserService:
             user_agent=user_agent,
             before_data=before_data,
             after_data={
-                "status": "deleted",
+                "status": "recycled",
                 "deleted_reason": account.deleted_reason,
                 "revoked_sessions": revoked_sessions,
-                "cleanup": cleanup_stats,
             },
         )
         self.session.commit()
@@ -363,138 +383,6 @@ class AdminCustomerUserService:
         account.password_changed_at = self._now()
         # 密码变更 → 吊销旧会话
         self._revoke_active_sessions(account.id, self._now())
-
-    def _cleanup_user_runtime_data(self, account_id: UUID) -> dict[str, int]:
-        """清理指定账号的运行态数据（best-effort，失败不阻断删除主流程）。
-
-        - PG：DELETE user_memory WHERE owner_account_id=...（向量分表 CASCADE）
-        - Neo4j：按 user_id 清理 Episode/Entity/SemanticMemory/Community 节点；
-          独占 Skill（仅归属该账号）物理删除；User/Trait/Preference 画像节点级联清理
-        - PG：停用该账号名下定时任务（schedule_task.enabled=false）
-        - Redis：清理 memory:digest: / skill:* / nudge:* 等主体缓存键（ADMIN-P3c-4 缺口八）
-        """
-        stats = {
-            "pg_rows": 0,
-            "neo4j_nodes": 0,
-            "neo4j_skills": 0,
-            "neo4j_user_nodes": 0,
-            "schedule_tasks_disabled": 0,
-            "redis_keys": 0,
-        }
-        try:
-            from internal.model.knowledge import UserMemory
-
-            result = (
-                self.session.query(UserMemory)
-                .filter(UserMemory.owner_account_id == account_id)
-                .delete()
-            )
-            stats["pg_rows"] = int(result or 0)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "delete_customer_user: PG 记忆清理失败 account=%s", account_id, exc_info=True
-            )
-        # Neo4j 清理（复用 ghost 清理的 Cypher 思路；覆盖 Community/Skill/User 等全量标签）
-        try:
-            from internal.extension.neo4j_extension import get_driver
-
-            driver = get_driver()
-            if driver is not None:
-                with driver.session() as session:
-                    # 1) 用户私有记忆节点（Episode/Entity/SemanticMemory/Community + MemoryNode 全覆盖）
-                    #    Community 不带 MemoryNode 但 user_id 归属用户，可安全物理删除
-                    result = session.run(
-                        """
-                        MATCH (n)
-                        WHERE n.user_id = $uid
-                          AND (n:MemoryNode OR n:Episode OR n:Entity OR n:SemanticMemory OR n:Community)
-                        DETACH DELETE n
-                        RETURN count(*) AS cnt
-                        """,
-                        uid=str(account_id),
-                    ).single()
-                    if result:
-                        stats["neo4j_nodes"] = int(result["cnt"] or 0)
-
-                    # 2) 独占 Skill 清理：仅当该 skill 只归属这一个已删账号时物理删除；
-                    #    多账号共享的 skill 保留（避免误删他人技能）
-                    shared = session.run(
-                        """
-                        MATCH (s:Skill {user_id: $uid})
-                        WHERE NOT (s:MemoryNode)
-                        RETURN s.id AS skill_id
-                        """,
-                        uid=str(account_id),
-                    ).values()
-                    deleted_skills = 0
-                    for (skill_id,) in shared:
-                        ownership = session.run(
-                            """
-                            MATCH (s:Skill {id: $skill_id})
-                            RETURN count(s) AS cnt
-                            """,
-                            skill_id=skill_id,
-                        ).single()
-                        if ownership and int(ownership["cnt"] or 0) == 1:
-                            session.run(
-                                "MATCH (s:Skill {id: $skill_id}) DETACH DELETE s",
-                                skill_id=skill_id,
-                            )
-                            deleted_skills += 1
-                    stats["neo4j_skills"] = deleted_skills
-
-                    # 3) 用户画像节点（User/Trait/Preference，新增于 Profile 落库）
-                    result = session.run(
-                        """
-                        MATCH (u:User {id: $uid})
-                        OPTIONAL MATCH (u)-[r]-(n)
-                        WITH u, collect(DISTINCT n) AS nodes
-                        DETACH DELETE u
-                        WITH nodes
-                        UNWIND nodes AS node
-                        WITH node WHERE node:User OR node:Trait OR node:Preference OR node.user_id IS NULL
-                        DETACH DELETE node
-                        RETURN count(*) AS cnt
-                        """,
-                        uid=str(account_id),
-                    ).single()
-                    if result:
-                        stats["neo4j_user_nodes"] = int(result["cnt"] or 0)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "delete_customer_user: Neo4j 记忆清理失败 account=%s", account_id, exc_info=True
-            )
-        # 停用定时任务（防止账号已删但任务仍定时执行）
-        try:
-            from internal.model.schedule_task import ScheduleTask
-
-            result = (
-                self.session.query(ScheduleTask)
-                .filter(ScheduleTask.account_id == account_id)
-                .filter(ScheduleTask.enabled.is_(True))
-                .update({ScheduleTask.enabled: False})
-            )
-            stats["schedule_tasks_disabled"] = int(result or 0)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "delete_customer_user: 停用定时任务失败 account=%s", account_id, exc_info=True
-            )
-        # Redis 缓存清理（缺口八）：注销后 memory:digest: / skill:* / nudge:* 等键
-        # 此前只能靠 TTL 兜底。复用 MemoryGovernor._clear_all_user_cache（主体键=裸 UUID，
-        # 与历史键逐字节一致）。best-effort，失败不阻断注销。
-        try:
-            from internal.service.memory.memory_governor import MemoryGovernor
-
-            stats["redis_keys"] = MemoryGovernor()._clear_all_user_cache(str(account_id))
-        except Exception:
-            import logging
-            logging.getLogger(__name__).warning(
-                "delete_customer_user: Redis 缓存清理失败 account=%s", account_id, exc_info=True
-            )
-        return stats
 
     def revoke_customer_user_sessions(
         self,

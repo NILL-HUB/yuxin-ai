@@ -1268,6 +1268,7 @@ def register_routes(quart_app):
             operator_id=operator_id,
             ip=ip,
             user_agent=user_agent,
+            retention_days=payload.get("retention_days"),
         )
         resp = AdminCustomerUserResp()
         return a._ok(resp.dump(result))

@@ -12,7 +12,13 @@ from injector import inject
 from sqlalchemy import desc, func, inspect, or_
 from sqlalchemy.exc import ProgrammingError
 
-from internal.core.skills import LocalSkillPackage, SkillCatalogManager, SkillScfClient, SkillToolFactory
+from internal.core.skills import (
+    LocalSkillPackage,
+    SkillCatalogManager,
+    SkillExecutor,
+    SkillScfClient,
+    SkillToolFactory,
+)
 from internal.exception import FailException, NotFoundException, ValidateErrorException
 from internal.lib.helper import datetime_to_timestamp, generate_text_hash, utc_now_naive, escape_like_pattern
 from internal.model import SkillPackage, SkillPackageVersion
@@ -95,7 +101,9 @@ class SkillService(BaseService):
     scf_client: SkillScfClient = field(default_factory=SkillScfClient)
 
     def __post_init__(self) -> None:
-        self.tool_factory = SkillToolFactory(self.scf_client)
+        # 单一入口：执行协议由 SkillExecutor 按 skill_exec 的 active 后端选择；
+        # 复用同一 scf_client 实例（其 sync_package 仍由本服务直接调用）
+        self.tool_factory = SkillToolFactory(SkillExecutor(scf_client=self.scf_client))
 
     def _has_skill_package_table(self) -> bool:
         try:

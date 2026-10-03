@@ -3,6 +3,9 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 
 import DesktopDevicePanel from '@/components/DesktopDevicePanel.vue'
 
+let updateStatusHandler: ((payload: Record<string, unknown>) => void) | null = null
+const updateStatusDispose = vi.fn()
+
 const api = {
   workersStatus: vi.fn().mockResolvedValue({
     os: { running: true, pid: 1 },
@@ -22,6 +25,10 @@ const api = {
   wakeStatus: vi.fn().mockResolvedValue({ running: false }),
   wakeEnable: vi.fn().mockResolvedValue(true),
   wakeDisable: vi.fn().mockResolvedValue(true),
+  onUpdateStatus: vi.fn((callback: (payload: Record<string, unknown>) => void) => {
+    updateStatusHandler = callback
+    return updateStatusDispose
+  }),
 }
 
 const ButtonStub = {
@@ -40,6 +47,7 @@ const SwitchStub = {
 describe('DesktopDevicePanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    updateStatusHandler = null
     Object.defineProperty(window, 'yujianwoDesktop', { value: api, configurable: true })
   })
 
@@ -106,6 +114,50 @@ describe('DesktopDevicePanel', () => {
     await wrapper.findAll('button')[2].trigger('click')
 
     expect(api.recycleRestore).toHaveBeenCalledWith({ entry_id: 'e1' })
+  })
+
+  it('shows the update result pushed by the main process', async () => {
+    const wrapper = shallowMount(DesktopDevicePanel, {
+      global: { stubs: { 'a-button': ButtonStub, 'a-switch': SwitchStub } },
+    })
+    await flushPromises()
+
+    expect(api.onUpdateStatus).toHaveBeenCalled()
+
+    updateStatusHandler?.({ status: 'available', version: '0.1.1', manual: true })
+    await flushPromises()
+    expect(wrapper.text()).toContain('发现新版本 0.1.1')
+
+    updateStatusHandler?.({ status: 'not-available', manual: true })
+    await flushPromises()
+    expect(wrapper.text()).toContain('已是最新版本')
+
+    updateStatusHandler?.({ status: 'error', manual: true })
+    await flushPromises()
+    expect(wrapper.text()).toContain('检查更新失败')
+  })
+
+  it('stays quiet on automatic not-available checks', async () => {
+    const wrapper = shallowMount(DesktopDevicePanel, {
+      global: { stubs: { 'a-button': ButtonStub, 'a-switch': SwitchStub } },
+    })
+    await flushPromises()
+
+    updateStatusHandler?.({ status: 'not-available', manual: false })
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('已是最新版本')
+  })
+
+  it('disposes the update status subscription on unmount', async () => {
+    const wrapper = shallowMount(DesktopDevicePanel, {
+      global: { stubs: { 'a-button': ButtonStub, 'a-switch': SwitchStub } },
+    })
+    await flushPromises()
+
+    wrapper.unmount()
+
+    expect(updateStatusDispose).toHaveBeenCalled()
   })
 
   it('hides itself when desktop api is missing', async () => {

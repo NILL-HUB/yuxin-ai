@@ -92,7 +92,6 @@ export default  {
       importHeadersLabel: 'Headers',
       importHeaderKeyPlaceholder: 'Header key',
       importHeaderValuePlaceholder: 'Header value',
-      importHeaderAdd: 'Add header',
       importCategoryPlaceholder: 'Optional. Enter category.',
       importIconPlaceholder: 'Optional. Enter icon URL.',
       icon: 'Icon',

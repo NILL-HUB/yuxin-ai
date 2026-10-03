@@ -27,6 +27,7 @@ export default  {
       activateFailed: 'Failed to switch storage',
       configTitle: 'Configure {backend}',
       configPlaceholder: 'Enter config (JSON)',
+      jsonInvalid: 'Invalid JSON format',
       configSaved: 'Config saved',
       configSaveFailed: 'Failed to save config',
       loadFailed: 'Failed to load storage overview. Please try again.',

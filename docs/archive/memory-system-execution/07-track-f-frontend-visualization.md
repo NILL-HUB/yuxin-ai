@@ -6,7 +6,7 @@
 > **任务范围**：F1-F6
 > **前置条件**：Track D（策略与治理 + 图谱 API）完成，8 个图谱/CRUD 端点可用
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除
-> **关联架构**：[architecture-design.md Ch16](../../architecture-design.md) | [memory-system/03-consolidation-skill-policy-api.md §10](../03-consolidation-skill-policy-api.md)
+> **关联架构**：[architecture-design.md Ch16](../../prd/architecture-design.md) | [memory-system/03-consolidation-skill-policy-api.md §10](../../prd/memory-system/03-consolidation-skill-policy-api.md)
 
 ---
 

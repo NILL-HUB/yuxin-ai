@@ -11,36 +11,65 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Any
 
 from sqlalchemy import inspect
 
 from internal.extension.database_extension import db
 from internal.model import (
+    Account,
+    AccountOAuth,
+    AccountSession,
+    AccountStorageUsage,
+    AdminUser,
+    ApiKey,
     App,
     AppConfig,
     AppConfigVersion,
+    AppTag,
     ApiTool,
     ApiToolProvider,
+    AuditLog,
+    AutoRenewal,
+    BalanceAccount,
+    BalanceTransaction,
     Conversation,
     ConversationVariable,
+    CreditAccount,
+    CreditTransaction,
+    DesktopDevice,
+    DistributionRelation,
     ExternalDataSource,
     FileCenterEntry,
     KnowledgeBase,
+    KnowledgeBaseTag,
     KnowledgeDocument,
+    KnowledgeDocumentTag,
     KnowledgeSegment,
     McpProvider,
     McpTool,
+    Membership,
     Message,
     MessageAgentThought,
+    PurchaseOrder,
+    ReferralCode,
+    ReturnRequest,
+    RoutingLog,
     ScheduleTask,
     ScheduleTaskRun,
     SkillPackage,
     SkillPackageVersion,
+    Tag,
+    ToolConfirmation,
     UploadFile,
     UserMemory,
+    VideoVisualEmbedding,
+    WithdrawalRequest,
     Workflow,
+    WorkflowResult,
+    WorkflowRun,
+    WorkflowTag,
     WorkflowVersion,
 )
 from internal.service.file_center_paths import (
@@ -52,6 +81,11 @@ from internal.service.file_center_paths import (
 from internal.service.file_center_paths import ensure_path as _ensure_path
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow_naive() -> datetime:
+    """当前 UTC 时间（去掉 tzinfo，与库内 DateTime 列的 naive 约定一致）。"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ---------------------------------------------------------------------------
@@ -746,9 +780,11 @@ def _call_worker_recycle(payload: dict[str, Any], account_id: Any = None) -> dic
     import urllib.error
     import urllib.request
 
+    from internal.service.desktop_bridge_resolver import DESKTOP_UNAVAILABLE_MESSAGE
+
     endpoint, token = _worker_recycle_endpoint(account_id)
     if not endpoint or not token:
-        return {"ok": False, "error": "OS_AUTOMATION_URL/TOKEN 或 DESKTOP_BRIDGE_URL/TOKEN 未配置"}
+        return {"ok": False, "error": DESKTOP_UNAVAILABLE_MESSAGE}
     body = _json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request = urllib.request.Request(
         endpoint,
@@ -1230,6 +1266,270 @@ def purge_memory(snapshot: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# account：用户账号（锁定模式）
+# 删除 = 锁定（status='recycled' + 吊销全部会话），不清任何数据与资产；
+# 恢复 = status 回快照原值（资产原样保留）；留存期到期 purge 时全量清空该账号
+# 所有资产与附属数据，不留任何孤儿。
+# ---------------------------------------------------------------------------
+def snapshot_account(resource_id) -> dict[str, Any] | None:
+    """快照账号行（含密码等全部字段，保证恢复后仍可登录）。"""
+    account = db.session.query(Account).filter(Account.id == resource_id).one_or_none()
+    if account is None:
+        return None
+    return {"main": _row_to_dict(account)}
+
+
+def physical_delete_account(resource_id) -> None:
+    """账号入站 = 锁定：status='recycled' + 吊销全部未撤销会话。
+
+    与其他资源「入站即物理删原表」不同，账号入站**不删行、不清任何数据与资产**：
+    账号当即无法登录（登录闸门拦截），但数据、资产、记忆完整保留，留存期内可原样恢复。
+    """
+    account = db.session.query(Account).filter(Account.id == resource_id).one_or_none()
+    if account is None:
+        return
+    account.status = "recycled"
+    now = _utcnow_naive()
+    db.session.query(AccountSession).filter(
+        AccountSession.account_id == resource_id,
+        AccountSession.revoked_at.is_(None),
+    ).update({AccountSession.revoked_at: now}, synchronize_session=False)
+
+
+def restore_account(snapshot: dict[str, Any]) -> bool:
+    """恢复账号：把 status 回写为删除前的值（资产未曾清理，无需重建）。"""
+    main_data = snapshot.get("main") or {}
+    account_id = main_data.get("id")
+    if not account_id:
+        return False
+    account = db.session.query(Account).filter(Account.id == account_id).one_or_none()
+    if account is None:
+        return False  # 已到期销毁
+    account.status = main_data.get("status") or "active"
+    return True
+
+
+def _purge_account_neo4j(account_id) -> None:
+    """清理账号在 Neo4j 中的全部记忆图节点（含独占 Skill 与画像节点）。"""
+    driver = _memory_driver()
+    if driver is None:
+        logger.warning("账号销毁：Neo4j 不可用，跳过图节点清理 account=%s", account_id)
+        return
+    uid = str(account_id)
+    try:
+        with driver.session() as session:
+            session.run(
+                """
+                MATCH (n)
+                WHERE n.user_id = $uid
+                  AND (n:MemoryNode OR n:Episode OR n:Entity OR n:SemanticMemory OR n:Community)
+                DETACH DELETE n
+                """,
+                uid=uid,
+            ).consume()
+            # 独占 Skill（仅归属该账号）物理删除，多账号共享的保留
+            skills = session.run(
+                "MATCH (s:Skill {user_id: $uid}) WHERE NOT (s:MemoryNode) RETURN s.id AS skill_id",
+                uid=uid,
+            ).values()
+            for (skill_id,) in skills:
+                ownership = session.run(
+                    "MATCH (s:Skill {id: $skill_id}) RETURN count(s) AS cnt",
+                    skill_id=skill_id,
+                ).single()
+                if ownership and int(ownership["cnt"] or 0) == 1:
+                    session.run(
+                        "MATCH (s:Skill {id: $skill_id}) DETACH DELETE s",
+                        skill_id=skill_id,
+                    )
+            session.run(
+                """
+                MATCH (u:User {id: $uid})
+                OPTIONAL MATCH (u)-[r]-(n)
+                WITH u, collect(DISTINCT n) AS nodes
+                DETACH DELETE u
+                WITH nodes
+                UNWIND nodes AS node
+                WITH node WHERE node:User OR node:Trait OR node:Preference OR node.user_id IS NULL
+                DETACH DELETE node
+                """,
+                uid=uid,
+            ).consume()
+    except Exception:
+        logger.warning("账号销毁：Neo4j 图节点清理失败 account=%s", account_id, exc_info=True)
+
+
+def _purge_account_owned_resources(account_id) -> None:
+    """清空账号名下全部资产（复用各资源类型的物理删除与销毁逻辑，不产生回收站记录）。
+
+    覆盖：知识库（含文档/分段/向量/上传文件记录 + 底层存储对象）、孤立上传文件、
+    应用、工作流、会话（含消息/思考/变量）、记忆、定时任务、外部数据源、自建 API 工具 / MCP。
+    """
+    # 1. 知识库（快照携带文档/分段/上传文件仅用于取底层存储 key，随即物理删除并销毁）
+    for (kb_id,) in db.session.query(KnowledgeBase.id).filter(
+        KnowledgeBase.owner_account_id == account_id,
+    ).all():
+        snapshot = snapshot_knowledge_base(kb_id)
+        physical_delete_knowledge_base(kb_id)
+        if snapshot is not None:
+            try:
+                purge_knowledge_base(snapshot)
+            except Exception:
+                logger.warning("账号销毁：清理知识库存储对象失败 kb=%s", kb_id, exc_info=True)
+    # 2. 孤立上传文件（未被知识库文档引用的）
+    for (file_id,) in db.session.query(UploadFile.id).filter(
+        UploadFile.account_id == account_id,
+    ).all():
+        snapshot = snapshot_upload_file(file_id)
+        physical_delete_upload_file(file_id)
+        if snapshot is not None:
+            try:
+                purge_upload_file(snapshot)
+            except Exception:
+                logger.warning("账号销毁：清理上传文件失败 file=%s", file_id, exc_info=True)
+    # 3. 应用 / 工作流
+    for (app_id,) in db.session.query(App.id).filter(App.account_id == account_id).all():
+        physical_delete_generic("app", app_id)
+    for (workflow_id,) in db.session.query(Workflow.id).filter(
+        Workflow.account_id == account_id,
+    ).all():
+        physical_delete_generic("workflow", workflow_id)
+    # 4. 会话（含消息/思考/变量）
+    for (conversation_id,) in db.session.query(Conversation.id).filter(
+        Conversation.created_by == account_id,
+    ).all():
+        snapshot = snapshot_conversation(conversation_id)
+        if snapshot is not None:
+            purge_conversation(snapshot)
+    # 5. 记忆（PG user_memory + Neo4j 节点）
+    for (memory_id,) in db.session.query(UserMemory.id).filter(
+        UserMemory.owner_account_id == account_id,
+    ).all():
+        snapshot = snapshot_memory(memory_id)
+        physical_delete_memory(memory_id)
+        if snapshot is not None:
+            purge_memory(snapshot)
+    # 6. 定时任务（含运行记录）
+    for (task_id,) in db.session.query(ScheduleTask.id).filter(
+        ScheduleTask.account_id == account_id,
+    ).all():
+        snapshot = snapshot_schedule_task(task_id)
+        physical_delete_schedule_task(task_id)
+        if snapshot is not None:
+            purge_schedule_task(snapshot)
+    # 7. 外部数据源
+    for (data_source_id,) in db.session.query(ExternalDataSource.id).filter(
+        ExternalDataSource.owner_account_id == account_id,
+    ).all():
+        snapshot = snapshot_external_data_source(data_source_id)
+        physical_delete_external_data_source(data_source_id)
+        if snapshot is not None:
+            purge_external_data_source(snapshot)
+    # 8. 自建 API 工具 / MCP
+    for (provider_id,) in db.session.query(ApiToolProvider.id).filter(
+        ApiToolProvider.account_id == account_id,
+    ).all():
+        physical_delete_generic("api_tool", provider_id)
+    for (provider_id,) in db.session.query(McpProvider.id).filter(
+        McpProvider.account_id == account_id,
+    ).all():
+        physical_delete_generic("mcp", provider_id)
+
+
+def purge_account(snapshot: dict[str, Any]) -> None:
+    """到期销毁账号：全量清空账号所有资产与附属数据，不留任何孤儿。"""
+    main_data = snapshot.get("main") or {}
+    account_id = main_data.get("id")
+    if not account_id:
+        return
+
+    # 1. 资产清空（知识库/文档/文件/应用/工作流/会话/记忆/任务/数据源/工具）
+    try:
+        _purge_account_owned_resources(account_id)
+    except Exception:
+        logger.warning("账号销毁：资产清空部分失败 account=%s", account_id, exc_info=True)
+
+    # 2. 附属数据清空（会话/授权/密钥/设备/文件中心/标签/用量/路由日志/分销/计费）
+    account_columns = (
+        (AccountOAuth, AccountOAuth.account_id),
+        (AccountSession, AccountSession.account_id),
+        (AccountStorageUsage, AccountStorageUsage.account_id),
+        (ApiKey, ApiKey.account_id),
+        (DesktopDevice, DesktopDevice.account_id),
+        (FileCenterEntry, FileCenterEntry.account_id),
+        (KnowledgeBaseTag, KnowledgeBaseTag.account_id),
+        (KnowledgeDocumentTag, KnowledgeDocumentTag.account_id),
+        (RoutingLog, RoutingLog.account_id),
+        (WorkflowResult, WorkflowResult.account_id),
+        (WorkflowRun, WorkflowRun.account_id),
+        (ReferralCode, ReferralCode.account_id),
+        (BalanceAccount, BalanceAccount.account_id),
+        (BalanceTransaction, BalanceTransaction.account_id),
+        (WithdrawalRequest, WithdrawalRequest.account_id),
+        (PurchaseOrder, PurchaseOrder.account_id),
+        (ReturnRequest, ReturnRequest.account_id),
+        (AutoRenewal, AutoRenewal.account_id),
+        (Membership, Membership.account_id),
+        (CreditAccount, CreditAccount.account_id),
+        (CreditTransaction, CreditTransaction.account_id),
+        (ToolConfirmation, ToolConfirmation.owner_account_id),
+        (VideoVisualEmbedding, VideoVisualEmbedding.account_id),
+        # 标签关联先于标签本身删除（避免外键顺序问题）
+        (AppTag, AppTag.account_id),
+        (WorkflowTag, WorkflowTag.account_id),
+        (Tag, Tag.account_id),
+    )
+    for model, column in account_columns:
+        try:
+            db.session.query(model).filter(column == account_id).delete(synchronize_session=False)
+        except Exception:
+            logger.warning(
+                "账号销毁：清理 %s 失败 account=%s", model.__tablename__, account_id, exc_info=True,
+            )
+    # 分销上下级关系（invitee 或 inviter 任一为该账号）
+    try:
+        db.session.query(DistributionRelation).filter(
+            (DistributionRelation.invitee_account_id == account_id)
+            | (DistributionRelation.inviter_account_id == account_id)
+        ).delete(synchronize_session=False)
+    except Exception:
+        logger.warning("账号销毁：清理分销关系失败 account=%s", account_id, exc_info=True)
+    # 计费对账记录（未在 internal.model 顶层导出，按需导入）
+    try:
+        from internal.model.billing import BillingReconciliation
+
+        db.session.query(BillingReconciliation).filter(
+            BillingReconciliation.account_id == account_id,
+        ).delete(synchronize_session=False)
+    except Exception:
+        logger.warning("账号销毁：清理计费对账记录失败 account=%s", account_id, exc_info=True)
+
+    # 3. Neo4j 记忆图节点
+    _purge_account_neo4j(account_id)
+
+    # 4. Redis 主体缓存键
+    try:
+        from internal.service.memory.memory_governor import MemoryGovernor
+
+        MemoryGovernor()._clear_all_user_cache(str(account_id))
+    except Exception:
+        logger.warning("账号销毁：清理 Redis 缓存失败 account=%s", account_id, exc_info=True)
+
+    # 5. 断开 FK 引用（保留管理员/审计记录，仅置空账号引用）后物理删除账号行
+    try:
+        db.session.query(AdminUser).filter(AdminUser.account_id == account_id).update(
+            {AdminUser.account_id: None}, synchronize_session=False,
+        )
+        db.session.query(AuditLog).filter(AuditLog.account_id == account_id).update(
+            {AuditLog.account_id: None}, synchronize_session=False,
+        )
+    except Exception:
+        logger.warning("账号销毁：解绑管理员/审计引用失败 account=%s", account_id, exc_info=True)
+    db.session.query(Account).filter(Account.id == account_id).delete(synchronize_session=False)
+    logger.info("账号已彻底销毁 account=%s", account_id)
+
+
+# ---------------------------------------------------------------------------
 # 统一分发入口
 # ---------------------------------------------------------------------------
 def snapshot_resource(resource_type: str, resource_id, resource_key: str = "") -> dict[str, Any] | None:
@@ -1252,6 +1552,8 @@ def snapshot_resource(resource_type: str, resource_id, resource_key: str = "") -
         return snapshot_conversation(resource_id)
     if resource_type == "memory":
         return snapshot_memory(resource_id)
+    if resource_type == "account":
+        return snapshot_account(resource_id)
     return snapshot_generic(resource_type, resource_id)
 
 
@@ -1277,6 +1579,9 @@ def physical_delete_resource(resource_type: str, resource_id, resource_key: str 
     elif resource_type == "memory":
         # 软删除模式：user_memory 行与 Neo4j 节点数据保留（service 已标记 is_active=false）
         physical_delete_memory(resource_id)
+    elif resource_type == "account":
+        # 锁定模式：不删行、不清数据，仅置 status='recycled' + 吊销会话
+        physical_delete_account(resource_id)
     else:
         physical_delete_generic(resource_type, resource_id)
 
@@ -1314,6 +1619,8 @@ def restore_resource(
         return restore_conversation(snapshot)
     if resource_type == "memory":
         return restore_memory(snapshot)
+    if resource_type == "account":
+        return restore_account(snapshot)
     return restore_generic(resource_type, snapshot)
 
 
@@ -1338,6 +1645,8 @@ def purge_resource(
         purge_conversation(snapshot)
     elif resource_type == "memory":
         purge_memory(snapshot)
+    elif resource_type == "account":
+        purge_account(snapshot)
     elif resource_type in ("app", "workflow", "skill", "mcp", "api_tool"):
         # 删除时已通过 physical_delete 清掉 DB 记录，预留文件清理扩展位
         pass

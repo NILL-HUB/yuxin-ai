@@ -26,7 +26,7 @@
 | outcome_impact | 0.20 | LLM | 结果影响力 |
 | rehearsal_boost | 0.10 | Redis | 复述强化（重复计数） |
 
-**核心缺陷**：用户说"我喜欢吃苹果"时，情绪=0.3、新颖=0.2、目标=0.3、影响=0.2、复述=0.0 → 总分≈0.25 → 仅走 STATS 路径（仅更新计数器，不写向量），**偏好根本未被真正记住**。必须重复说 3 次，rehearsal_boost 才能拉高分数。
+**核心缺陷**：用户说"我喜欢吃苹果"时，情绪=0.3、新颖=0.2、目标=0.3、影响=0.2、复述=0.0 → 总分≈0.25 → 仅走 SKETCH 路径（仅更新计数器，不写向量），**偏好根本未被真正记住**。必须重复说 3 次，rehearsal_boost 才能拉高分数。
 
 ### 1.2 目标
 
@@ -89,7 +89,7 @@ class MemoryWriteService:
             )
         elif salience.write_path == WritePath.SUMMARY:
             await self._ledger_writer.write_summary_path(event, salience)
-        else:  # STATS
+        else:  # WritePath.SKETCH（LedgerWriter 方法名历史保留为 write_stats_path）
             await self._ledger_writer.write_stats_path(event, salience)
 ```
 
@@ -97,7 +97,7 @@ class MemoryWriteService:
 - 快路径（confidence ≥ 0.85）：绕过 SalienceScorer，直接 `LedgerWriter.write_full_path()` + 写时冲突检测
 - 拉高路径（0.5 ≤ confidence < 0.85）：走 SalienceScorer 6 因子评分，按路由写入
 - 未命中路径：走 SalienceScorer 6 因子评分（explicitness=0.0），按路由写入
-- 写时冲突检测只在 FULL 路径触发（SUMMARY/STATS 不需要，因为不会创建新的偏好记忆）
+- 写时冲突检测只在 FULL 路径触发（SUMMARY/SKETCH 不需要，因为不会创建新的偏好记忆）
 
 ### 2.3 核心原则
 
@@ -178,12 +178,13 @@ EXPLICIT_PATTERNS = {
          输入: 命中片段 + 上下文
          输出: {
            is_explicit: bool,
-           category: str,
-           subject: str,           # 陈述主体（如"苹果""菠萝""Vim"）
+           category: str,          # preference/habit/identity/aversion/goal/meta_instruction/capability/none
+           subject: str,           # 主体（如"苹果""菠萝""Vim"）
+           predicate: str,         # 谓词（如"喜欢""讨厌""擅长"）
+           object: str,            # 客体（无则空串）
            polarity: "positive" | "negative" | "neutral",
            confidence: 0.0-1.0,
-           summary: str,           # 结构化摘要
-           temporal_marker: bool   # 是否含时态标记（"了""现在""已经"）
+           reasoning: str          # 判断理由（调试/审计用）
          }
               │
               ├─ confidence ≥ 0.85 → 快路径（直接 LedgerWriter.write_full_path()）
@@ -194,35 +195,46 @@ EXPLICIT_PATTERNS = {
 ### 3.3 LLM 确认 Prompt
 
 ```text
-你是一个用户陈述识别专家。请分析以下用户消息是否包含明确的自我陈述。
+（seed 提示词：`api/internal/core/prompts/system_prompts.yaml` 的 `memory_explicit_detection_prompt`，运行时经 `SystemPromptLibraryService.get_prompt_or_default` 读取，admin 可覆盖）
 
-用户消息: {message}
-命中模式类别: {category}
-命中片段: {matched_text}
+你是显式陈述检测专家。请判断用户消息是否为显式陈述（如偏好、习惯、身份、厌恶、目标、元指令、能力），并提取主体/谓词/客体三元组。
 
-请判断:
-1. 这是用户在明确表达自己的偏好/习惯/身份/厌恶/目标/能力，还是只是随口提及？
-2. 提取陈述的主体（如"苹果""Python""晚睡"）
-3. 判断极性：正向（喜欢/会/习惯）、负向（讨厌/不会/不习惯）、中性（身份事实）
-4. 是否包含时态变化标记（"了""现在""已经""不...了"）—— 这表示偏好可能发生了变化
+分类说明:
+- preference: 偏好（我喜欢/不喜欢...）
+- habit: 习惯（我习惯/通常...）
+- identity: 身份（我是/我叫...）
+- aversion: 厌恶（我讨厌/害怕/过敏...）
+- goal: 目标（我想/我打算...）
+- meta_instruction: 元指令（以后请/记住...）
+- capability: 能力（我擅长/我会...）
+- none: 非显式陈述
 
-返回 JSON: {is_explicit, category, subject, polarity, confidence, summary, temporal_marker}
+极性说明:
+- positive: 正向（喜欢、想要、擅长）
+- negative: 负向（讨厌、害怕、不擅长）
+- neutral: 中性（是、习惯、打算）
+
+正则预筛候选类别: {hint_category}
+用户消息: {event_content}
+上下文:
+{recent_context}
+
+请输出: is_explicit, category, polarity, confidence, subject(主体实体), predicate(谓词), object(客体,无则空), reasoning
 ```
 
 ### 3.4 输出数据结构
 
 ```python
-@dataclass
-class ExplicitDetectionResult:
+class ExplicitDetectionResult(BaseModel):   # 实现：api/internal/model/memory_models.py（pydantic）
     is_explicit: bool
-    category: str              # preference/habit/identity/aversion/goal/meta_instruction/capability
-    subject: str               # 陈述主体
-    polarity: str              # positive/negative/neutral
-    confidence: float          # 0.0-1.0
-    summary: str               # 结构化摘要
-    temporal_marker: bool      # 是否含时态标记
-    matched_pattern: str       # 命中的正则模式（调试用）
-    fallback: bool = False     # 是否为降级模式（LLM 不可用时的纯正则结果）
+    category: Optional[str]     # preference/habit/identity/aversion/goal/meta_instruction/capability
+    polarity: str               # positive/negative/neutral
+    confidence: float           # 0.0-1.0
+    subject: Optional[str]      # 主体（实体种子，如"苹果"）
+    predicate: Optional[str]    # 谓词（如"喜欢"）
+    object: Optional[str]       # 客体（如具体事物）
+    reasoning: str              # 判断理由（调试/审计用）
+    fallback_used: bool = False # 是否为降级模式（LLM 不可用时的纯正则结果）
 ```
 
 ### 3.5 降级策略
@@ -261,14 +273,14 @@ class ExplicitStatementDetector:
             # 降级：仅正则命中，confidence 设为 0.6（拉高路径）
             return ExplicitDetectionResult(
                 is_explicit=True,
-                category=regex_hits[0].category,
-                subject=regex_hits[0].matched_text,  # 未经 LLM 提取，用原始片段
-                polarity="neutral",  # 未经 LLM 判断，保守中性
-                confidence=0.6,  # 拉高路径阈值
-                summary=regex_hits[0].matched_text,
-                temporal_marker=False,
-                matched_pattern=regex_hits[0].pattern,
-                fallback=True  # 标记降级模式
+                category=category,   # 来自正则命中
+                polarity=polarity,   # 来自正则命中
+                confidence=0.6,      # 拉高路径阈值
+                subject=None,        # 降级时无法提取三元组
+                predicate=None,
+                object=None,
+                reasoning="LLM降级：正则命中 ...",  # 降级原因写入 reasoning
+                fallback_used=True,  # 标记降级模式
             )
 ```
 
@@ -371,16 +383,16 @@ WHERE id = $old_id
 | 边类型 | `SUPERSEDED_BY`（正确，复用） | `SUPERSEDED_BY`（不变） |
 | 检索过滤 | `WHERE status='active'` | `WHERE t_invalidated_at IS NULL` |
 
-### 4.4 时态标记处理
+### 4.4 反极性偏好转折的处理
 
-当 LLM 确认检测到 `temporal_marker=true`（如"了""现在""已经"），自动触发 SUPERSEDE 检查：
+写时冲突检测**不依赖独立字段**（实现中无 `temporal_marker`）：以新陈述的 `subject` 关联现存 HOT/WARM Episode，经向量余弦预筛 + LLM 判定为 `supersede`（反极性/更新）时，自动执行 SUPERSEDE：
 
-| 用户说 | subject | polarity | temporal_marker | 系统行为 |
+| 用户说 | subject | polarity | 判定 | 系统行为 |
 |---|---|---|---|---|
-| "我喜欢菠萝" | 菠萝 | positive | false | 新写入 |
-| "我讨厌菠萝了" | 菠萝 | negative | true | SUPERSEDE 旧 positive |
-| "我现在不喜欢苹果了" | 苹果 | negative | true | SUPERSEDE 旧 positive |
-| "我已经改用 VSCode 了" | VSCode | positive | true | SUPERSEDE 旧 editor 偏好 |
+| "我喜欢菠萝" | 菠萝 | positive | 无冲突 | 新写入 |
+| "我讨厌菠萝了" | 菠萝 | negative | 反极性 → supersede | SUPERSEDE 旧 positive |
+| "我现在不喜欢苹果了" | 苹果 | negative | 反极性 → supersede | SUPERSEDE 旧 positive |
+| "我已经改用 VSCode 了" | VSCode | positive | 更新 → supersede | SUPERSEDE 旧 editor 偏好 |
 
 ### 4.5 用户示例完整流转
 
@@ -388,7 +400,7 @@ WHERE id = $old_id
 |---|---|---|---|
 | T1 | "我喜欢吃苹果" | 快路径写入，subject=苹果, polarity=positive | `[active] 喜欢苹果(+)` |
 | T2 | "我喜欢吃菠萝" | 快路径写入，subject=菠萝, polarity=positive | `[active] 喜欢苹果(+)`, `[active] 喜欢菠萝(+)` |
-| T3 | "我讨厌吃菠萝了" | 查到菠萝(+) → 反极性 + temporal_marker → SUPERSEDE | `[active] 喜欢苹果(+)`, `[t_invalidated_at=now] 喜欢菠萝(+)`, `[active] 讨厌菠萝(-)` |
+| T3 | "我讨厌吃菠萝了" | 查到菠萝(+) → 反极性判定 → SUPERSEDE | `[active] 喜欢苹果(+)`, `[t_invalidated_at=now] 喜欢菠萝(+)`, `[active] 讨厌菠萝(-)` |
 | T4 | 检索"用户对菠萝的偏好" | 只返回 t_invalidated_at IS NULL 的记忆 | 返回"讨厌菠萝(-)" |
 
 ### 4.6 与现有 ConflictDetector 的关系
@@ -782,8 +794,7 @@ MemoryWriteService._supersede_memory():
 | 模块 | 改动类型 | 内容 |
 |---|---|---|
 | `memory_write_service.py` | **核心修改** | 插入 ExplicitStatementDetector 前置层 + 写时冲突检测 + 三层决策调用链 |
-| `ledger_writer.py` | **扩展** | 写入时携带 explicit_* 属性到 Neo4j Episode 节点 + 实体消解种子集成 |
-| `memory_vector_service.py` | **扩展** | index_memory 时写入 detection metadata |
+| 扩展 LedgerWriter | `ledger_writer.py` | 写入时携带 explicit_* 属性到 Neo4j Episode 节点 + 实体消解种子集成；pgvector 向量载荷（含 detection metadata）同在此处写入 |
 | `salience_scorer.py` | **扩展** | 新增 explicitness 因子（第 6 因子）+ 6 因子加权求和公式 |
 | `hebbian_decay.py` | **扩展** | 显式记忆 lambda_decay 豁免系数 |
 | `conflict_detector.py` | **优化** | 跳过已有 SUPERSEDED_BY 边的对 |
@@ -818,7 +829,7 @@ class ExplicitDetectionConfig(BaseModel):
 
     # LLM 降级策略
     llm_fallback_enabled: bool = True  # LLM 不可用时是否降级到纯正则
-    llm_timeout_seconds: float = 2.0   # LLM 调用超时
+    llm_timeout_seconds: float = 20.0  # LLM 调用超时（实现值，见 api/internal/config/memory_settings.py）
 ```
 
 权重调整：原 5 因子权重总和为 1.0，加入 explicitness 后需重新分配：
@@ -843,10 +854,10 @@ weights = {"emotion": 0.20, "novelty": 0.16, "goal_relevance": 0.20,
 |---|---|
 | `POST /memory/write` | 显式检测在写入内部触发，API 不变 |
 | `GET /memory/{memory_id}` | 返回的 memory 包含 explicit_* 字段 |
-| `PUT /memory/{memory_id}` | 编辑时可修改 explicit_* 字段 |
+| `POST /memory/{memory_id}/edit` | 编辑时可修改 explicit_* 字段 |
 | `GET /memory/graph/{user_id}` | 图可视化展示 superseded 记忆（灰色 + SUPERSEDED_BY 边） |
 | `GET /memory/digest/{user_id}` | Digest 包含分组渲染的用户画像 |
-| `DELETE /memory/{memory_id}` | 软删除（复用现有 is_active=false 机制） |
+| `POST /memory/{memory_id}/soft-delete` | 软删除（复用现有 is_active=false 机制） |
 
 **不新增 API 端点**，所有显式检测逻辑在服务层内部完成。
 
@@ -886,9 +897,9 @@ weights = {"emotion": 0.20, "novelty": 0.16, "goal_relevance": 0.20,
 │     category: "preference",              │
 │     subject: "菠萝",                     │
 │     polarity: "positive",                │
-│     confidence: 0.95,                    │
-│     summary: "用户喜欢吃菠萝",            │
-│     temporal_marker: false               │
+│     confidence: 0.95,                     │
+│     predicate: "喜欢", object: "菠萝",     │
+│     reasoning: "显式偏好陈述"              │
 │   }                                      │
 └──────────────────┬───────────────────────┘
                    │
@@ -989,14 +1000,14 @@ weights = {"emotion": 0.20, "novelty": 0.16, "goal_relevance": 0.20,
   ▼
 ① ExplicitStatementDetector
    → category=aversion, subject=菠萝, polarity=negative,
-     confidence=0.92, temporal_marker=true
+     confidence=0.92
   │
   ▼
 ② WriteTimeConflictResolver
    Cypher 查到: e.explicit_subject="菠萝", polarity="positive",
                is_active=true, t_invalidated_at IS NULL
    极性比较: positive(旧) vs negative(新) → 反极性
-   temporal_marker=true → 确认 SUPERSEDE
+   LLM 判定 supersede → 确认 SUPERSEDE
   │
   ▼
 ③ SUPERSEDE 操作（复用四时间戳模型，双写最终一致）
@@ -1135,7 +1146,7 @@ weights = {"emotion": 0.20, "novelty": 0.16, "goal_relevance": 0.20,
 | 新建 WriteTimeConflictResolver | `write_time_conflict_resolver.py` | 极性比较 + SUPERSEDE（复用四时间戳模型） |
 | 修改 MemoryWriteService | `memory_write_service.py` | 插入前置检测层 + 三层决策调用链 |
 | 扩展 LedgerWriter | `ledger_writer.py` | 携带 explicit_* 属性 + 实体消解种子集成 |
-| 扩展 MemoryVectorService | `memory_vector_service.py` | 写入 detection metadata |
+| 扩展 LedgerWriter | `ledger_writer.py` | 写入 detection metadata（pgvector 向量载荷） |
 | 扩展 SalienceScorer | `salience_scorer.py` | 新增 explicitness 因子 + 6 因子加权求和公式 |
 | 扩展配置 | `memory_settings.py` | ExplicitDetectionConfig（含降级配置） |
 

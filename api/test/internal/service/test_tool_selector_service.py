@@ -525,8 +525,8 @@ class TestMultiSourceType:
     def test_mixed_sources_all_match_by_keyword(self):
         """builtin/api/mcp/skill/workflow 候选都应支持关键词匹配。
 
-        注意: _MAX_KEYWORD_HITS = 3 限制了关键词匹配最多返回 3 个结果，
-        所以用 max_tools=3 测试 3 个 source_type。
+        注意: 关键词命中上限为 min(max_tools, _MAX_KEYWORD_HITS)，
+        此处显式用 max_tools=3 只取前 3 个 source_type。
         """
         svc = _build_service()
         candidates = [
@@ -563,3 +563,68 @@ class TestMultiSourceType:
         # 查询不含任何关键词
         result = svc.select_tools("你好世界", candidates=candidates, max_tools=3)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# 真实性回归：os_terminal 的关键词快通道命中（Agent 自主可用性链路）
+# ---------------------------------------------------------------------------
+
+class TestOsTerminalKeywordCoverage:
+    """本机作业语义 query 必须经关键词快通道命中 os_terminal。
+
+    背景：主链路工具经 assistant_agent_service 预挂载（模型直接可见）；但 multi_agent
+    子任务按子任务描述自检索工具（OrchestratorService.build_tool_subset →
+    ToolSelectorService），若关键词覆盖不足，子任务路径拿不到终端工具，
+    「命令行是本机任务主力手段」的定位即为断链。用例直接读取 os_terminal.yaml 的
+    task_keywords/description，保证测试与真实数据同源（不维护第二份副本）。
+    """
+
+    @staticmethod
+    def _os_terminal_candidate() -> dict:
+        import importlib
+        from pathlib import Path
+
+        import yaml
+
+        # importlib 取子模块本体：host_os/__init__.py 导出的同名工厂函数会遮蔽包属性
+        module = importlib.import_module(
+            "internal.core.tools.builtin_tools.providers.host_os.os_terminal"
+        )
+        tool = module.OsTerminalTool()
+        data = yaml.safe_load(
+            Path(module.__file__).with_suffix(".yaml").read_text(encoding="utf-8")
+        ) or {}
+        return _make_candidate(
+            name=tool.name,
+            provider_id="host_os",
+            description=str(data.get("description") or tool.description),
+            task_keywords=list(data.get("task_keywords") or []),
+        )
+
+    def _fast_hits(self, query: str) -> list[dict]:
+        """走真实链路：_normalize_candidates（name→tool_name）→ 关键词快通道。"""
+        service = _build_service()
+        candidates = service._normalize_candidates([self._os_terminal_candidate()])
+        return service._fast_keyword_match(query.lower(), candidates, max_tools=5)
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "帮我把这个项目的依赖安装一下然后跑测试",  # 依赖安装 + 跑测试
+            "用 git 提交这次改动",  # git
+            "编译并构建这个项目",  # 编译 / 构建
+            "看看系统里 python 进程占了多少内存",  # 进程
+            "写个脚本批量处理这些文件",  # 脚本 + 批量处理
+            "npm install 之后启动本地开发服务",  # npm / 本地开发
+        ],
+    )
+    def test_work_queries_hit_os_terminal(self, query):
+        hits = self._fast_hits(query)
+        assert any(hit["tool_name"] == "os_terminal" for hit in hits), f"未命中: {query}"
+        assert all(hit["match_type"] == "keyword" for hit in hits)
+
+    def test_yaml_keywords_match_tool_entity_flow(self):
+        """yaml 的 name 与工具类的 name 一致（positions/DB 同步依赖该一致性）。"""
+        candidate = self._os_terminal_candidate()
+        assert candidate["name"] == "os_terminal"
+        assert candidate["task_keywords"]

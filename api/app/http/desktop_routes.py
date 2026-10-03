@@ -52,6 +52,26 @@ def register_routes(quart_app):
             }
         )
 
+    @quart_app.get("/desktop/update-manifest")
+    async def async_desktop_update_manifest() -> Response:
+        """返回更新推送门控清单：{enabled, feed_url}。
+
+        桌面端在检查更新前先请求本接口，管理员关闭推送（update_enabled=false）时
+        客户端静默跳过检查，从而实现「由 admin 决定是否推送给用户」。
+        公开、无鉴权；DB 不可用时按「不推送」回退（安全默认，避免误推），不得 500。"""
+        manifest = {"enabled": False, "feed_url": ""}
+        try:
+            from app.http.support import _to_thread
+            from internal.service.desktop_client_config_service import (
+                DesktopClientConfigService,
+            )
+
+            service = DesktopClientConfigService()
+            manifest = await _to_thread(service.resolve_update_manifest)
+        except Exception:
+            logging.exception("读取桌面端更新推送配置失败，回退为不推送")
+        return _ok(manifest)
+
     @quart_app.post("/desktop/devices/register")
     async def async_desktop_device_register() -> Response:
         """桌面端登录后注册设备：上报 bridge 地址与访问 token（服务端加密存储）。"""

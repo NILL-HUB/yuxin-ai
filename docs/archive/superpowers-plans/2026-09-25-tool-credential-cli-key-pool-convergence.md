@@ -2447,10 +2447,10 @@ git commit -m "docs: document cli local process integration"
 
 - [ ] **Step 1: 确认 `docs/README.md` 导航**
 
-`docs/README.md:50` 已有 `- [superpowers plans & specs](superpowers/)：近期功能的实现计划与规格（distribution / billing / pricing / auth）`——`superpowers/` 目录本身已登记，本计划作为目录内文件**无需**单独新增导航行。仅当该行缺失时才补：
+`docs/README.md:50` 已有 `- [superpowers plans & specs](../../superpowers/)：近期功能的实现计划与规格（distribution / billing / pricing / auth）`——`superpowers/` 目录本身已登记，本计划作为目录内文件**无需**单独新增导航行。仅当该行缺失时才补：
 
 ```markdown
-- [superpowers plans & specs](superpowers/)：近期功能的实现计划与规格（distribution / billing / pricing / auth）
+- [superpowers plans & specs](../../superpowers/)：近期功能的实现计划与规格（distribution / billing / pricing / auth）
 ```
 
 - [ ] **Step 2: 后端全量回归**

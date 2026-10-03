@@ -27,17 +27,12 @@ from internal.entity.conductor_entity import (
     ConductorPlan,
     ConductorPlanValidator,
     ConductorRiskLevel,
-    EscalationAction,
-    EscalationDecision,
     MAX_AGENTS_PER_PLAN,
 )
 from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
 from internal.service.language_model_service import LanguageModelService
 from internal.service.prompt_sync_service import PromptSyncService
-from internal.service.resource_vector_index_service import ResourceVectorIndexService
 from internal.service.cost_policy_service import CostPolicyService
-from internal.service.tool_inventory_service import CrossPoolToolSubsetBuilder
-from internal.service.tool_selector_service import ToolSelectorService
 
 logger = logging.getLogger(__name__)
 
@@ -182,32 +177,57 @@ def _build_agent_pool_summary() -> list[dict[str, Any]]:
         return []
 
 
-def _build_model_summary(top_k: int = 12) -> list[dict[str, Any]]:
-    """构建模型池摘要（从向量索引查询，轻量）。
+# 模型子池推断关键词（原资源向量索引逻辑迁入，保持指挥官看到的 sub_pool 口径一致）
+_MODEL_CODING_KEYWORDS = {"coding", "code", "编程", "代码", "vibe", "deployment", "deploy", "部署", "debug", "排错"}
+_MODEL_RESEARCH_KEYWORDS = {"research", "研究", "analysis", "分析", "search", "搜索", "rag", "检索"}
 
-    只暴露：resource_id + resource_name + capabilities + sub_pool + metadata.cost_tier
+
+def _infer_model_sub_pool(capabilities: list, model_type: str) -> str:
+    """根据模型能力标签和类型推断子池。"""
+    caps_lower = {str(c).lower() for c in capabilities}
+    # 非对话类模型按类型归类
+    if model_type in ("image_generation", "video_generation", "tts", "asr", "ocr"):
+        return "creative"
+    if model_type == "embedding":
+        return "general"
+    if model_type == "rerank":
+        return "research"
+    # 对话类模型按能力标签推断
+    if caps_lower & _MODEL_CODING_KEYWORDS:
+        return "coding"
+    if caps_lower & _MODEL_RESEARCH_KEYWORDS:
+        return "research"
+    return "general"
+
+
+def _build_model_summary(top_k: int = 12) -> list[dict[str, Any]]:
+    """构建模型池摘要（直查 model_pool_config，实时数据，轻量）。
+
+    只暴露：model_id + model_name + capabilities + sub_pool + cost_tier + model_type
     不暴露完整 description，避免上下文爆炸。
     """
     try:
-        svc = ResourceVectorIndexService()
-        # 用通用查询词检索，获取代表性模型
-        results = svc.search(
-            resource_type="model",
-            query="general purpose chat coding reasoning text generation",
-            top_k=top_k,
+        from internal.extension.database_extension import db
+        from internal.model.model_pool_entity import ModelPoolConfig
+
+        models = (
+            db.session.query(ModelPoolConfig)
+            .filter(ModelPoolConfig.status == "active")
+            .order_by(ModelPoolConfig.tier.asc())
+            .limit(top_k)
+            .all()
         )
-        summary = []
-        for r in results:
-            metadata = r.get("metadata") or {}
-            summary.append({
-                "model_id": r.get("resource_id"),
-                "model_name": r.get("resource_name"),
-                "capabilities": list(r.get("capabilities") or []),
-                "sub_pool": r.get("sub_pool"),
-                "cost_tier": metadata.get("cost_tier", "medium"),
-                "model_type": metadata.get("model_type", "chat"),
-            })
-        return summary
+        return [
+            {
+                "model_id": str(model.id),
+                "model_name": model.display_name or model.model_name,
+                "capabilities": list(model.capabilities or []),
+                "sub_pool": _infer_model_sub_pool(model.capabilities or [], model.model_type or "chat"),
+                "cost_tier": model.tier or "2",
+                "model_type": model.model_type or "chat",
+            }
+            for model in models
+        ]
     except Exception:
         logger.warning("构建模型摘要失败，降级为空列表", exc_info=True)
         return []
@@ -255,8 +275,6 @@ class ConductorService:
     入口方法 plan() 接收用户请求和上下文，返回结构化的 ConductorPlan。
     """
     language_model_service: LanguageModelService
-    tool_subset_builder: CrossPoolToolSubsetBuilder | None = None
-    tool_selector_service: ToolSelectorService | None = None
     cost_policy_service: CostPolicyService | None = None
 
     # ── 主入口 ──────────────────────────────────────────────────
@@ -306,15 +324,28 @@ class ConductorService:
         original_query: str,
         failures: list[dict],
     ) -> ConductorPlan:
-        """基于失败反馈重新规划任务。"""
+        """基于失败反馈重新规划任务。
+
+        failures 来自 ExecutionCoordinatorService：既含硬错误（errors），
+        也含子代理主动申明的「无法完成」（blocked + blocking_reason）。
+        """
+        def _describe(item: dict) -> str:
+            parts = list(item.get("errors") or [])
+            if item.get("blocked"):
+                reason = str(item.get("blocking_reason") or "").strip()
+                parts.append(f"无法完成：{reason}" if reason else "无法完成")
+            return ", ".join(parts) if parts else "未达成（未提供原因）"
+
         feedback = "\n".join(
-            f"- {item.get('task_id', '')}: {', '.join(item.get('errors', []) or [])}"
+            f"- {item.get('task_id', '')}: {_describe(item)}"
             for item in failures
         )
         revised_query = (
             f"{original_query}\n\n"
             "以下是上一次执行失败的信息，请重新规划任务：\n"
-            f"{feedback}"
+            f"{feedback}\n\n"
+            "复盘中请判断：是否需要调整子任务拆解，或为失败子任务指定更高的模型档位 / 更强的 Agent 池，"
+            "避免沿用与上次完全相同的方案再次失败。"
         )
         return self.plan(revised_query)
 
@@ -523,13 +554,6 @@ class ConductorService:
                 base_tier = int(upgraded)
         return str(base_tier)
 
-    # ── 缺能力上报处理 ─────────────────────────────────────────
-
-    # 重试时放宽的阈值
-    _RELAXED_SCORE_THRESHOLD = 0.25
-    # 低于此分数则认定确实缺能力（即便重试也无用）
-    _HARD_FLOOR_SCORE = 0.15
-
     # ── 转换为 RoutingDecision 兼容格式 ────────────────────────
 
     # ConductorMode → 现有 ExecutionMode 映射
@@ -604,7 +628,10 @@ class ConductorService:
             "risk_level": plan.risk_level,
             "reason": plan.reason,
             "agent_subset": agent_subset,
-            "tool_subset": None,  # 工具由 Agent 自行检索，不由指挥官指定
+            # 工具子集不在指挥官层构建：由 OrchestratorService 消费本决策时经
+            # build_tool_subset（唯一权威入口）按 cost_policy.max_tool_count 填充，
+            # 指挥官始终不接触工具清单。
+            "tool_subset": None,
             "cost_policy": {"allowed": True, "reason": "conductor_default_allow"},
             "billing_events": [],
             "task_plan_summary": task_plan_summary,
@@ -615,13 +642,16 @@ class ConductorService:
         self,
         query: str,
         *,
-        account_id=None,
         budget_level: str = "normal",
         balance_credits: float = float("inf"),
         image_url_count: int = 0,
         deep_thinking_requested: bool = False,
     ) -> dict:
-        """生成可直接消费的 RoutingDecision，补齐工具子集与成本策略。"""
+        """生成可直接消费的 RoutingDecision（补齐成本策略）。
+
+        工具子集不在此构建——由 OrchestratorService 消费本决策时经
+        build_tool_subset（唯一权威入口）统一填充，避免并行第二套实现。
+        """
         plan = self.plan(
             query,
             budget_level=budget_level,
@@ -629,7 +659,6 @@ class ConductorService:
             image_url_count=image_url_count,
         )
         decision = self.to_routing_decision_dict(plan)
-        decision["tool_subset"] = self._build_tool_subset(account_id, query)
         decision["cost_policy"] = self._build_cost_policy(
             plan,
             budget_level=budget_level,
@@ -637,68 +666,6 @@ class ConductorService:
             deep_thinking_requested=deep_thinking_requested,
         )
         return decision
-
-    def _build_tool_subset(self, account_id, query: str) -> dict:
-        if self.tool_subset_builder is None:
-            return {
-                "selected_tools": [],
-                "backup_tools": [],
-                "filtered_out_tools": [],
-                "selection_reason": "no_tool_subset_builder",
-            }
-        candidates = []
-        if account_id is not None:
-            try:
-                collected = self.tool_subset_builder.build(account_id)
-                candidates = (
-                    collected.get("candidates", [])
-                    if isinstance(collected, dict)
-                    else []
-                )
-            except Exception:
-                logger.warning("Conductor 工具候选收集失败", exc_info=True)
-        if query and self.tool_selector_service is not None and candidates:
-            try:
-                selected = self.tool_selector_service.select_tools(
-                    query,
-                    candidates=candidates,
-                    max_tools=5,
-                )
-                if selected:
-                    return self._merge_tool_selection(candidates, selected)
-            except Exception:
-                logger.warning("Conductor 工具选择失败，回退默认排序", exc_info=True)
-        return self.tool_subset_builder.build_ranked_subset(candidates)
-
-    def _merge_tool_selection(self, candidates, selected) -> dict:
-        ranked = self.tool_subset_builder.build_ranked_subset(candidates)
-        all_tools = ranked.get("selected_tools", []) + ranked.get("backup_tools", [])
-        selected_keys = {
-            (
-                str(item.get("source_type", "")),
-                str(item.get("provider_id", "")),
-                str(item.get("tool_name", "")),
-            )
-            for item in selected
-        }
-        matched = []
-        other = []
-        for tool in all_tools:
-            key = (
-                str(tool.get("source_type", "")),
-                str(tool.get("provider_id", "")),
-                str(tool.get("name", "")),
-            )
-            (matched if key in selected_keys else other).append(tool)
-        top = matched[:5]
-        top.extend(other[: max(0, 5 - len(top))])
-        return {
-            "selected_tools": top,
-            "backup_tools": all_tools[5:],
-            "filtered_out_tools": ranked.get("filtered_out_tools", []),
-            "selection_reason": "conductor_tool_selection",
-            "matched_count": len(matched),
-        }
 
     def _build_cost_policy(
         self,
@@ -715,65 +682,4 @@ class ConductorService:
             budget_level=budget_level,
             balance_credits=balance_credits,
             deep_thinking_requested=deep_thinking_requested,
-        )
-
-    def handle_escalation(
-        self,
-        task: ConductorAgentTask,
-        find_result,
-        *,
-        already_retried: bool = False,
-    ) -> EscalationDecision:
-        """处理 Agent 工具检索上报。
-
-        Agent 通过 AgentToolFinder 检索工具后，若 needs_escalation=True，
-        调用此方法由指挥官决策下一步动作。
-
-        Args:
-            task: 指挥官分配的子任务
-            find_result: AgentToolFinder.find_tools() 返回的 ToolFindResult
-            already_retried: 是否已经重试过一次（避免无限重试）
-
-        Returns:
-            EscalationDecision: 指挥官的处理决策
-        """
-        best_score = find_result.best_score if find_result else 0.0
-        required_caps = task.required_capabilities or []
-
-        # 已重试过仍失败 → 放弃
-        if already_retried:
-            return EscalationDecision(
-                action=EscalationAction.GIVE_UP.value,
-                reason=f"重试后仍无法找到合适工具 (best_score={best_score:.3f})",
-            )
-
-        # 分数在 [MIN_SCORE, GOOD_SCORE] 之间 → 可能阈值过高，放宽重试
-        if best_score >= self._RELAXED_SCORE_THRESHOLD:
-            return EscalationDecision(
-                action=EscalationAction.RETRY_RELAXED.value,
-                reason=f"初始阈值过高 best={best_score:.3f}，放宽到 {self._RELAXED_SCORE_THRESHOLD}",
-                relaxed_threshold=self._RELAXED_SCORE_THRESHOLD,
-            )
-
-        # 分数极低 → 确实缺能力
-        if not required_caps:
-            # 任务未声明所需能力，可能是描述不清 → 请用户澄清
-            return EscalationDecision(
-                action=EscalationAction.REPORT_USER.value,
-                message=(
-                    f"任务「{task.title}」未声明所需能力，且系统未检索到匹配工具。"
-                    f"请补充更详细的任务描述或所需能力。"
-                ),
-                reason="未声明所需能力且无工具命中",
-            )
-
-        # 声明了所需能力但找不到工具 → 回报用户缺工具
-        missing_caps = ", ".join(required_caps)
-        return EscalationDecision(
-            action=EscalationAction.REPORT_USER.value,
-            message=(
-                f"任务「{task.title}」需要以下能力但系统暂无匹配工具：{missing_caps}。"
-                f"请添加对应的 MCP 工具或 Skill，或调整任务要求。"
-            ),
-            reason=f"缺能力: {missing_caps} (best_score={best_score:.3f})",
         )

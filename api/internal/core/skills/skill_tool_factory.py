@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import Field, create_model
 
-from .skill_executor import SkillSandboxExecutor, SkillScfClient
+from .skill_executor import SkillExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,14 @@ def _json_schema_type_to_python(schema: dict[str, Any]) -> Any:
 
 @dataclass(slots=True)
 class SkillToolFactory:
-    """将技能包工具定义展开为 LangChain 工具。"""
+    """将技能包工具定义展开为 LangChain 工具。
 
-    scf_client: SkillScfClient
-    sandbox_executor: SkillSandboxExecutor = field(default_factory=SkillSandboxExecutor)
-    timeout_seconds: int = 60
+    执行本身委托给**单一入口** `SkillExecutor`（按 `skill_exec` 的 active 后端
+    选协议）；本类只负责「定义 → 工具」的展开与结果序列化，不再自己做
+    「先试 SCF 再兜沙箱」的协议选择（那是重复的决策点）。
+    """
+
+    skill_executor: SkillExecutor
 
     def build_tools(
         self,
@@ -124,14 +127,12 @@ class SkillToolFactory:
                     tool_name,
                     entrypoint,
                 )
-                result = self.scf_client.execute_skill(execution_payload)
+                # 协议选择由 SkillExecutor 按 active 后端完成（此处不再 try/fallback，
+                # 避免「先试 HTTP 再兜 E2B」把决策散落到调用方、并吞掉原始错误）
+                result = self.skill_executor.execute_skill(execution_payload)
             except Exception as exc:
-                logger.warning("技能工具 SCF 执行失败，尝试沙箱回退: execution_id=%s error=%s", execution_id, exc)
-                try:
-                    result = self.sandbox_executor.execute_skill(execution_payload)
-                except Exception as fallback_exc:
-                    logger.exception("技能工具沙箱回退失败: execution_id=%s error=%s", execution_id, fallback_exc)
-                    return f"技能执行失败: {fallback_exc}"
+                logger.exception("技能工具执行失败: execution_id=%s error=%s", execution_id, exc)
+                return f"技能执行失败: {exc}"
 
             if isinstance(result, (dict, list)):
                 return json.dumps(result, ensure_ascii=False, default=str)

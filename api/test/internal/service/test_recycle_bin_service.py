@@ -548,7 +548,8 @@ def test_record_os_file_deletion_uses_basename_across_path_separators(monkeypatc
     assert created[1].resource_name == "summary.md"
     assert created[0].deleted_by == "acc-1"
     assert created[0].deleted_by_type == "agent"
-    assert created[0].retention_days == 7
+    # agent 代删固定留存 30 天（人工手动删为 7 天）
+    assert created[0].retention_days == 30
     assert created[0].status == "pending"
 
 
@@ -598,7 +599,8 @@ def test_record_os_file_deletion_stores_safe_root_and_recycle_root(monkeypatch):
     assert len(created) == 2
     assert created[0].deleted_by == "acc-1"
     assert created[0].deleted_by_type == "agent"
-    assert created[0].retention_days == 7
+    # agent 代删固定留存 30 天（人工手动删为 7 天）
+    assert created[0].retention_days == 30
     assert created[0].status == "pending"
     # 快照须携带删除时记录的 recycle_root 与 safe_root（purge 按 safe_root 定位清单）
     assert created[0].snapshot["recycle_root"] == r"C:\Users\Administrator\.yujianwo_recycle"

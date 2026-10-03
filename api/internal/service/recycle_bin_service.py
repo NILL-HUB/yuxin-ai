@@ -8,9 +8,11 @@
   用户回收站（含 agent 代删）仅归属账号可查看/恢复
 
 删除来源（deleted_by_type）：
-- ``admin``：管理员删除（前端选择留存天数，默认 30 天）
-- ``user``：用户侧删除（前端选择留存天数，默认 30 天，用户端回收站可见/恢复）
-- ``agent``：agent 代理删除（默认留存 7 天，到期自动销毁，期间用户可随时恢复）
+- ``admin``：管理员删除（前端选择留存天数，默认 7 天）
+- ``user``：用户侧删除（前端选择留存天数，默认 7 天，用户端回收站可见/恢复）
+- ``agent``：agent 代理删除（默认留存 30 天，到期自动销毁，期间用户可随时恢复）
+
+留存期策略：**人工手动删除（admin/user）默认 7 天；agent 代理删除默认 30 天**。
 """
 import logging
 import math
@@ -31,8 +33,8 @@ from internal.extension.database_extension import db
 
 logger = logging.getLogger(__name__)
 
-# agent 代理删除的固定留存天数（用户侧回收站中 agent 删的内容一律 7 天）
-AGENT_RETENTION_DAYS = 7
+# agent 代理删除的固定留存天数（用户侧与 admin 侧 agent 删的内容一律 30 天）
+AGENT_RETENTION_DAYS = 30
 
 
 def _utcnow_naive() -> datetime:
@@ -59,6 +61,7 @@ class RecycleBinService:
         "external_data_source",
         "conversation",
         "memory",
+        "account",
     )
     # 用户端回收站可见类型：用户端（C 端）可删除/产生以下类型的条目——
     # 知识库/文档（用户删除）、本机文件（agent 代删）、定时任务/外部数据源/
@@ -85,12 +88,13 @@ class RecycleBinService:
         "mcp",
         "api_tool",
         "upload_file",
+        "account",
     )
-    DEFAULT_RETENTION_DAYS = 30
+    # 人工手动删除（user/admin）的默认留存天数
+    DEFAULT_RETENTION_DAYS = 7
     AGENT_RETENTION_DAYS = AGENT_RETENTION_DAYS
-    # admin Agent 代删的默认留存天数：比用户侧 agent（7 天）长，
-    # 与 admin 手动删除（30 天）一致。
-    ADMIN_AGENT_RETENTION_DAYS = 30
+    # admin Agent 代删与用户侧 agent 同口径（均 30 天）：两者都是 agent 代理删除。
+    ADMIN_AGENT_RETENTION_DAYS = AGENT_RETENTION_DAYS
     RETENTION_CHOICES = (7, 30, 90, 180)
 
     def delete_resource(
@@ -109,11 +113,11 @@ class RecycleBinService:
 
         Args:
             deleted_by_type: 删除来源。
-                - ``admin``：管理员删除（调用方负责在前端提示并选择留存天数）
-                - ``user``：用户侧删除（前端选择留存天数，默认 30 天，用户端回收站可见/恢复）
-                - ``agent``：agent 代理删除（固定留存 7 天，用户端回收站可见/恢复）
+                - ``admin``：管理员删除（调用方负责在前端提示并选择留存天数，默认 7 天）
+                - ``user``：用户侧删除（前端选择留存天数，默认 7 天，用户端回收站可见/恢复）
+                - ``agent``：agent 代理删除（固定留存 30 天，用户端回收站可见/恢复）
             agent_id: agent 代理删除时的 agent 应用 ID（写入快照，便于审计/展示）
-            retention_days: 留存天数；agent 来源时固定使用 7 天，忽略该参数。
+            retention_days: 留存天数；agent 来源时固定使用 30 天，忽略该参数。
 
         Returns:
             True 成功入站；False 资源不存在
@@ -131,14 +135,14 @@ class RecycleBinService:
                 f"资源类型 {resource_type} 仅支持管理员删除，不能进入用户回收站"
             )
         if deleted_by_type == "admin_agent":
-            # admin Agent 代删：留存按 admin 口径（可配），默认 30 天。
-            # 与用户侧 agent 的固定 7 天区分——admin 板块资源更需要可追溯期。
+            # admin Agent 代删：与用户侧 agent 同口径，默认 30 天；可由调用方在允许档位内指定
             retention_days = int(retention_days or self.ADMIN_AGENT_RETENTION_DAYS)
             if retention_days not in self.RETENTION_CHOICES:
                 retention_days = self.ADMIN_AGENT_RETENTION_DAYS
         elif deleted_by_type == "agent":
             retention_days = self.AGENT_RETENTION_DAYS
         else:
+            # 人工手动删除（user/admin）：默认 7 天
             retention_days = int(retention_days or self.DEFAULT_RETENTION_DAYS)
             if retention_days not in self.RETENTION_CHOICES:
                 retention_days = self.DEFAULT_RETENTION_DAYS

@@ -1956,7 +1956,7 @@ skill_id 做超期清理。
 | Neo4j 节点 | 属性 `user_id`（裸 UUID） | 属性 `admin_user_id` + `agent_id` | **属性分离**（P3b 落地） |
 | Redis / 冷存储 | `…:{uuid}` | `…:admin:{uuid}[:{agent}]` | 键前缀分离 |
 
-**用户主体键采用裸 UUID**（与四层存量值逐字节一致，**零迁移**）。此形态**有意偏离**治理设计 §8 的字面 `user:{uuid}`——带前缀需迁移全部 Neo4j 节点属性、重建唯一约束与索引，且失败模式是「静默召回为空」。偏离已记录在 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10。
+**用户主体键采用裸 UUID**（与四层存量值逐字节一致，**零迁移**）。此形态**有意偏离**治理设计 §8 的字面 `user:{uuid}`——带前缀需迁移全部 Neo4j 节点属性、重建唯一约束与索引，且失败模式是「静默召回为空」。偏离已记录在 [memory-system/01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) §1.10。
 
 **本阶段修复的既有缺陷**：C1（Neo4j `Skill` 节点 `flush_bump_use_to_neo4j` 按从未写入的
 `skill_id` 匹配 → use_count 静默丢失并清空 Redis 统计）、C3（`MemoryGovernor._clear_user_cache`

@@ -9,6 +9,7 @@ class ToolSourceType(str, Enum):
     KNOWLEDGE = "knowledge"
     WORKFLOW = "workflow"
     SKILL = "skill"
+    CLI = "cli"
     AGENT_BINDING = "agent_binding"
 
 

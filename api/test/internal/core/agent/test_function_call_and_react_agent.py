@@ -1073,10 +1073,11 @@ def test_function_call_agent_tools_node_should_inject_session_context_for_os_too
 
     import importlib as _importlib
 
-    module = _importlib.import_module(
-        "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
+    # HTTP 调用已收敛到 worker_client（builtin provider 单一入口），注入点随之迁移
+    worker_client = _importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.worker_client"
     )
-    monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
+    monkeypatch.setattr(worker_client.urllib.request, "urlopen", _fake_urlopen)
     tool = OsFileTaskTool(requester="user-1")
     config = _build_agent_config(
         tools=[tool],

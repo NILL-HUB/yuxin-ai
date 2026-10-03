@@ -531,6 +531,92 @@ def test_execution_coordinator_should_repair_plan_when_failures_exist():
     assert results[0].answer == "answer:repaired-task"
 
 
+def test_execution_coordinator_should_repair_plan_when_agent_blocked():
+    """子代理无硬错误但主动申明「无法完成」时，也必须触发重规划。
+
+    历史实现 _has_failures 只看 errors，而正常跑完的结果 errors 恒空，
+    导致「跑完但没做成」永远触发不了修复回路。
+    """
+    calls = []
+    captured: dict = {}
+
+    class _Executor:
+        def execute(self, item, context=None):
+            calls.append(item.task_id)
+            if item.task_id == "task-1":
+                return {
+                    "agent_id": "agent",
+                    "task_id": item.task_id,
+                    "answer": "无法完成：缺少必要工具",
+                    "confidence": 1.0,
+                    "blocked": True,
+                    "blocking_reason": "缺少必要工具",
+                }
+            return {
+                "agent_id": "agent",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    def _repairer(original_query, failures):
+        captured["failures"] = failures
+        return _plan("single_agent", [_item("repaired-task")])
+
+    coordinator = ExecutionCoordinatorService(
+        executor=_Executor(),
+        plan_repairer=_repairer,
+    )
+    plan = _plan("single_agent", [_item("task-1")])
+
+    results = coordinator.execute(plan)
+
+    assert calls == ["task-1", "repaired-task"]
+    assert results[0].answer == "answer:repaired-task"
+    assert captured["failures"][0]["blocked"] is True
+    assert captured["failures"][0]["blocking_reason"] == "缺少必要工具"
+
+
+def test_sequential_execution_should_skip_tasks_whose_dependency_blocked():
+    """上游子代理主动申明无法完成时，下游依赖子任务须被跳过。"""
+    class _Executor:
+        def execute(self, item, context=None):
+            if item.task_id == "t1":
+                return {
+                    "agent_id": "agent",
+                    "task_id": "t1",
+                    "answer": "无法完成：缺凭证",
+                    "confidence": 1.0,
+                    "blocked": True,
+                    "blocking_reason": "缺凭证",
+                }
+            if item.task_id == "t2":
+                raise AssertionError("下游子任务不应被执行")
+            return {
+                "agent_id": "agent",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    coordinator = ExecutionCoordinatorService(executor=_Executor())
+    plan = _plan(
+        "multi_agent_sequential",
+        [
+            _item("t1", order=0),
+            _item("t2", order=1, depends_on=["t1"]),
+            _item("t3", order=2),
+        ],
+    )
+
+    results = coordinator.execute(plan)
+
+    by_id = {result.task_id: result for result in results}
+    assert by_id["t1"].blocked is True
+    assert by_id["t2"].errors == ["dependency_failed"]
+    assert by_id["t3"].answer == "answer:t3"
+
+
 def test_execution_coordinator_should_keep_original_results_when_repairer_returns_none():
     calls = []
 

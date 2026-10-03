@@ -375,7 +375,10 @@ class TestAdminCustomerUserService:
         assert session.commits == 1
         assert audit_log_service.records[0]["action"] == "update"
 
-    def test_delete_customer_user_should_mark_deleted_revoke_and_cleanup_memory(self):
+    def test_delete_customer_user_should_enter_recycle_bin_and_lock(self, monkeypatch):
+        """删除用户 = 进入回收站 + 锁定（status=recycled）：不清任何数据与资产。"""
+        import internal.service.recycle_bin_service as _rb_mod
+
         operator_id = uuid4()
         account_id = uuid4()
         account = _account(id=account_id, status="active", email="del@example.com", name="待删")
@@ -384,15 +387,21 @@ class TestAdminCustomerUserService:
         # 1 _get_account_or_raise: account
         # 2 _ensure_not_admin_bound
         # 3 _revoke_active_sessions: list sessions（all_result=[] → 0 撤销）
-        # 4 _cleanup_user_runtime_data PG user_memory delete → delete_result=3
-        # 5 _cleanup_user_runtime_data PG schedule_task update → delete_result=2
         session = _SessionStub([
             _QueryStub(one_or_none_result=account),
             _QueryStub(one_or_none_result=None),
             _QueryStub(all_result=[]),
-            _QueryStub(delete_result=3),
-            _QueryStub(delete_result=2),
         ])
+        called = []
+
+        class _RecycleStub:
+            def delete_resource(self, **kwargs):
+                called.append(kwargs)
+                # 真实 handler（physical_delete_account）会把账号置为 recycled
+                account.status = "recycled"
+                return True
+
+        monkeypatch.setattr(_rb_mod, "RecycleBinService", _RecycleStub)
         service = AdminCustomerUserService(session=session, audit_log_service=audit_log_service)
 
         result = service.delete_customer_user(
@@ -403,17 +412,23 @@ class TestAdminCustomerUserService:
             user_agent="pytest",
         )
 
-        assert result["status"] == "deleted"
-        assert account.status == "deleted"
+        assert len(called) == 1
+        assert called[0]["resource_type"] == "account"
+        assert called[0]["resource_id"] == account_id
+        assert called[0]["deleted_by_type"] == "admin"
+        assert called[0]["deleted_by"] == operator_id
+        # 未指定留存天数 → 走人工手动删除默认（7 天）
+        assert called[0]["retention_days"] is None
+        assert result["status"] == "recycled"
         assert account.deleted_at is not None
         assert account.deleted_by == operator_id
         assert account.deleted_reason == "用户要求注销"
-        assert session.commits == 1
         assert audit_log_service.records[0]["action"] == "delete"
-        assert audit_log_service.records[0]["after_data"]["status"] == "deleted"
+        assert audit_log_service.records[0]["after_data"]["status"] == "recycled"
         assert audit_log_service.records[0]["after_data"]["deleted_reason"] == "用户要求注销"
-        assert audit_log_service.records[0]["after_data"]["cleanup"]["pg_rows"] == 3
-        assert audit_log_service.records[0]["after_data"]["cleanup"]["schedule_tasks_disabled"] == 2
+        # 删除阶段不再清理任何运行态数据（记忆/Redis 等清理已挪到到期销毁 purge_account）
+        assert "cleanup" not in audit_log_service.records[0]["after_data"]
+        assert session.commits == 1
 
     def test_delete_customer_user_should_reject_when_already_deleted(self):
         from internal.exception import FailException
@@ -425,72 +440,38 @@ class TestAdminCustomerUserService:
         with pytest.raises(FailException):
             service.delete_customer_user(account.id, operator_id=uuid4())
 
-    def test_delete_customer_user_should_clear_redis_cache(self, monkeypatch):
-        """缺口八：注销路径此前不碰 Redis——须调用 MemoryGovernor 清理主体缓存并计入 stats。"""
-        import internal.service.memory.memory_governor as _governor_mod
+    def test_delete_customer_user_should_reject_when_already_recycled(self):
+        """已在回收站（recycled）的账号不允许重复删除。"""
+        from internal.exception import FailException
 
-        operator_id = uuid4()
-        account_id = uuid4()
-        account = _account(id=account_id, status="active", email="del@example.com", name="待删")
-        audit_log_service = _AuditLogServiceStub()
-        session = _SessionStub([
-            _QueryStub(one_or_none_result=account),
-            _QueryStub(one_or_none_result=None),
-            _QueryStub(all_result=[]),
-            _QueryStub(delete_result=3),
-            _QueryStub(delete_result=2),
-        ])
+        account = _account(status="recycled")
+        session = _SessionStub([_QueryStub(one_or_none_result=account)])
+        service = AdminCustomerUserService(session=session, audit_log_service=_AuditLogServiceStub())
 
-        cleared_keys = []
+        with pytest.raises(FailException):
+            service.delete_customer_user(account.id, operator_id=uuid4())
 
-        class _GovernorStub:
-            def __init__(self, *args, **kwargs):
-                pass
+    def test_enable_recycled_user_should_require_recycle_bin_restore(self):
+        """recycled 账号必须经回收站恢复，避免「已启用但仍会被到期销毁」的语义错位。"""
+        from internal.exception import FailException
 
-            def _clear_all_user_cache(self, owner_key):
-                cleared_keys.append(owner_key)
-                return 5
+        account = _account(status="recycled")
+        session = _SessionStub([_QueryStub(one_or_none_result=account)])
+        service = AdminCustomerUserService(session=session, audit_log_service=_AuditLogServiceStub())
 
-        monkeypatch.setattr(_governor_mod, "MemoryGovernor", _GovernorStub)
-        service = AdminCustomerUserService(session=session, audit_log_service=audit_log_service)
+        with pytest.raises(FailException):
+            service.enable_customer_user(account.id, operator_id=uuid4())
 
-        result = service.delete_customer_user(
-            account_id,
-            reason="用户要求注销",
-            operator_id=operator_id,
-            ip="127.0.0.1",
-            user_agent="pytest",
-        )
+    def test_disable_recycled_user_should_reject(self):
+        """recycled 是回收站锁定态，不允许被 disable 覆盖。"""
+        from internal.exception import FailException
 
-        assert cleared_keys == [str(account_id)]
-        assert audit_log_service.records[0]["after_data"]["cleanup"]["redis_keys"] == 5
-        assert result["status"] == "deleted"
+        account = _account(status="recycled")
+        session = _SessionStub([_QueryStub(one_or_none_result=account)])
+        service = AdminCustomerUserService(session=session, audit_log_service=_AuditLogServiceStub())
 
-    def test_delete_customer_user_should_not_fail_when_redis_unavailable(self):
-        """Redis 不可用时注销不阻断（_clear_all_user_cache 返回 0，stats 记 0）。"""
-        operator_id = uuid4()
-        account_id = uuid4()
-        account = _account(id=account_id, status="active", email="del@example.com", name="待删")
-        audit_log_service = _AuditLogServiceStub()
-        session = _SessionStub([
-            _QueryStub(one_or_none_result=account),
-            _QueryStub(one_or_none_result=None),
-            _QueryStub(all_result=[]),
-            _QueryStub(delete_result=3),
-            _QueryStub(delete_result=2),
-        ])
-        service = AdminCustomerUserService(session=session, audit_log_service=audit_log_service)
-
-        result = service.delete_customer_user(
-            account_id,
-            reason="用户要求注销",
-            operator_id=operator_id,
-            ip="127.0.0.1",
-            user_agent="pytest",
-        )
-
-        assert result["status"] == "deleted"
-        assert audit_log_service.records[0]["after_data"]["cleanup"]["redis_keys"] == 0
+        with pytest.raises(FailException):
+            service.disable_customer_user(account.id, operator_id=uuid4())
 
     def test_disable_deleted_user_should_reject(self):
         from internal.exception import FailException

@@ -54,6 +54,7 @@ const RESOURCE_TYPE_COLORS: Record<string, string> = {
   external_data_source: 'purple',
   conversation: 'cyan',
   memory: 'magenta',
+  account: 'red',
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -98,6 +99,7 @@ const resourceTypeOptions = computed(() => [
   { label: t('admin.recycleBin.resourceTypes.external_data_source'), value: 'external_data_source' },
   { label: t('admin.recycleBin.resourceTypes.conversation'), value: 'conversation' },
   { label: t('admin.recycleBin.resourceTypes.memory'), value: 'memory' },
+  { label: t('admin.recycleBin.resourceTypes.account'), value: 'account' },
 ])
 
 const hasActiveFilters = computed(() =>
@@ -244,6 +246,7 @@ const typeBarColor = (type: string) => {
     external_data_source: 'bg-indigo-500',
     conversation: 'bg-cyan-400',
     memory: 'bg-pink-500',
+    account: 'bg-rose-500',
   }
   return colors[type] || 'bg-slate-300'
 }

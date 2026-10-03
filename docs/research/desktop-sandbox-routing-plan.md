@@ -1,8 +1,8 @@
 # 多租户 Web 场景下的"真实桌面 / 云沙箱"双层执行路由方案
 
 > 更新日期：2026-09-08（批次 5：§4.1.3 权限放开边界同步——写/删已放开靠快照回收站兜底，敏感读取由 worker 读黑名单拒绝）
-> 定位：研究方案（设计稿），主体未实现（多通道路由、桌面桥远程化、cua-driver 后端均为愿景设计）；其中 §4.1.3 删除出口统一已随自研链路落地。背景调研见 `docs/research/hermes-v0.20-capability-deep-dive.md`、
-> `docs/research/hermes-v0.20-saas-evaluation.md`、`docs/prd/modules/08-os-automation.md`。
+> 定位：研究方案（设计稿），**多通道路由与桌面桥远程化仍未实现**；§4.1.3 删除出口统一已落地，§4.1.1「登录即设备注册 + 按账号动态解析 bridge」与 cua-driver 后端（`computer_control_worker.py` / `desktop/vendor/cua-driver/`）**已落地**（现状见 [product-vision.md](../prd/product-vision.md) §三-9/10）。背景调研见 `docs/archive/research-completed/hermes-v0.20-capability-deep-dive.md`、
+> `docs/archive/research-completed/hermes-v0.20.5-saas-evaluation.md`、`docs/prd/modules/08-os-automation.md`。
 
 ## 0. 结论速览
 

@@ -2,7 +2,7 @@
 
 Electron 壳复用现有 Vue3 Web UI，并托管本机能力 Worker：
 
-- `os_automation_worker.py`：OS 自动化 + 本机回收站（`/recycle`）
+- `os_automation_worker.py`：OS 自动化（`/file`/`/snapshot`）+ 本机回收站（`/recycle`）+ 终端（`/exec`，cmd/gitbash，删除命令守卫）
 - `browser_automation_worker.py`：浏览器自动化（Playwright）
 - `computer_control_worker.py`：计算机控制（pyautogui）
 - `render_worker.py`：本机视频渲染出片（HyperFrames CLI + Chromium + ffmpeg）
@@ -142,6 +142,7 @@ Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
 POST /file      -> OS worker 8765/file
 POST /recycle   -> OS worker 8765/recycle
 POST /snapshot  -> OS worker 8765/snapshot
+POST /exec      -> OS worker 8765/exec
 POST /browser   -> Browser worker 8766/browser
 POST /control   -> Computer worker 8767/control
 POST /render    -> Render worker 8768/render

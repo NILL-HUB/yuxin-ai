@@ -121,7 +121,7 @@ Key 池管理（并入模型池体系，`ModelKeyConfig`）：
 
 ### 12.2 复杂度判断
 
-> **v5.2 变更（现状修正）**：`ENABLE_CONDUCTOR` 开启时，复杂度判断由指挥官 `ConductorService` 单次 LLM `structured_output` 输出的 `ConductorPlan.complexity` 字段承载；但 **`TaskClassifierService` 并未被删除**——它仍是旧规则回落链路与关键词快路径的活跃实现（`orchestrator_service.py` 调用，见 [task_classifier_service.py](../../api/internal/service/task_classifier_service.py)），其 LLM 分支使用 `get_feature_model("task_classification")`。下表规则同样作为指挥官 prompt 的参考规则。
+> **v5.2 变更（现状修正）**：`ENABLE_CONDUCTOR` 开启时，复杂度判断由指挥官 `ConductorService` 单次 LLM `structured_output` 输出的 `ConductorPlan.complexity` 字段承载；但 **`TaskClassifierService` 并未被删除**——它仍是旧规则回落链路与关键词快路径的活跃实现（`orchestrator_service.py` 调用，见 [task_classifier_service.py](../../../api/internal/service/task_classifier_service.py)），其 LLM 分支使用 `get_feature_model("task_classification")`。下表规则同样作为指挥官 prompt 的参考规则。
 
 `simple / medium / complex` 初始规则不是给用户看的产品概念，而是给指挥官使用的调度规则。它决定：
 

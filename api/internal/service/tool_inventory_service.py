@@ -9,7 +9,7 @@ from internal.entity.tool_inventory_entity import RiskLevel, ToolSourceType, nor
 from internal.entity.tool_pool_entity import ToolSubPoolRegistry
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.extension.database_extension import db
-from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider, SkillPackage, UserMemory, Workflow
+from internal.model import ApiTool, CliProvider, ExternalDataSource, KnowledgeBase, McpProvider, SkillPackage, UserMemory, Workflow
 from .builtin_tool_service import BuiltinToolService
 from .mcp_runtime_adapter import McpRuntimeAdapter
 
@@ -158,6 +158,7 @@ class ToolCandidateCollector:
         candidates = []
         candidates.extend(self._collect_api_tools(account_id))
         candidates.extend(self._collect_mcp_tools(account_id))
+        candidates.extend(self._collect_cli_tools(account_id))
         candidates.extend(self._collect_builtin_tools())
         candidates.extend(self._collect_knowledge_tools(account_id))
         candidates.extend(self._collect_user_memory_tools(account_id))
@@ -236,6 +237,52 @@ class ToolCandidateCollector:
                     "enabled": True,
                     # 关键词快速匹配通道（方案A）：MCP 工具的关键词 = provider.task_keywords + tool_name
                     "task_keywords": provider_keywords + [tool_name] if tool_name else provider_keywords,
+                })
+        return result
+
+    def _collect_cli_tools(self, account_id: UUID) -> list[dict[str, object]]:
+        """收集 CLI 工具来源（source_type=cli）。
+
+        候选来自 `cli_tool`（注册/更新时由 `cli_provider.tool_schema` 展开写入的
+        唯一事实源），并携带**工具级 description**——这是 CLI 能被选择器正确
+        命中的关键（此前 CLI 工具根本没有进入候选池）。
+        """
+        providers = (
+            self.session.query(CliProvider)
+            .filter((CliProvider.account_id == account_id) | (CliProvider.is_public == True))  # noqa: E712
+            .all()
+        )
+        cli_pool = self.inventory.normalize_pool_name("cli")
+        result: list[dict[str, object]] = []
+        for provider in providers:
+            if not bool(getattr(provider, "enabled", True)):
+                continue
+            provider_keywords = list(provider.task_keywords or [])
+            for tool in provider.tools or []:
+                if not bool(getattr(tool, "enabled", True)):
+                    continue
+                metadata = normalize_tool_metadata({
+                    "tool_pool": cli_pool,
+                    "capabilities": [tool.name],
+                    "permission_scope": "public" if provider.is_public else "user",
+                })
+                if not self._is_available(metadata):
+                    continue
+                tool_keywords = list(tool.task_keywords or [])
+                if tool.name and tool.name not in tool_keywords:
+                    tool_keywords.append(tool.name)
+                result.append({
+                    "id": build_tool_id(ToolSourceType.CLI.value, str(provider.id), tool.name),
+                    "name": tool.name,
+                    "description": tool.description,
+                    "source_type": ToolSourceType.CLI.value,
+                    "provider_id": str(provider.id),
+                    "provider_name": provider.label or provider.name,
+                    "inputs": [],
+                    "metadata": metadata,
+                    "visibility": "public" if provider.is_public else "private",
+                    "enabled": True,
+                    "task_keywords": provider_keywords + tool_keywords,
                 })
         return result
 

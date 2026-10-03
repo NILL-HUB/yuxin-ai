@@ -1,7 +1,7 @@
 const { Tray, Menu, nativeImage } = require('electron')
 const path = require('node:path')
 
-function createTray({ onShow, onQuit, getStatus }) {
+function createTray({ onShow, onQuit, getStatus, onCheckUpdates }) {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon.png'))
   const tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
   tray.setToolTip('钰见我')
@@ -17,6 +17,7 @@ function createTray({ onShow, onQuit, getStatus }) {
       { type: 'separator' },
       { label, enabled: false },
       { type: 'separator' },
+      { label: '检查更新', click: () => onCheckUpdates && onCheckUpdates() },
       { label: '退出', click: onQuit },
     ])
   }

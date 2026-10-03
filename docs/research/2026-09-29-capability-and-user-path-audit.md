@@ -16,9 +16,9 @@
 | ⛔ **当前不可用（缺配置）** | 依赖未配置，运行时不可达 | **代码沙箱 / 深度思考沙箱产物 / SCF 技能 / 办公文件生成** |
 | ⛔ **当前不可用（缺本地端）** | 依赖本地客户端或本机算力 | **控制用户电脑、视频渲染成片** |
 | ⛔ **当前不可用（空表）** | 承载数据为 0 | **MCP 工具调用、API 工具** |
-| 🔴 **核心链路缺陷** | 有实现但用户链路不通 | **工具调用（见 §4）——当前默认模型下工具永不执行** |
+| ✅ **（曾）核心链路缺陷，已修复** | 曾经的用户链路断点，现已闭环 | **工具调用主干**（2026-09-29 修复并实测通过，见 §4 复核更新） |
 
-**一句话**：当前 Web 环境实际能稳定提供的是**「通用大模型文字性应答」**（对话/问答/总结/翻译/检索/知识库问答）；**「用工具真干活」这条主干当前是断的**（§4），而**文件产出、代码执行、视频成片、控制电脑**四类重活全部依赖未配置的云端沙箱或未接入的本地客户端。
+**一句话**：当前 Web 环境能提供的是**「通用大模型文字性应答 + 已修复的工具调用主干」**（对话/问答/总结/翻译/检索/知识库问答/联网搜索等工具——工具主干已于 2026-09-29 修复，见 §4 复核更新）；而**文件产出、代码执行、视频成片、控制电脑**四类重活仍全部依赖未配置的云端沙箱或未接入的本地客户端。
 
 ---
 
@@ -133,6 +133,11 @@
 
 ## 4. 🔴 用户链路端到端实测（本次体检的核心发现）
 
+> **复核更新（2026-09-29 晚间）——本节 P0-1 已修复，P0-4 已重定性：**
+> - **P0-1 工具调用主干：✅ 已修复并实测通过。** 修复（见 [execution-roadmap §3 AUDIT-P0](../prd/execution-roadmap.md)）：A1 能力归一化支持中文标签、A2 补齐默认模型 `tool_call` 能力数据、A3 四个 routing feature 补绑模型、B4 路由统一走 `OrchestratorService.decide`、C7 输出口新增伪工具调用剥离（流式状态机）、C8 无工具时不注入工具指令。**实测：修复前落库 `<search_knowledge_base>…`，修复后落库正常 Markdown 且出现原生 `agent_thought`(tool_calls)、`web_search` 被真实调用。**
+> - **P0-4 流截断：重定性为 SSE 传输层收尾问题**——客户端已收全 `agent_end` / `billing_final` 后仍报 `incomplete chunked read`，**非业务异常**，优先级下调。
+> - 因此下文 4.2/4.3 记录的是**修复前的现场证据**，保留作为该缺陷的历史快照与回归基线。
+
 ### 4.1 实测方法
 
 以真实账号（`testexec`，active）签发合法 JWT，向**前端真实调用的入口** `POST /assistant-agent/chat`（SSE）发起 3 条真实用户请求，观察事件流、服务端日志与落库结果。
@@ -158,16 +163,15 @@
 
 ### 4.3 根因（已定位到代码）
 
-1. 助手对话**恒用 `FunctionCallAgent`**，不做能力判断：`assistant_agent_service.py:564`
-   → `agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent`
-2. `FunctionCallAgent` **只要 llm 有 `bind_tools` 就无条件绑定工具**，不看模型是否声明支持：`function_call_agent.py:206-213`
-3. 而默认（tier-1）chat 模型 `commandcode/deepseek-v4.1-flash` 的 `capabilities=[]` → 经 `language_model_manager.py:269` 映射后**不含 `ModelFeature.TOOL_CALL`**；
-4. 该模型以**自家 DSML 标记**输出工具意图，而**全仓无任何 DSML 解析**（grep 零命中）→ 工具调用未被识别为 `tool_calls`，标记作为正文流给用户；
-5. 之后流异常中断（`ASGI callable returned without completing response`）——60s 处截断，**未出现 Python traceback**，疑似异常被吞或超时，需进一步定位。
+1. 助手对话恒用 `FunctionCallAgent`（`assistant_agent_service.py:564`），其 `_llm_node` **本身有能力闸门**：仅当 `ModelFeature.TOOL_CALL in llm.features` 且 `bind_tools` 可用且 `tools` 非空时才绑定工具（`function_call_agent.py:219-226`）。
+2. 默认（tier-1）chat 模型 `commandcode/deepseek/deepseek-v4.1-flash` 的 `model_pool_config.capabilities` **是字面空数组 `[]`** → 归一化后 `features` 不含 `TOOL_CALL` → **闸门按设计跳过工具绑定**。（注意：`language_model_manager._normalize_capability_to_feature` 的中文标签映射**已修复**，此处并非映射问题，而是该字段真的为空。）
+3. 但系统提示词仍**承诺**模型可调用工具（如 `route_public_agents` / `search_knowledge_base`，见 `system_prompts.yaml:151-155`）→ 模型在"无真工具"时**自造工具调用标记**（本次实测为 `<|DSML|tool_calls>` 形态）并流式输出；
+4. 输出口**无伪工具调用剥离**（全仓无 DSML 解析，grep 零命中）→ 标记作为正文落库并展示给用户；
+5. 流在约 60s 处异常中断（`ASGI callable returned without completing response`，无 traceback），待进一步定位。
 
-**旁证**：`tool_invocation_audit` **0 行**——该环境**从未记录到任何一次工具执行**（写入点 `tool_invoker_service.py:170`）。这与"工具调用不通"相互印证。
+**旁证**：`tool_invocation_audit` **0 行**——该环境从未记录到任何一次工具执行（写入点 `tool_invoker_service.py:170`）。
 
-> **注意**：`app_runtime_service.py:749` 对应用对话**有**能力判断（`TOOL_CALL in llm.features` → FunctionCallAgent，否则 ReACTAgent），但**助手（首页小钰）这条路没有**，且 `ReACTAgent` 要求模型输出 ```json，同样不认 DSML。因此这不是"换个 agent 类"就能解决的问题，而是**模型能力与工具协议不匹配**。
+> **后续**：本项由 [用户端工具链与路由硬化设计](../archive/superpowers-specs/2026-09-29-user-tool-chain-routing-hardening-design.md) 修复，**已于 2026-09-29 落地并实测通过**（见本节顶部复核更新）。
 
 ---
 
@@ -191,10 +195,10 @@
 
 | # | 缺陷 | 证据 | 影响 |
 |---|---|---|---|
-| P0-1 | **工具调用主干失效** | §4 实测 + `tool_invocation_audit=0` | 「小钰用工具干活」全部不可用（天气/搜索/生活服务/知识库工具…），且把原始标记当答案给用户 |
+| ~~P0-1~~ | ~~**工具调用主干失效**~~ → ✅ **已修复（2026-09-29）** | 修复前见 §4 实测 + `tool_invocation_audit=0` | 已闭环并实测（`web_search` 被真实调用、`agent_thought`(tool_calls) 出现）；保留为回归基线 |
 | P0-2 | **沙箱全线未配置**（代码执行、深度思考产物、SCF 技能） | `E2B_*`/`SKILL_SCF_URL` 未设置、占位符 DNS 失败 | 文件产出/代码执行/25 个 scf 技能不可用；且深度思考**静默降级**，用户与管理员均无感知 |
 | P0-3 | **视频渲染无执行者** | `cloud-render` profile 默认关闭 + 无在线桌面端 | `render_video` 工具 `enabled=true` 却必然失败 → 虚假可用 |
-| P0-4 | **SSE 流异常截断** | `ASGI callable returned without completing response`（约 60s） | 长任务对话中途断开，前端体验破损 |
+| P0-4 | **SSE 流收尾（传输层）** | `ASGI callable returned without completing response`（约 60s）；2026-09-29 复核：客户端已收全 `agent_end`/`billing_final` 后仍报 `incomplete chunked read` | **非业务异常**，重定性为传输层收尾问题，优先级下调 |
 | P0-5 | **MCP 全量不可用且失败被静默吞掉** | 12 provider / 0 tool；同步失败仅日志 | MCP 生态能力为 0；管理员以为配置成功 |
 
 ### P1（可用性/一致性）
@@ -210,7 +214,9 @@
 
 ## 7. 下一步修复方向
 
-### 7.1 立即（P0-1）：让"工具调用"这条主干活起来
+### 7.1 立即（P0-1）：让"工具调用"这条主干活起来 —— ✅ **已完成（2026-09-29）**
+
+> 实际落地以 [用户端工具链与路由硬化设计](../archive/superpowers-specs/2026-09-29-user-tool-chain-routing-hardening-design.md) 的 A/B/C/D 方案为准（A1 中文能力归一化 / A2 补模型能力数据 / A3 routing feature 补绑模型 / B4 路由统一 / C7 伪工具调用剥离 / C8 无工具不注入工具指令），已实测通过。以下原始建议保留作为问题记录。
 
 1. **换默认模型**：把 chat tier-1 换成**声明「工具调用」能力**的 active 模型（现成的 `deepseek/deepseek-flash` 即含该能力），并在模型池配置上**强制要求**：作为助手主模型的条目必须声明 `工具调用`。
 2. **补能力闸门**：助手链路（`assistant_agent_service.py:564`）对齐 `app_runtime_service.py:749` 的能力判断；
@@ -221,7 +227,7 @@
 
 | 重活 | 选项 A（接通） | 选项 B（诚实下线） |
 |---|---|---|
-| 代码执行 / 文件生成 / 深度思考产物 | 配置百度 CFC 沙箱（`E2B_API_KEY` + `E2B_DOMAIN`）并开 `ENABLE_CODE_EXECUTION_TOOL` | 沙箱不可用时**显式告知用户"该能力未开通"**，并把相关工具置 `enabled=false` |
+| 代码执行 / 文件生成 / 深度思考产物 | **已有设计**：[沙箱配置治理与多后端热切换设计](../archive/superpowers-specs/2026-09-29-sandbox-config-multi-backend-design.md)——沙箱入库 admin 可配 + 多后端热切换，`resolve_runtime` 唯一入口返回显式 `enabled/reason` | 沙箱不可用时**显式告知用户"该能力未开通"**，并把相关工具置 `enabled=false` |
 | 视频渲染成片 | `docker compose --profile cloud-render up -d llmops-render-worker` | 标记为"需本机"，前端隐藏/提示需桌面端 |
 | 控制用户电脑 | 引导安装桌面端并登录（`desktop_device` 在线） | 前端按"设备在线数=0"置灰入口 |
 | MCP | 配好可用 provider 并修复同步失败可见性 | 暂时从能力清单移除，避免误导 |

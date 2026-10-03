@@ -36,6 +36,30 @@ def _is_placeholder_key(raw_key: str) -> bool:
     )
 
 
+# 凭证**值**的占位符标记：`.env.example` 默认值（your-xxx-key-here 等）不是真实凭证
+_PLACEHOLDER_VALUE_MARKERS = (
+    "your-",
+    "your_",
+    "-here",
+    "changeme",
+    "placeholder",
+    "example-",
+    "<changeme",
+)
+
+
+def is_placeholder_secret(value: str | None) -> bool:
+    """判断凭证**值**是否为空或占位符（视为「未配置」）。
+
+    与 `_is_placeholder_key`（判断 Fernet 加密密钥）区分：本函数用于判断业务凭证值。
+    全仓唯一的占位符判定实现，供内置工具凭证与沙箱凭证共用。
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    return any(marker in text for marker in _PLACEHOLDER_VALUE_MARKERS)
+
+
 def load_fernet_from_env(env_name: str, component_name: str) -> Fernet:
     """加载 Fernet 密钥（供各凭证加密模块共享）。
 

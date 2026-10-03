@@ -70,12 +70,15 @@ UUID 只存在于数据库内部；角色与权限的 API 响应、角色标签�
   `POST /admin/users/<id>/sessions/revoke`（踢下线）。
 - 权限：`user:read` / `user:create` / `user:update` / `user:disable` / `user:delete`。
 - 状态机：`active`（正常）→ `disabled`（停用，可逆，保留数据，可 `enable` 恢复）；
-  `active|disabled` → `deleted`（删除/注销，不可逆，禁止登录）。
-- 删除（`deleted`）与停用（`disabled`）的区别：停用可随时恢复且保留全部数据；
-  删除是注销语义——吊销全部会话、清理记忆数据（PG `user_memory` + Neo4j 记忆节点）、
-  停用名下定时任务、账号不可再登录。`account` 行本身保留（被多表外键引用，
-  物理删除不可行且需留存审计），通过 `status='deleted'` + `deleted_at/deleted_by/deleted_reason`
-  标记。删除为管理员操作（`user:delete`），操作写入审计日志。
+  `active|disabled` → `recycled`（删除入回收站并锁定，**可恢复**，资产完整保留）；
+  `deleted` 为历史注销态（不可逆，禁止登录），仅存量数据使用，新删除不再产生。
+- 删除与停用的区别：停用（`disabled`）可随时 `enable` 恢复且不进回收站；
+  删除（`recycled`）语义为「进入回收站 + 锁定」——吊销全部会话、账号**当即无法登录**（密码/验证码/OAuth 全部登录路径被 `_ensure_account_enabled` 拦截），
+  但**不清任何数据与资产**（知识库/文件/应用/会话/记忆原样保留，定时任务在锁定期被排除派发），
+  留存期内可随时从回收站恢复（`status` 回删除前的值）；留存期（人工手动删默认 7 天，前端可选 7/30/90/180）到期后由
+  `purge_account` 全量清空该账号资产与附属数据并物理删除 `account` 行，不留孤儿（`audit_log`/`tool_invocation_audit` 按合规留痕，仅断开引用）。
+  `recycled` 账号不允许 `enable`/`disable`（须经回收站恢复，避免「已启用但仍会被到期销毁」的错位）。
+  删除为管理员操作（`user:delete`），操作写入审计日志。详见 `docs/prd/modules/05-security-risk-decisions.md` §21.1。
 - 管理员绑定的账号不允许在客户用户管理中操作（防误禁管理员）。
 
 ## 5. 安全约束
@@ -189,7 +192,7 @@ effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMI
 
 #### 9.2.1 为什么封禁表「今天冗余」却仍必须保留（防重复推导）
 
-`BANNED_PERMISSION_CODES`（11 条）在当前**完全被 resource 白名单覆盖**——实测这 11 条的 resource（`admin`/`admin_user`/`role`/`permission`）均不在 `ASSIGNABLE_RESOURCES` 内，`is_assignable()` 的 resource 分支已全部拦住，封禁分支今天一条都没多拦。同理，当前 `BOARD_ACTIONS` 只登记了 `builtin_tool` 一个板块，**没有任何身份类板块动作**，所以授予 Agent 身份权限今天也无处可调（惰性死权限）。
+`BANNED_PERMISSION_CODES`（11 条）在当前**完全被 resource 白名单覆盖**——实测这 11 条的 resource（`admin`/`admin_user`/`role`/`permission`）均不在 `ASSIGNABLE_RESOURCES` 内，`is_assignable()` 的 resource 分支已全部拦住，封禁分支今天一条都没多拦。同理，当前 `BOARD_ACTIONS` 登记的是 `builtin_tool` 与 `schedule_task` 两个**非身份类**板块，**没有任何身份类板块动作**，所以授予 Agent 身份权限今天也无处可调（惰性死权限）。
 
 这容易让人推出「既然今天没用，不如去掉封禁、把过滤交给前端让管理员自选」——**该结论错误**，理由有三：
 
@@ -247,9 +250,9 @@ UI 过滤只是体验，**不是安全边界**。三层各自独立成立：
 
 **为什么新建独立执行链路而不复用用户端 `chat()`**：`AssistantAgentService._build_assistant_runtime_tools()` 是**用户域固有工具的装配点**，且是**条件装配**（逐个 `try` + 功能开关 + 运行上下文），实际工具数随配置动态变化。复用它只能靠黑名单排除用户域工具，而黑名单对动态集合不完备——漏一个就是越权。新链路只装配 admin 板块工具（白名单式，未登记即不装配），边界可自证。
 
-**已实现的板块动作（P1b 范围）**：仅 `builtin_tool`（`list` / `update_enabled` / `update_metadata`）——作为端到端样板；其余板块按同一模式增量登记 `BOARD_ACTIONS` 并补 `_do_<board>` 实现体即可。
+**已实现的板块动作**：`builtin_tool`（`list` / `update_enabled` / `update_metadata`，P1b 端到端样板）与 `schedule_task`（`list` / `create` / `delete`，定时任务统一时登记，支撑 Agent 自治建删定时任务；`delete` 按 `kind=delete` 走既有回收站分流）；其余板块按同一模式增量登记 `BOARD_ACTIONS` 并补 `_do_<board>` 实现体即可。
 
-**入口**：定义 CRUD `GET /admin/agents`（`agent_pool:read`，仅返回创建者自己的 Agent）+ `POST /admin/agents`（`agent_pool:manage`）+ `PATCH /admin/agents/<id>` / `DELETE /admin/agents/<id>`（均 `agent_pool:manage`；非属主 403、不存在 404）+ 执行入口 `POST /admin/agents/<id>/invoke`（权限 `agent_pool:manage`——执行入口代表"让 Agent 在后台动手"，不接受只读权限触发）+ `GET /admin/agents/<id>/drafts`（权限 `agent_pool:read`，按 `impact.agent_id` 做归属隔离）+ `GET /admin/agents/boards`（权限 `agent_pool:read`，返回已登记板块与动作明细含 `permission_code`，供前端渲染"这个 Agent 能做什么"并做「展示即受限」门控）。路由只做接线：把当前管理员的**实时权限**交给 `AdminAgentService.get_principal()` 重算三重交集（9.1 运行时层）。完整契约见 [管理端 Agent API](../api/admin-agents-api.md)。
+**入口**：定义 CRUD `GET /admin/agents`（`agent_pool:read`，仅返回创建者自己的 Agent）+ `POST /admin/agents`（`agent_pool:manage`）+ `PATCH /admin/agents/<id>` / `DELETE /admin/agents/<id>`（均 `agent_pool:manage`；非属主 403、不存在 404）+ 执行入口 `POST /admin/agents/<id>/invoke`（权限 `agent_pool:manage`——执行入口代表"让 Agent 在后台动手"，不接受只读权限触发）+ `GET /admin/agents/<id>/drafts`（权限 `agent_pool:read`，按 `impact.agent_id` 做归属隔离）+ `GET /admin/agents/boards`（权限 `agent_pool:read`，返回已登记板块与动作明细含 `permission_code`，供前端渲染"这个 Agent 能做什么"并做「展示即受限」门控）。路由只做接线：把当前管理员的**实时权限**交给 `AdminAgentService.get_principal()` 重算三重交集（9.1 运行时层）。完整契约见 [管理端 Agent API](api/admin-agents-api.md)。
 
 > **实现注意（易踩坑）**：`admin["id"]` 经 `_serialize_admin_user` 序列化为**字符串**，而 `admin_agent.owner_admin_user_id` 是 **UUID 列**、服务内 `get_agent` 做纯 Python 属主比较——路由必须 `UUID(str(admin["id"]))` 后再交给服务，否则合法属主会被误判 403（历史缺陷，已在路由层修复并由路由测试锁定）。
 
@@ -257,7 +260,7 @@ UI 过滤只是体验，**不是安全边界**。三层各自独立成立：
 
 **变更草稿**（9.5 的 `supervised` 载体）：`policy_change_draft` 已泛化为**通用 admin 变更草稿**（`suggestion_id` 可空 + `policy_type` 承载板块标识），通用台账由 `AdminChangeDraftService` 承担（创建/列出/应用/回滚 + 状态机守卫：仅 `pending` 可应用、仅 `applied` 可回滚）；路由板继续用 `RoutingPolicyChangeService`，二者共用同一张表。`agent_id` 写入 `impact` JSONB 以支持追溯。
 
-**回收站 `admin_agent` 来源**：既有 `deleted_by_type="agent"` 被硬约束为仅 7 类用户可见资源，admin 专属资源（`app`/`workflow`/`skill`/`mcp`/`api_tool`/`system_prompt`/`upload_file`）以该来源入站会抛 `ValidateErrorException`。因此新增 `admin_agent` 来源：放行 admin 专属资源、留存按 admin 口径（默认 30 天、可配，区别于用户侧 agent 的固定 7 天）、`_agent_id` 写入快照供追溯。**admin 回收站列表与概览改为 `in_(('admin','admin_agent'))`**，否则 Agent 代删条目在后台不可见、无法恢复。
+**回收站 `admin_agent` 来源**：既有 `deleted_by_type="agent"` 被硬约束为仅 7 类用户可见资源，admin 专属资源（`app`/`workflow`/`skill`/`mcp`/`api_tool`/`system_prompt`/`upload_file`）以该来源入站会抛 `ValidateErrorException`。因此新增 `admin_agent` 来源：放行 admin 专属资源、留存期 30 天（`RecycleBinService.AGENT_RETENTION_DAYS`；2026-09-30 起用户侧与 admin 侧 agent 删的内容统一 30 天，原「用户侧固定 7 天」口径作废）、`_agent_id` 写入快照供追溯。**admin 回收站列表与概览改为 `in_(('admin','admin_agent'))`**，否则 Agent 代删条目在后台不可见、无法恢复。
 
 **回归防护**（均含反向验证）：`test_admin_agent_boards.py`、`test_admin_change_draft_service.py`、`test_admin_agent_board_tools.py`、`test_admin_agent_execution_service.py`、`test_admin_agent_invoke_routes.py`、`test_admin_agent_crud_routes.py`、`test_recycle_bin_admin_agent.py`、`test_builtin_tool_write_paths.py`、`test_audit_write_commit_guard.py`。
 

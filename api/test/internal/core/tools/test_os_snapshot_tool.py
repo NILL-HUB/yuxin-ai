@@ -21,7 +21,8 @@ def test_os_snapshot_returns_disabled_error_when_not_configured(monkeypatch):
     result = json.loads(OsSnapshotTool()._run(op="list_snapshots"))
 
     assert result["ok"] is False
-    assert "未配置" in result["error"]
+    # 统一文案（DESKTOP_UNAVAILABLE_MESSAGE）：引导安装/登录桌面客户端，而非只抛内部 env 名
+    assert "桌面客户端" in result["error"]
 
 
 def test_os_snapshot_passes_payload(monkeypatch):

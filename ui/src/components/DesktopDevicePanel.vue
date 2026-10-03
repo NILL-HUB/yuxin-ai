@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
 type WorkerInfo = { running: boolean; pid?: number; version?: string | null }
+type UpdateStatus = 'checking' | 'available' | 'not-available' | 'downloaded' | 'error'
+type UpdatePayload = {
+  status: UpdateStatus
+  version?: string | null
+  releaseNotes?: string
+  manual?: boolean
+}
 type DesktopApi = {
   workersStatus: () => Promise<Record<string, WorkerInfo>>
   getWorkerVersions: () => Promise<Record<string, WorkerInfo>>
   getLaunchAtLogin: () => Promise<boolean>
   setLaunchAtLogin: (enabled: boolean) => Promise<unknown>
   checkForUpdates: () => Promise<{ ok: boolean; reason?: string }>
+  onUpdateStatus: (callback: (payload: UpdatePayload) => void) => () => void
   recycleList: (payload: Record<string, unknown>) => Promise<{ entries?: Array<Record<string, unknown>> }>
   recycleRestore: (payload: Record<string, unknown>) => Promise<unknown>
   wakeStatus: () => Promise<{ running: boolean }>
@@ -27,6 +35,33 @@ const restoringId = ref('')
 const launchAtLogin = ref(false)
 const updating = ref(false)
 const updateNote = ref('')
+let disposeUpdateStatus: (() => void) | null = null
+
+// 「检查更新」按钮的即时反馈：主进程按状态广播 desktop:update-status，
+// 这里映射为文案——否则按钮会永远停在「正在检查」。
+const applyUpdateStatus = (payload: UpdatePayload) => {
+  if (!payload || !payload.status) return
+  switch (payload.status) {
+    case 'checking':
+      updateNote.value = t('desktopDevice.updateChecking')
+      break
+    case 'available':
+      updateNote.value = t('desktopDevice.updateFound', { version: payload.version || '' })
+      break
+    case 'downloaded':
+      updateNote.value = t('desktopDevice.updateDownloaded')
+      break
+    case 'not-available':
+      // 自动巡检每天都会 not-available，仅手动检查才提示「已是最新」，避免噪音
+      if (payload.manual) updateNote.value = t('desktopDevice.updateUpToDate')
+      break
+    case 'error':
+      updateNote.value = t('desktopDevice.updateCheckFailed')
+      break
+    default:
+      break
+  }
+}
 
 const loadRecycle = async () => {
   if (!desktopApi) return
@@ -40,6 +75,10 @@ const loadRecycle = async () => {
 
 onMounted(async () => {
   if (!desktopApi) return
+  // 订阅更新状态：让「检查更新」按钮即时显示结果（检查中/已是最新/发现新版本/已就绪/失败）
+  if (desktopApi.onUpdateStatus) {
+    disposeUpdateStatus = desktopApi.onUpdateStatus(applyUpdateStatus)
+  }
   try {
     const [status, versions, launch] = await Promise.all([
       desktopApi.workersStatus(),
@@ -112,13 +151,17 @@ const checkUpdate = async () => {
         result?.reason === 'updater_disabled' ? t('desktopDevice.updateUnavailable') : t('desktopDevice.updateCheckFailed')
       return
     }
-    updateNote.value = t('desktopDevice.updateChecking')
+    // 成功时结果由 desktop:update-status 事件回填（已订阅），此处不再覆盖为「正在检查」
   } catch {
     updateNote.value = t('desktopDevice.updateCheckFailed')
   } finally {
     updating.value = false
   }
 }
+
+onUnmounted(() => {
+  if (disposeUpdateStatus) disposeUpdateStatus()
+})
 </script>
 
 <template>

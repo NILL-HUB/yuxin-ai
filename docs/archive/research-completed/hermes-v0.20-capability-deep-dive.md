@@ -1,7 +1,7 @@
 # Hermes v0.20 与钰见我 能力深度盘点
 
 > 更新日期：2026-08-13
-> 定位：对 `docs/research/hermes-agent-v0-20-comparison.md` 的补充，按“子系统 + 源码落点 + 运行状态”逐项盘点，
+> 定位：对 `docs/archive/research-completed/hermes-agent-v0-20-comparison.md` 的补充，按“子系统 + 源码落点 + 运行状态”逐项盘点，
 > 补齐此前只写模块名、没有展开核心机制的部分。Hermes 侧以仓库 `NousResearch/hermes-agent` tag `v2026.8.3`
 > 源码为准；钰见我 侧以本仓库当前工作区源码为准。
 
@@ -659,5 +659,5 @@
 - Hermes README / AGENTS.md：`README.md`、`AGENTS.md`。
 - Hermes 发布说明：`https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.3`。
 - 钰见我 源码：`api/`、`ui/`、`docker/`、`docs/prd/`。
-- 既有报告：`docs/research/hermes-agent-v0-20-comparison.md`、`docs/archive/research-completed/hermes-v0.20-alignment-report.md`、
+- 既有报告：`docs/archive/research-completed/hermes-agent-v0-20-comparison.md`、`docs/archive/research-completed/hermes-v0.20-alignment-report.md`、
   `docs/archive/research-completed/hermes-v0.20-e2e-verification.md`。

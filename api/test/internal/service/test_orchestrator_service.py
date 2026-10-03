@@ -332,6 +332,85 @@ def test_orchestrator_should_delegate_to_conductor_when_enabled():
     assert decision.reason == "conductor"
 
 
+def test_conductor_path_tool_subset_filled_by_orchestrator_with_tier_cap():
+    """conductor 分支的工具子集由 OrchestratorService 统一填充，上限取自档位。
+
+    指挥官不再接触工具清单（其 decide 返回的 tool_subset 恒为 None），
+    工具子集的唯一构建入口是该服务的 build_tool_subset。
+    """
+    class _Flags:
+        def is_enabled(self, code):
+            return code in {
+                "ENABLE_ORCHESTRATOR",
+                "ENABLE_CONDUCTOR",
+                "ENABLE_TOOL_POOL_RETRIEVAL",
+            }
+
+    class _Conductor:
+        def decide(self, query, **kwargs):
+            return {
+                "intent": "analysis",
+                "complexity": "complex",
+                "execution_mode": ExecutionMode.SINGLE_AGENT.value,
+                "risk_level": RiskLevel.SAFE.value,
+                "reason": "conductor",
+                "agent_subset": {"selected_agents": []},
+                "tool_subset": None,
+                "cost_policy": {"allowed": True, "max_tool_count": 2},
+                "billing_events": [],
+            }
+
+    captured: dict = {}
+
+    class _ToolSubsetBuilder:
+        def build_ranked_subset(self, candidates, max_tool_count=5, **kwargs):
+            captured["max_tool_count"] = max_tool_count
+            return {
+                "selected_tools": [{"id": "a"}, {"id": "b"}],
+                "backup_tools": [],
+                "filtered_out_tools": [],
+                "selection_reason": "ranked",
+            }
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        feature_flag_service=_Flags(),
+        conductor_service=_Conductor(),
+        tool_subset_builder=_ToolSubsetBuilder(),
+    )
+
+    decision = service.decide("分析市场")
+
+    assert captured["max_tool_count"] == 2
+    assert decision.tool_subset["selected_tools"] == [{"id": "a"}, {"id": "b"}]
+
+
+def test_non_conductor_path_applies_tier_cap_to_tool_subset():
+    """非 conductor 分支同样按 cost_policy.max_tool_count 限制工具数量。"""
+    captured: dict = {}
+
+    class _ToolSubsetBuilder:
+        def build_ranked_subset(self, candidates, max_tool_count=5, **kwargs):
+            captured["max_tool_count"] = max_tool_count
+            return {
+                "selected_tools": [],
+                "backup_tools": [],
+                "filtered_out_tools": [],
+                "selection_reason": "ranked",
+            }
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        cost_policy_service=CostPolicyService(),
+        tool_subset_builder=_ToolSubsetBuilder(),
+    )
+
+    # simple 任务 → cost_policy.max_tool_count == 3
+    service.decide("帮我解释 Python list")
+
+    assert captured["max_tool_count"] == 3
+
+
 def test_routing_decision_should_dump_stable_dict():
     decision = RoutingDecision(
         intent="general_qa",

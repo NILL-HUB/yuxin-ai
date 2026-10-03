@@ -1124,7 +1124,8 @@ class AccountService(BaseService):
 
     @staticmethod
     def _ensure_account_enabled(account: Account) -> None:
-        if getattr(account, "is_deleted", False):
+        # deleted=历史不可逆注销；recycled=已删除进回收站（锁定，可恢复）——两者均禁止登录
+        if getattr(account, "is_deleted", False) or getattr(account, "is_recycled", False):
             raise FailException("账号已删除，无法登录")
         if getattr(account, "is_disabled", False):
             raise FailException("账号已被禁用")

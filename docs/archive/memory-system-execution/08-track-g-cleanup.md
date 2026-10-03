@@ -3,7 +3,7 @@
 
 > **创建日期**：2026-07-09
 > **Track**：G（旧代码清理，G1-G12）
-> **关联架构**：[01-data-models-and-write-path.md](../../01-data-models-and-write-path.md) | [02-storage-and-retrieval.md](../../02-storage-and-retrieval.md) | [00-overview.md](./00-overview.md)
+> **关联架构**：[01-data-models-and-write-path.md](../../prd/memory-system/01-data-models-and-write-path.md) | [02-storage-and-retrieval.md](../../prd/memory-system/02-storage-and-retrieval.md) | [00-overview.md](./00-overview.md)
 > **执行原则**：二开阶段，无生产数据，不做向后兼容，旧代码直接删除；每个清理任务标注执行时机（前置条件），未满足前置条件时不得提前执行。
 
 ---

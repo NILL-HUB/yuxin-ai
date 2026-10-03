@@ -142,6 +142,8 @@ class TestBuiltinToolService:
             city: str = Field(description="城市")
 
         provider_entity = SimpleNamespace(
+            # name 供 _credential_dependency(provider_entity.name) 读取（依赖联动 P1-1）
+            name="demo_provider",
             model_dump=lambda exclude=None: {"name": "demo_provider", "label": "Demo Provider"},
         )
         tool_entity = SimpleNamespace(

@@ -81,6 +81,15 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "billable": False,
     },
     {
+        "feature_key": "subtask_completion_evaluation",
+        "feature_name": "子任务完成度评估",
+        "feature_category": "routing",
+        "feature_description": "编排层兜底评审子代理回答是否真正完成子任务（仅在结果可疑时调用一次）",
+        "model_type": "chat",
+        "fallback_tier": "2",
+        "billable": False,     # 平台治理判定，用户不直接受益
+    },
+    {
         "feature_key": "public_agent_router",
         "feature_name": "公共 Agent 路由裁决",
         "feature_category": "routing",

@@ -55,6 +55,7 @@
 - **分销就是一级**：A 邀请 B、B 邀请 C，C 与 A 无关；仅按**直接下级**消费计佣。代码 `relation_of` 仅记录一条直接上级，与设计一致，**不存在「需补二级分销」的缺口**。
 - **「合伙人分身」是核心板块之一**，其完整闭环（审核 → 自定价 → 版本分发）尚未实现，是后续重点；现有的「应用商店 + A2A 调用」只是其底座。
 - 本系统不是「又一个通用 Agent 平台」；调度/编排/工具池等能力服务于上述生态赋能定位。
+- **主动式 Agent 形态的展开**（对标 Instinct 的能力取舍、目标环境差异变量、独立 App 入口决策、优劣势与警戒线、国内外水土与合规约束）见 [proactive-agent-ecosystem.md](./proactive-agent-ecosystem.md)。该文为 §1 在主动式方向的延伸，冲突时以本节形态定位为准。
 
 ---
 
@@ -398,7 +399,7 @@
 | RoutingObservabilityService | 记录调度决策、模型成本、Agent/工具选择、失败原因 | Phase 7 |
 | AdminAgentService（管理端 Agent 授权内核） | 管理端 Agent 的定义 CRUD、可下放权限白名单与三重交集授权、失权自动回收、身份对象 `AdminAgentPrincipal` | Phase 7（v7.1 新增，P1a） |
 | AdminAgentExecutionService + BoardToolExecutor（管理端 Agent 执行链路） | 板块动作注册表（未登记即拒绝）+ 按 `automation_policy` 分流（`supervised` → 变更草稿 / `autonomous` → 直接执行 / `blocked` → 熔断）+ 审计 `actor_type=agent` | Phase 7（v7.2 新增，P1b） |
-| AdminAgentBudgetGate（管理端 Agent 预算闸门） | Redis 周期键计数的执行/对话预算闸门（`daily/monthly_executions` + `daily/monthly_tokens`），超限拒绝 + 审计 `BUDGET_REJECTED`，Redis 不可用 fail-open；另有 `per_run_tokens` **单次唤醒** token 硬顶（不走周期键，在 `AdminAgentChatService._run_tool_loop` 内逐轮累计校验，超顶抛 `FailException` 中断），并把剩余额度注入 system prompt | Phase 7（v7.3 新增，P4；`per_run_tokens` 后续补充，见 [定时任务统一设计](../superpowers/specs/2026-09-26-admin-agent-schedule-unification-design.md)） |
+| AdminAgentBudgetGate（管理端 Agent 预算闸门） | Redis 周期键计数的执行/对话预算闸门（`daily/monthly_executions` + `daily/monthly_tokens`），超限拒绝 + 审计 `BUDGET_REJECTED`，Redis 不可用 fail-open；另有 `per_run_tokens` **单次唤醒** token 硬顶（不走周期键，在 `AdminAgentChatService._run_tool_loop` 内逐轮累计校验，超顶抛 `FailException` 中断），并把剩余额度注入 system prompt | Phase 7（v7.3 新增，P4；`per_run_tokens` 后续补充，见 [定时任务统一设计](../archive/superpowers-specs/2026-09-26-admin-agent-schedule-unification-design.md)） |
 | AdminMemoryReadService（管理端记忆只读视图） | 按 `MemoryOwnerKey.for_admin` 主体查询 Neo4j：规模统计 + 最近片段 + 分页 Episode；只读 + fail-open | Phase 7（v7.3 新增，P4） |
 
 > **v7.1 管理端 Agent 治理（P1a 授权内核）**：管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。授权模型为三重交集 `effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`，白名单采用**显式登记制（fail closed）**——新增权限点默认不可下放。机制细节（三层强制、权限回收、身份对象、自动化级别、表与路由）见 [RBAC 权限模型 §9](../rbac.md)。
@@ -428,7 +429,7 @@
 10. 对每个被选中 Agent，ToolCandidateCollector 根据任务、Agent 能力、允许工具类别从相关工具子池召回候选工具。
 11. ToolPolicyFilter 过滤未授权、高风险、不健康、超作用域工具。
 12. ToolRanker 在子池内和跨子池排序，CrossPoolToolSubsetBuilder 裁剪出本次 Agent 可见工具子集。
-13. RuntimeToolMountService 将工具子集转换为运行时 tools，只挂载给对应 Agent。
+13. RuntimeToolMountService 将工具子集转换为运行时 tools，只挂载给对应 Agent。（当前实现落点见 §25.1.7）
 14. 模型档位对齐：指挥官 model_tier（`1`/`2`/`3` 算力档位）+ capability 自动升级（vision→`4`，long_context→`5`），与 `public_ai_feature_config.fallback_tier`、`model_pool_config.tier` 共用同一套 `model_tier_policy.tier_code` 档位码体系。
 15. ModelGateway 从模型池和 Key 池中选择可用模型和 Key，支持管理员对 Agent 的底座模型配置。
 16. ExecutionCoordinator 执行 direct/single/multi/deep 路径，Agent 间通过 A2A 协作，工具通过统一 ToolInvoker 调用。
@@ -805,7 +806,12 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 
 > 内容已拆分至子文档，本节为标题索引。
 
-本章为整体内容，包含 8 项关键风险与应对矩阵（成本失控 / 路由不稳 / 工具误用 / 安全越权 / 响应变慢 / 结果冲突 / 过度设计 / 破坏现有功能）。
+本章为整体内容，包含 8 项关键风险与应对矩阵（成本失控 / 路由不稳 / 工具误用 / 安全越权 / 响应变慢 / 结果冲突 / 过度设计 / 破坏现有功能），以及资源删除与回收站的统一策略（21.1 见子文档）。
+
+子节索引：
+- 21.1 资源删除与回收站统一策略（跨模块，含账号 `recycled` 锁定生命周期与留存期策略）
+
+详见 [modules/05-security-risk-decisions.md](./modules/05-security-risk-decisions.md)。
 
 ## 22. Feature Flag 与回滚策略
 
@@ -866,7 +872,7 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 | 余额 | balance_credits | 用户剩余积分 |
 | 图片数量 | image_url_count | 输入模态判断 |
 | Agent 池摘要 | _build_agent_pool_summary | 轻量，仅 name+label+description+capabilities+task_keywords |
-| 模型池摘要 | _build_model_summary | 从向量索引查询，仅 model_id+name+capabilities+cost_tier |
+| 模型池摘要 | _build_model_summary | 直查 `model_pool_config`（status=active，按 tier 升序，实时数据），仅 model_id+name+capabilities+sub_pool+cost_tier+model_type |
 | 系统 Prompt | prompt_template 表 | admin 后台可编辑，YAML→DB 同步 |
 
 #### 25.1.3 输出 ConductorPlan
@@ -928,6 +934,28 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 | single_agent / multi_agent | 下游 Agent 执行成本由用户承担，正常扣费 |
 
 direct_answer 路径不调用 `CreditService.consume_for_feature`，避免双重计费（系统承担指挥官成本 + 用户承担回答成本）。
+
+#### 25.1.7 工具选择归属
+
+指挥官**不产出工具选择结果**（ConductorPlan 只含 `agents[]` 的 agent_pool / required_capabilities / model_tier），工具选择下沉到执行层：
+
+- **主链路**：`OrchestratorService.build_tool_subset(account_id, query=...)`（`ToolSelectorService`：关键词快通道 + LLM 语义兜底）产出工具子集 → `RuntimeToolMountService` 挂载。
+- **multi_agent**：每个子任务按**其自身 `description`** 调用**同一入口** `build_tool_subset`（经 `MultiAgentExecutor.subtask_tool_resolver` 注入，由 `assistant_agent_service._build_subtask_tool_resolver` 构造），逐子任务独立解析并挂载；resolver 缺失或抛错时回退主链路工具集。
+
+`build_tool_subset` 是工具选择的**唯一权威路径**，主链路 routing 与子任务自检索共用，不得引入第二套实现。指挥官决策（`ConductorService.decide`）不再自行构建工具子集，其返回的 `tool_subset` 恒为 `None`，由 `OrchestratorService.decide` 消费该决策时统一填充。
+
+**工具数量上限**来自 `cost_policy.max_tool_count`（`CostPolicyService.build_policy`：simple 3 / medium 6 / complex 10 / budget=low 4 / 余额不足 0），经 `OrchestratorService.build_tool_subset(..., max_tools=...)` 传入（为 `None`/非正数时回退默认 5）。关键词快通道的命中上限为 `min(max_tools, ToolSelectorService._MAX_KEYWORD_HITS)`（`_MAX_KEYWORD_HITS = 6`），避免「明明有关键词命中却只取 3 个」的漏选。
+
+**执行中追加工具（request_more_tools）**：子代理执行中发现现有工具不足时，可调用运行时注入的元工具 `request_more_tools`（`internal/core/agent/meta_tools/request_more_tools.py`，**不**走 builtin provider 注册体系）。它复用同一入口 `build_tool_subset` 按能力描述选择、再经 `RuntimeToolMountService` 治理加载，由 `AgentTaskExecutor._attach_meta_tools` 写回 `agent.agent_config.tools`（`FunctionCallAgent._llm_node` 每轮重读该列表，故本次执行的后续轮次即生效）；provider 由 `assistant_agent_service._build_extra_tool_provider` 构造，仅经编排层，**不经过指挥官**。工具池无匹配能力时明确告知缺什么（承接原已删除 `handle_escalation` 的「缺能力告知」语义）。
+
+#### 25.1.8 子代理未达成的上报与修复回路
+
+子代理「跑完但没做成」在历史实现中不可检测：`AgentTaskExecutor` 正常结束时恒为 `errors=[]`、`confidence=1.0`，而 `ExecutionCoordinatorService._has_failures` 只看 `errors`，导致 `plan_repairer` 永不触发。现补齐：
+
+- **零成本标记**：子代理系统提示词约定「确实无法完成时独立成行输出 `无法完成：<原因>`」（`system_prompts.yaml` 的 `agent_system_prompt_template` / `agent_system_prompt_template_no_tools`），`AgentTaskExecutor._detect_blocked` 解析出 `blocked` / `blocking_reason`。
+- **可疑补自评**：约定标记未命中、回答极短（< 20 字符）且任务描述足够具体（≥ 20 字符）时，经 `LanguageModelService.get_feature_model("subtask_completion_evaluation")` 调一次 LLM 自评（prompt key `subtask_completion_evaluator`）；自评不可用（无模型/异常）时保持原判定，不误报阻塞。
+- **判定透传**：`OrchestratedAgentResult` 新增 `blocked` / `blocking_reason` 字段与 `failed` 属性；`_has_failures`、依赖失败传播（`failed_ids`）、重试判定、全局兜底、`failed_count` 统计统一改用 `failed`。
+- **修复回路**：`ExecutionCoordinatorService` 把 `failed` 的子任务结果交给 `plan_repairer` → `ConductorService.repair_plan` 把失败原因（含 `blocking_reason`）与「是否需要升档 / 换更强的 Agent 池」写入重规划 query，由指挥官重新拆解并重跑。
 
 ### 25.2 Prompt 模板管理
 

@@ -46,6 +46,7 @@ const statusOptions = computed(() => [
   { label: t('admin.customerUsers.allStatus'), value: '' },
   { label: t('admin.customerUsers.statusActive'), value: 'active' },
   { label: t('admin.customerUsers.statusDisabled'), value: 'disabled' },
+  { label: t('admin.customerUsers.statusRecycled'), value: 'recycled' },
   { label: t('admin.customerUsers.statusDeleted'), value: 'deleted' },
 ])
 
@@ -325,6 +326,7 @@ onMounted(async () => {
             <template v-else-if="col.slotName === 'status'">
               <a-tag v-if="record.status === 'active'" size="small" color="green">{{ t('admin.customerUsers.pillActive') }}</a-tag>
               <a-tag v-else-if="record.status === 'disabled'" size="small" color="red">{{ t('admin.customerUsers.pillDisabled') }}</a-tag>
+              <a-tag v-else-if="record.status === 'recycled'" size="small" color="gold">{{ t('admin.customerUsers.pillRecycled') }}</a-tag>
               <a-tag v-else size="small" color="gray">{{ t('admin.customerUsers.pillDeleted') }}</a-tag>
               <div v-if="record.disabled_reason" class="text-xs text-gray-400 mt-1">{{ record.disabled_reason }}</div>
               <div v-if="record.deleted_reason" class="text-xs text-gray-400 mt-1">{{ record.deleted_reason }}</div>
@@ -339,6 +341,12 @@ onMounted(async () => {
             </template>
             <template v-else-if="col.slotName === 'actions'">
               <template v-if="record.status === 'deleted'">
+                <a-space wrap>
+                  <a-button size="mini" @click="copyUserId(record.id)">{{ t('admin.customerUsers.copyId') }}</a-button>
+                </a-space>
+              </template>
+              <template v-else-if="record.status === 'recycled'">
+                <div class="text-xs text-amber-600 mb-1">{{ t('admin.customerUsers.recycledHint') }}</div>
                 <a-space wrap>
                   <a-button size="mini" @click="copyUserId(record.id)">{{ t('admin.customerUsers.copyId') }}</a-button>
                 </a-space>

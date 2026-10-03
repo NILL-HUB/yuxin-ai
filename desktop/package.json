@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:3000 electron .",
     "build:ui": "npm --prefix ../ui run build:desktop",
     "stage:cua": "node scripts/stage-cua-driver.js",
     "stage:render": "node scripts/stage-render-runtime.js",
@@ -74,6 +74,9 @@
     "publish": {
       "provider": "generic",
       "url": "https://openllm.cloud/desktop-updates"
+    },
+    "releaseInfo": {
+      "releaseNotesFile": "release-notes.md"
     }
   }
 }

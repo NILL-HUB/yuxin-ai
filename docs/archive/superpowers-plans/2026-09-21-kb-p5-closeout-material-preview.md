@@ -842,7 +842,7 @@ KB-P5 行（L416）的「未落地项」括号更新为：
 L14 的「KB-P5 未开始」改为「KB-P5 已完成」：
 
 ```markdown
-- [知识库产品形态设计](prd/knowledge-base-product-form-design.md)：素材中心 / 分级解析 / 容量商业化（KB-P1、KB-P2A、KB-P2B、KB-P3 已落地；KB-P3.5–P3.8 为增量；KB-P4、KB-P5 已完成）
+- [知识库产品形态设计](../../prd/knowledge-base-product-form-design.md)：素材中心 / 分级解析 / 容量商业化（KB-P1、KB-P2A、KB-P2B、KB-P3 已落地；KB-P3.5–P3.8 为增量；KB-P4、KB-P5 已完成）
 ```
 
 - [ ] **Step 4: 接线自检（AGENTS.md 强制，逐项核对）**

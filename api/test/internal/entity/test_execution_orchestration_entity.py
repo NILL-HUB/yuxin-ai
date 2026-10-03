@@ -90,8 +90,35 @@ def test_agent_result_should_normalize_confidence_and_hide_internal_metadata():
         "tool_calls": [{"name": "search"}],
         "warnings": ["低置信度"],
         "errors": [],
+        "blocked": False,
+        "blocking_reason": "",
         "cost": {"credits": 3},
     }
+
+
+def test_agent_result_should_carry_blocked_signal():
+    """子代理主动申明「无法完成」：blocked 与原因需透传，并计入 failed 判定。"""
+    result = OrchestratedAgentResult.from_dict(
+        {
+            "agent_id": "agent-1",
+            "task_id": "task-1",
+            "answer": "无法完成：缺少必要工具",
+            "blocked": True,
+            "blocking_reason": "缺少必要工具",
+        }
+    )
+
+    assert result.blocked is True
+    assert result.blocking_reason == "缺少必要工具"
+    assert result.failed is True
+    assert result.to_user_safe_dict()["blocked"] is True
+    assert result.to_user_safe_dict()["blocking_reason"] == "缺少必要工具"
+
+
+def test_agent_result_failed_is_false_when_succeeded():
+    result = OrchestratedAgentResult(agent_id="a", task_id="t", answer="ok")
+
+    assert result.failed is False
 
 
 def test_task_plan_item_carries_model_tier_and_hint():
