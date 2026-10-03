@@ -14,6 +14,7 @@ from uuid import uuid4
 import pytest
 
 from internal.exception import NotFoundException, ValidateErrorException
+from internal.lib.websocket_manager import WebSocketManager
 from internal.model import DesktopDevice
 from internal.service import desktop_bridge_resolver as resolver
 from internal.service.desktop_device_service import (
@@ -594,3 +595,77 @@ def test_resolve_unavailable_message_selects_variant():
     assert resolver.resolve_unavailable_message("") == resolver.DESKTOP_UNAVAILABLE_MESSAGE
     assert resolver.resolve_unavailable_message(None) == resolver.DESKTOP_UNAVAILABLE_MESSAGE
     assert "指定的设备" in resolver.DESKTOP_DEVICE_OFFLINE_MESSAGE
+
+
+# ------------------------------------------------- 设备状态变更广播（设备房间）
+
+def _capture_device_emits(monkeypatch):
+    emitted = []
+    monkeypatch.setattr(
+        WebSocketManager,
+        "emit_to_device",
+        lambda self, device_id, data, event="device_notification": emitted.append(
+            (device_id, data, event)
+        ),
+    )
+    return emitted
+
+
+def test_register_emits_online_on_first_registration(monkeypatch):
+    emitted = _capture_device_emits(monkeypatch)
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+
+    _service(session).register(
+        account_id=uuid4(), device_id="dev-1", bridge_origin="http://h:1", bridge_token="t"
+    )
+
+    assert emitted and emitted[0][0] == "dev-1"
+    assert emitted[0][1]["status"] == "online"
+    assert emitted[0][2] == "device_status_changed"
+
+
+def test_register_heartbeat_does_not_emit(monkeypatch):
+    """心跳（已在线设备重复注册）不得每次广播，避免 60s 一次的通知噪音。"""
+    device = DesktopDevice(
+        device_id="dev-1", account_id=uuid4(), name="", platform="",
+        bridge_origin="http://h:1", bridge_token_encrypted=_encrypt_value("t"),
+        is_default=True, status="online",
+    )
+    emitted = _capture_device_emits(monkeypatch)
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    _service(session).register(
+        account_id=device.account_id, device_id="dev-1", bridge_origin="http://h:2", bridge_token="t2"
+    )
+
+    assert emitted == []
+
+
+def test_register_emits_when_transitioning_offline_to_online(monkeypatch):
+    device = DesktopDevice(
+        device_id="dev-1", account_id=uuid4(), name="", platform="",
+        bridge_origin="http://h:1", bridge_token_encrypted=_encrypt_value("t"),
+        is_default=True, status="offline",
+    )
+    emitted = _capture_device_emits(monkeypatch)
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    _service(session).register(
+        account_id=device.account_id, device_id="dev-1", bridge_origin="http://h:2", bridge_token="t2"
+    )
+
+    assert emitted and emitted[0][1]["status"] == "online"
+
+
+def test_revoke_emits_revoked(monkeypatch):
+    device = DesktopDevice(
+        device_id="dev-1", account_id=uuid4(), name="", platform="",
+        bridge_origin="http://h:1", bridge_token_encrypted=_encrypt_value("t"),
+        is_default=True, status="online",
+    )
+    emitted = _capture_device_emits(monkeypatch)
+    session = _SessionStub([_QueryStub(one_or_none_result=device)])
+
+    _service(session).revoke(device.account_id, "dev-1")
+
+    assert emitted and emitted[0][0] == "dev-1" and emitted[0][1]["status"] == "revoked"

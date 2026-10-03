@@ -208,6 +208,67 @@ async def handle_unsubscribe_artifact_notification(sid: str, data: dict[str, Any
         await sio.leave_room(sid, artifact_channel)
 
 
+async def handle_subscribe_device_notification(sid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """订阅设备定向通知（房间 device:<device_id>，订阅前校验设备归属）。
+
+    手机端进入某台设备后订阅该房间，接收设备状态变更与设备侧任务回执；
+    非本人设备一律拒绝（防越权订阅）。
+    """
+    from internal.extension.socketio_extension import get_socketio
+    from internal.lib.websocket_manager import device_room_key
+
+    try:
+        connection = _require_authenticated_connection(sid)
+    except UnauthorizedException as exc:
+        logging.warning("[WS] rejected device subscribe sid=%s: %s", sid, exc)
+        return {"ok": False, "error": "unauthorized"}
+
+    device_id = str((data or {}).get("device_id", "")).strip()
+    if not device_id:
+        return {"ok": False, "error": "device_id_required"}
+
+    bindable = False
+    try:
+        from app.http.module import injector
+        from internal.extension.database_extension import db
+        from internal.service.desktop_device_service import DesktopDeviceService
+
+        bindable = DesktopDeviceService(db=db).device_bindable(connection.account_id, device_id)
+    except Exception:
+        logging.warning("[WS] device subscribe ownership check failed sid=%s device=%s", sid, device_id, exc_info=True)
+    if not bindable:
+        return {"ok": False, "error": "device_not_found"}
+
+    channel = device_room_key(device_id)
+    ws_manager.subscribe_notification(sid, channel)
+    sio = get_socketio()
+    if sio is not None:
+        await sio.enter_room(sid, channel)
+    return {"ok": True, "channel": channel}
+
+
+async def handle_unsubscribe_device_notification(sid: str, data: dict[str, Any] | None = None) -> None:
+    """取消订阅设备定向通知。"""
+    from internal.extension.socketio_extension import get_socketio
+    from internal.lib.websocket_manager import device_room_key
+
+    try:
+        _require_authenticated_connection(sid)
+    except UnauthorizedException as exc:
+        logging.warning("[WS] rejected device unsubscribe sid=%s: %s", sid, exc)
+        return
+
+    device_id = str((data or {}).get("device_id", "")).strip()
+    if not device_id:
+        return
+
+    channel = device_room_key(device_id)
+    ws_manager.unsubscribe_notification(sid, channel)
+    sio = get_socketio()
+    if sio is not None:
+        await sio.leave_room(sid, channel)
+
+
 def register_socketio_handlers(socketio: Any) -> None:
     """在 Socket.IO 初始化完成后显式注册事件处理器（on 装饰器形式）。"""
     socketio.on("connect")(handle_connect)
@@ -220,3 +281,5 @@ def register_socketio_handlers(socketio: Any) -> None:
     socketio.on("unsubscribe_agent_notification")(handle_unsubscribe_agent_notification)
     socketio.on("subscribe_artifact_notification")(handle_subscribe_artifact_notification)
     socketio.on("unsubscribe_artifact_notification")(handle_unsubscribe_artifact_notification)
+    socketio.on("subscribe_device_notification")(handle_subscribe_device_notification)
+    socketio.on("unsubscribe_device_notification")(handle_unsubscribe_device_notification)

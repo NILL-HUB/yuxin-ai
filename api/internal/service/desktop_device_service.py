@@ -85,7 +85,11 @@ class DesktopDeviceService(BaseService):
             self.db.session.add(device)
             self.db.session.commit()
             logger.info("桌面设备注册成功 account=%s device=%s", account_id, device_id)
+            self._emit_device_status(device_id, "online", name=device.name)
         else:
+            # 心跳复用本接口（每 60s 一次）：只在状态发生「非在线 → 在线」跃迁时广播，
+            # 避免 60s 一次的重复推送。
+            was_online = existing.status == "online"
             self.update(
                 existing,
                 name=name or existing.name,
@@ -98,6 +102,8 @@ class DesktopDeviceService(BaseService):
             # 心跳复用本接口（桌面端定时重新注册刷新 last_seen_at），故更新路径降为
             # debug 避免刷屏；首次注册仍保留 info，保证「设备上线」可观测。
             logger.debug("桌面设备心跳/更新 account=%s device=%s", account_id, device_id)
+            if not was_online:
+                self._emit_device_status(device_id, "online", name=existing.name)
 
         return self._to_dict(existing if existing is not None else device)
 
@@ -203,7 +209,26 @@ class DesktopDeviceService(BaseService):
         if device is None:
             raise NotFoundException("设备不存在")
         self.update(device, status="revoked")
+        self._emit_device_status(device.device_id, "revoked", name=device.name)
         return True
+
+    @staticmethod
+    def _emit_device_status(device_id: str, status: str, *, name: str = "") -> None:
+        """向订阅了该设备的连接广播状态变更（设备列表实时刷新用）。
+
+        Redis/通道不可用时静默降级——该通知不承载业务语义，失败不得影响
+        注册/吊销主流程。仅在状态「跃迁」时调用（心跳不广播）。
+        """
+        try:
+            from internal.lib.websocket_manager import ws_manager
+
+            ws_manager.emit_to_device(
+                device_id,
+                {"device_id": device_id, "status": status, "name": name},
+                event="device_status_changed",
+            )
+        except Exception:
+            logger.debug("设备状态通知发送失败 device=%s status=%s", device_id, status, exc_info=True)
 
     def update_device(
         self,

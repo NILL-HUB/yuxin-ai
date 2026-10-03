@@ -18,6 +18,14 @@ class UserConnection:
     message_id: str = ""
 
 
+def device_room_key(device_id: str) -> str:
+    """设备定向通知的房间键（单一事实源：订阅端与发送端共用同一函数）。
+
+    订阅前由 handler 校验设备归属，发送端只按房间投递。
+    """
+    return f"device:{str(device_id or '').strip()}"
+
+
 class WebSocketManager:
     """WebSocket连接管理器"""
 
@@ -160,6 +168,30 @@ class WebSocketManager:
             logging.debug(f"[WS] Emitted {event} to room={user_id}")
         except Exception as e:
             logging.error(f"[WS] Failed to emit {event} to room={user_id}: {e}")
+
+    def emit_to_device(self, device_id: str, notification_data: dict, event: str = "device_notification") -> None:
+        """向订阅了指定设备的连接推送（房间 device:<device_id>）。
+
+        归属校验在订阅端（handler）完成；发送端只按房间投递，不解析账号，
+        因此设备状态变更、设备侧任务回执等事件都能定向到「正在看这台设备」的客户端。
+        Redis/通道异常一律降级为日志，不得影响调用方的业务主流程。
+        """
+        device_id = str(device_id or "").strip()
+        if not device_id:
+            return
+        from internal.extension.socketio_extension import get_redis_manager
+
+        try:
+            manager = get_redis_manager()
+        except Exception as exc:
+            logging.warning(f"[WS] RedisManager 不可用，跳过 {event} for device={device_id}: {exc}")
+            return
+
+        try:
+            manager.emit(event, notification_data, room=device_room_key(device_id))
+            logging.debug(f"[WS] Emitted {event} to room={device_room_key(device_id)}")
+        except Exception as e:
+            logging.error(f"[WS] Failed to emit {event} to device={device_id}: {e}")
 
 
 # 全局单例
