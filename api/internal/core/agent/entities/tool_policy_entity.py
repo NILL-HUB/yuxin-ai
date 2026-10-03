@@ -27,7 +27,13 @@ _DEFAULT_HIGH_RISK_TOOL_NAMES = (
     "execute_code",
     "browser_action",
     "computer_action",
+    # 会话工作区授权申请：安全根之外的目录必须经用户显式批准
+    "os_workspace_scope",
 )
+
+# 每次调用都必须用户确认的工具（不受「轮内已授权列表」与智能审批策略影响）：
+# 授权申请是不可复用的安全决策，批准目录 A 不等于批准目录 B。
+_DEFAULT_ALWAYS_CONFIRM_TOOL_NAMES = ("os_workspace_scope",)
 _DEFAULT_DANGEROUS_TOOL_NAMES = (
     "drop_table",
     "format_disk",
@@ -51,6 +57,7 @@ class ToolPolicy(BaseModel):
     image_result_tool_names: tuple[str, ...] = _DEFAULT_IMAGE_RESULT_TOOL_NAMES
     high_risk_tool_names: tuple[str, ...] = _DEFAULT_HIGH_RISK_TOOL_NAMES
     dangerous_tool_names: tuple[str, ...] = _DEFAULT_DANGEROUS_TOOL_NAMES
+    always_confirm_tool_names: tuple[str, ...] = _DEFAULT_ALWAYS_CONFIRM_TOOL_NAMES
 
     @staticmethod
     def _normalize_tool_name(tool_name: str | None) -> str:
@@ -77,6 +84,14 @@ class ToolPolicy(BaseModel):
     def is_high_risk_tool(self, tool_name: str | None) -> bool:
         normalized = self._normalize_tool_name(tool_name)
         return bool(normalized and normalized in self.high_risk_tool_names)
+
+    def always_requires_confirmation(self, tool_name: str | None) -> bool:
+        """每次调用都必须用户确认（不受轮内已授权列表/智能审批影响）。
+
+        用于授权申请类工具：批准一次目录 A 不能顺带放行目录 B。
+        """
+        normalized = self._normalize_tool_name(tool_name)
+        return bool(normalized and normalized in self.always_confirm_tool_names)
 
     def requires_confirmation(self, tool_name: str | None, tool_input: dict | None = None) -> bool:
         """本次工具调用是否需要用户确认（比 is_high_risk_tool 更细：按入参分档）。

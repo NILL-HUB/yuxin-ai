@@ -552,12 +552,22 @@ class FunctionCallAgent(BaseAgent):
                         or getattr(state, "user_id", None)
                         or getattr(state, "account_id", None)
                     )
-                    already_authorized = tool_call["name"] in authorized_tools
-                    if not already_authorized and self._smart_approval_allows(
-                        tool_call["name"],
-                        tool_input=tool_call.get("args") or {},
+                    always_confirm = tool_policy.always_requires_confirmation(
+                        tool_call["name"]
+                    )
+                    already_authorized = (
+                        tool_call["name"] in authorized_tools and not always_confirm
+                    )
+                    if (
+                        not already_authorized
+                        and not always_confirm
+                        and self._smart_approval_allows(
+                            tool_call["name"],
+                            tool_input=tool_call.get("args") or {},
+                        )
                     ):
-                        authorized_tools.append(tool_call["name"])
+                        if not tool_policy.always_requires_confirmation(tool_call["name"]):
+                            authorized_tools.append(tool_call["name"])
                         already_authorized = True
                     if not already_authorized:
                         confirmation = self._create_tool_confirmation(
@@ -832,6 +842,11 @@ class FunctionCallAgent(BaseAgent):
     @staticmethod
     def _build_confirmation_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
         """生成用户可见的授权摘要，避免把原始 Markdown/JSON 直接铺到卡片上。"""
+        if tool_name == "os_workspace_scope":
+            path = str((tool_input or {}).get("path") or "").strip()
+            reason = str((tool_input or {}).get("reason") or "").strip()
+            summary = f"Agent 申请本会话内访问目录：{path}"
+            return f"{summary}（原因：{reason}）" if reason else summary
         return f"请求授权调用高风险工具 {tool_name}，授权后 Agent 才会继续执行。"
 
     @staticmethod

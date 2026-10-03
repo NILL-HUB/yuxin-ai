@@ -546,12 +546,25 @@ class SkillSandboxExecutor:
 
     @staticmethod
     def _terminate_process_group(process: subprocess.Popen) -> None:
-        """强杀整个子进程组（含其 fork 出的后代），并回收。"""
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+        """强杀整个子进程组（含其 fork 出的后代），并回收。
+
+        Windows 没有 killpg/getpgid（此前超时分支会在此抛 AttributeError，
+        导致子进程与临时目录泄漏），改用 taskkill /T 终止整棵进程树。
+        """
+        if os.name == "nt":
             with contextlib.suppress(Exception):
-                process.kill()
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    capture_output=True,
+                    check=False,
+                )
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        with contextlib.suppress(Exception):
+            process.kill()
         with contextlib.suppress(Exception):
             process.wait(timeout=5)
 

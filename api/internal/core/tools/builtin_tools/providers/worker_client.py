@@ -10,9 +10,38 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _inject_session_scopes(payload: dict[str, Any]) -> dict[str, Any]:
+    """注入会话工作区授权目录（payload.session_scopes）。
+
+    授权来源：用户在会话内经 os_workspace_scope 批准过的目录（SessionScopeService）。
+    所有本机工具统一经本函数获得授权，worker 侧按「安全根 ∪ 会话授权根」校验。
+    查询失败按无授权处理（fail-closed：宁可在安全根内受限，也不放宽边界）。
+    """
+    session_id = str(payload.get("session_id") or "").strip()
+    account_id = payload.get("requester")
+    if not session_id or not account_id:
+        return payload
+    try:
+        from app.http.module import injector
+        from internal.service.session_scope_service import SessionScopeService
+
+        roots = injector.get(SessionScopeService).list_active_roots(
+            account_id=account_id, session_id=session_id
+        )
+    except Exception:
+        logger.warning("查询会话工作区授权失败（按无授权执行）", exc_info=True)
+        return payload
+    if not roots:
+        return payload
+    return {**payload, "session_scopes": roots}
 
 
 def call_host_worker(
@@ -37,23 +66,37 @@ def call_host_worker(
         timeout: urllib 超时（秒）；执行类端点应大于命令自身的超时。
     """
     from internal.service.desktop_bridge_resolver import (
-        DESKTOP_UNAVAILABLE_MESSAGE,
         resolve_desktop_bridge,
+        resolve_unavailable_message,
     )
     from internal.service.tool_credential_resolver import get_tool_credential
 
+    payload = _inject_session_scopes(payload)
+
+    # 0.会话绑定的设备（可选）：非空时只解析该设备，不回退静态配置——避免
+    #   「指定设备」语义下静默换到别的机器执行。
+    requested_device = str(payload.get("device_id") or "").strip()
+
     # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
-    resolved = resolve_desktop_bridge(payload.get("requester"), purpose=purpose)
+    resolved = resolve_desktop_bridge(
+        payload.get("requester"),
+        purpose=purpose,
+        device_id=requested_device or None,
+    )
     if resolved:
         bridge_url, bridge_token = resolved
         endpoint = bridge_url.rstrip("/") + purpose
         token = bridge_token
+    elif requested_device:
+        # 指定设备不可用（离线/已解绑）：不回退静态配置，且不使用「无桌面设备」特化文案
+        # （computer_control/browser 的 unavailable_error 是“去装桌面端”语义，此处不适用）
+        return {"ok": False, "error": resolve_unavailable_message(requested_device)}
     else:
         # 2.回退静态配置（独立 worker / 容器内 worker）
         endpoint = get_tool_credential(static_url_env)
         token = get_tool_credential(static_token_env)
     if not endpoint or not token:
-        return {"ok": False, "error": unavailable_error or DESKTOP_UNAVAILABLE_MESSAGE}
+        return {"ok": False, "error": unavailable_error or resolve_unavailable_message(requested_device)}
     url = endpoint if endpoint.rstrip("/").endswith(purpose) else endpoint.rstrip("/") + purpose
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request = urllib.request.Request(

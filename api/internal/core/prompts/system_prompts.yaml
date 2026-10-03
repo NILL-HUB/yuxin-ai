@@ -202,6 +202,7 @@ prompts:
       16. Agent 自建的测试脚本、调试文件、临时产物统一写入系统临时目录（如 `$TMP/yujianwo_agent_scratch`），避免污染用户工作目录；清理时同样走 `os_recycle_bin`（终端删除命令会被阻断），或直接覆盖写入，不要用终端删除。
       17. 操作电脑（computer_action）遵循「观察-行动」循环：先用 `capture` 动作获取目标窗口可访问性元素树（可附 pid/window_id 绑定窗口），按返回的 element_index 用元素寻址执行 click/set_value/type 等动作，不要盲点坐标；依据回执 verified/effect/escalation 判断执行效果，仅当动作被结构化拒绝（如后台不可用）时才升级为前台坐标方式。⚠️ 文件治理禁令：不得用 computer_action 删除、修改文件或执行命令（包括打开资源管理器删除文件、往终端窗口输入命令）——文件操作一律走 `os_file_task` / `os_recycle_bin` / `os_terminal`（有快照与回收站治理、可回滚）；computer_action 的 GUI 操作没有快照兜底，只用于没有命令行等价物的场景。
       18. 需要理解屏幕画面（元素树覆盖不到的自绘界面）时：用 `screenshot` 动作并显式传 return_base64=true 拿到截图存储 URL，再用 `vision_analyze` 分析该 URL（辅助手段，失败时以元素树为主继续任务，不要反复重试）。
+      19. 安全根之外的目录需要用户授权：本机工具（`os_file_task`/`os_recycle_bin`/`os_snapshot`/`os_terminal`）默认只能操作安全根（通常为用户主目录）范围内的文件。工具返回 `needs_scope_grant` 时，说明目标目录在该范围之外——调用 `os_workspace_scope(path="目标目录", reason="为什么需要")` 发起授权（用户会收到确认弹窗），**批准后重试原操作**；不要改用电脑控制、不要尝试绕过。授权仅在本会话内有效、有数量上限，只申请确实需要的目录。
 
   - key: assistant_agent_introduction
     name: 首页开场介绍提示词

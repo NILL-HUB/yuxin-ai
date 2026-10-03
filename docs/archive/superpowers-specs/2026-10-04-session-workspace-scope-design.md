@@ -1,6 +1,6 @@
 # 会话级工作区授权（Session Workspace Scope）设计
 
-> 状态：**设计稿，未实现**（2026-10-04）。解决「文件三件套被静态安全根挡住、GUI 却整机可达」的覆盖缺口。
+> 状态：**已落地**（2026-10-04 设计并实现，落地记录见文末）。解决「文件三件套被静态安全根挡住、GUI 却整机可达」的覆盖缺口。
 > 关联：[08-os-automation.md §治理模型矩阵](../../prd/modules/08-os-automation.md)
 
 ## 问题陈述
@@ -83,3 +83,16 @@ Agent 调用三件套，working_dir 超出（安全根 ∪ 已授权根）
 worker：`_resolve_allowed_roots` + scope 级快照/回收站根解析（改动集中在 `_resolve_safe_root`
 与其调用方）；测试与文档同步。建议拆分：worker 侧能力先行（scope 校验 + 快照同构）→
 平台授权流 → 前端弹窗。
+
+## 落地记录（2026-10-04）
+
+| 层 | 产物 |
+| --- | --- |
+| worker（硬边界） | `_allowed_scope_roots`（payload.session_scopes 校验：绝对路径/存在/是目录/上限 16）、`_resolve_scope_context` / `_root_for_path` / `_scope_denied_response`；`/file` `/recycle` `/snapshot` `/exec` 全部接线——未授权越界返回 `{ok:false, needs_scope_grant:true, path, message}`（不再静默回退）；回收站按**文件所属根**分别入站；快照/回滚 manifest 落操作根（授权根内自成一套）；快照额外根范围限定在允许集合内 |
+| 平台-存储 | `session_workspace_scope` 表（account+session+root 唯一，status/expires_at/granted_via）+ 迁移 `f1a2b3c4d5e6`（down_revision=d5f6a7b8c9e0，单 head） |
+| 平台-服务 | `SessionScopeService`：grant（幂等刷新、上限 8、绝对路径校验、TTL 12h）/ list_active_roots / list_scopes / revoke |
+| 平台-注入 | `worker_client.call_host_worker` 单点注入 `session_scopes`（四工具自动获得，查询失败按无授权 fail-closed） |
+| 平台-授权流 | 新工具 `os_workspace_scope`（高风险 + `always_confirm_tool_names` 每次必确认，不受轮内放行/智能审批影响）；确认摘要显示目标目录与原因；系统提示词规则 19 |
+| 测试 | worker +4（授权可用/未授权 needs_scope_grant/回收站按根/幽灵条目忽略/补丁越界拒绝/缺目录语义）、工具 +8、真机端到端（exec/patch/recycle 在授权根内全部可用且可回滚） |
+
+**语义变化（有意为之）**：`working_dir` 指向"存在但未授权"的目录时，从「静默回退安全根」改为「拒绝 + needs_scope_grant」——避免在错误目录执行命令；不存在的目录仍宽容回退。

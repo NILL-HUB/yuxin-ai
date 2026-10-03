@@ -143,6 +143,126 @@ def _is_path_within(root: str, candidate: str) -> bool:
     return resolved == root or resolved.startswith(root + os.sep)
 
 
+def _allowed_scope_roots(payload: dict[str, Any]) -> list[str]:
+    """允许操作的根目录集合 = 静态安全根 + 会话授权根（payload.session_scopes）。
+
+    会话授权根来自平台侧「用户批准的会话工作区」（见
+    docs/superpowers/specs/2026-10-04-session-workspace-scope-design.md）：
+    worker 信任 payload（平台为可信方、token 鉴权 + 本机回环），但只接受
+    「绝对路径、真实存在、是目录」的条目，最多 16 个。
+    """
+    roots = [_resolve_safe_root(str(payload.get("safe_root") or "").strip())]
+    scopes = payload.get("session_scopes")
+    if not isinstance(scopes, list):
+        return roots
+    for entry in scopes[:16]:
+        raw = str(entry or "").strip()
+        if not raw:
+            continue
+        try:
+            resolved = str(Path(raw).expanduser().resolve())
+        except OSError:
+            continue
+        if not os.path.isabs(resolved) or not os.path.isdir(resolved):
+            continue
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def _match_allowed_root(path: str, allowed_roots: list[str]) -> str | None:
+    """返回包含 path 的允许根（无匹配返回 None）。"""
+    for root in allowed_roots:
+        if _is_path_within(root, path):
+            return root
+    return None
+
+
+def _resolve_allowed_working_dir(
+    requested: str, allowed_roots: list[str]
+) -> tuple[str, dict[str, Any] | None]:
+    """把请求的工作目录解析到允许根集合内。
+
+    返回 (生效工作目录, 拒绝信息)：
+    - 未指定 → 静态安全根（allowed_roots[0]）；
+    - 命中某个允许根（含安全根）→ 请求目录自身；
+    - 真实存在但不在允许集合内 → 回退安全根并返回 needs_scope_grant
+      （Agent 应经 os_workspace_scope 请求用户授权后重试）；
+    - 不存在（typo 等）→ 宽容回退安全根，附 missing_path 说明。
+    """
+    base = allowed_roots[0]
+    raw = str(requested or "").strip()
+    if not raw:
+        return base, None
+    try:
+        resolved = str(Path(raw).expanduser().resolve())
+    except OSError:
+        resolved = raw
+    if _match_allowed_root(resolved, allowed_roots):
+        return resolved, None
+    if os.path.exists(resolved):
+        return base, {
+            "needs_scope_grant": True,
+            "requested_path": resolved,
+            "message": (
+                f"目录 {resolved} 不在当前会话的允许范围内（安全根与会话授权根之外）。"
+                "如需在该目录操作，请先调用 os_workspace_scope 请求用户授权该目录"
+                "（用户会收到授权确认），批准后重试本操作；不要改用电脑控制或绕过。"
+            ),
+        }
+    return base, {
+        "missing_path": resolved,
+        "message": f"目录 {resolved} 不存在，已回退到默认根 {base}。",
+    }
+
+
+def _resolve_scope_context(
+    payload: dict[str, Any],
+) -> tuple[str, str, list[str], dict[str, Any] | None]:
+    """解析会话作用域上下文，返回 (操作根, 工作目录, 允许根集合, 拒绝信息)。
+
+    操作根 = 包含工作目录的允许根（安全根或会话授权根）——快照/回收站 manifest
+    与路径校验以它为基点；工作目录 = 请求目录自身（在允许集合内时），否则回退
+    操作根。拒绝信息为 needs_scope_grant 时，调用方用 _scope_denied_response
+    转成结构化响应返回（不执行）。
+    """
+    allowed_roots = _allowed_scope_roots(payload)
+    working_dir, denied = _resolve_allowed_working_dir(
+        str(payload.get("working_dir") or "").strip(), allowed_roots
+    )
+    root = _match_allowed_root(working_dir, allowed_roots) or allowed_roots[0]
+    return root, working_dir, allowed_roots, denied
+
+
+def _root_for_path(path: str, working_dir: str, allowed_roots: list[str]) -> str:
+    """路径所属的允许根（相对路径按 working_dir 解析）；无匹配时回退工作目录所在根。
+
+    用于让 read/list/search 等"目标路径可能与工作目录不同根"的操作在会话授权
+    范围内跨根工作（如 cwd 在安全根、读取某授权根内的文件）。
+    """
+    try:
+        resolved = _normalize_resolved_path(path, working_dir)
+    except OSError:
+        resolved = path
+    matched = _match_allowed_root(resolved, allowed_roots)
+    if matched:
+        return matched
+    return _match_allowed_root(working_dir, allowed_roots) or allowed_roots[0]
+
+
+def _scope_denied_response(denied: dict[str, Any] | None) -> dict[str, Any] | None:
+    """needs_scope_grant 时构造统一的结构化拒绝响应（其余情况返回 None 继续执行）。"""
+    if denied and denied.get("needs_scope_grant"):
+        return {
+            "ok": False,
+            "needs_scope_grant": True,
+            "path": denied.get("requested_path", ""),
+            "error": denied.get("message", ""),
+            "message": denied.get("message", ""),
+        }
+    return None
+
+
 def _normalize_op_path(workdir: str, path: str) -> str:
     """V4A 补丁操作路径的规范形态（真实 apply 与 dry-run 共用）。
 
@@ -670,11 +790,10 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
     回滚，因此不再要求 approval_token 逐次确认。
     """
     op = str(payload.get("op") or "").strip().lower()
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
-    working_dir = str(payload.get("working_dir") or "").strip()
-    if not working_dir:
-        working_dir = root
-    working_dir = _resolve_safe_root(working_dir)
+    root, working_dir, allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
 
     if op == "read":
         path = str(payload.get("path") or "").strip()
@@ -682,7 +801,7 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "error": "path 不能为空"}
         result = _file_safe_read(
             path,
-            working_dir,
+            _root_for_path(path, working_dir, allowed_roots),
             offset=payload.get("offset", 0),
             limit=payload.get("limit", 0),
         )
@@ -690,13 +809,22 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
 
     if op == "list":
         path = str(payload.get("path") or "").strip() or working_dir
-        result = _file_list_dir(path, working_dir, limit=int(payload.get("limit") or 0))
+        result = _file_list_dir(
+            path,
+            _root_for_path(path, working_dir, allowed_roots),
+            limit=int(payload.get("limit") or 0),
+        )
         return result
 
     if op == "search":
         pattern = str(payload.get("pattern") or "").strip()
         path = str(payload.get("path") or "").strip()
-        result = _file_search(pattern, root, working_dir, path=path)
+        result = _file_search(
+            pattern,
+            _root_for_path(path or working_dir, working_dir, allowed_roots),
+            working_dir,
+            path=path,
+        )
         return result
 
     if op == "patch":
@@ -855,9 +983,15 @@ def _path_size(path: Path) -> int:
 
 
 def _safe_delete(payload: dict[str, Any]) -> dict[str, Any]:
-    """把本机文件/目录移入回收站并记录清单，不执行物理删除。"""
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
-    root_path = Path(root)
+    """把本机文件/目录移入回收站并记录清单，不执行物理删除。
+
+    每个目标文件进**其所属允许根**（安全根或会话授权根）下的回收站——
+    一次批量删除可跨多个已授权目录，各自可独立恢复。
+    """
+    root, working_dir, allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     recycle = _recycle_root(root)
     paths = payload.get("paths") or []
     if not isinstance(paths, list) or not paths:
@@ -874,7 +1008,7 @@ def _safe_delete(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         entry = _delete_into_recycle(
             raw_path,
-            root,
+            _root_for_path(raw_path, working_dir, allowed_roots),
             reason=reason,
             task_id=task_id,
             retention_days=retention_days,
@@ -939,7 +1073,10 @@ def _delete_into_recycle(
 
 
 def _list_recycle(payload: dict[str, Any]) -> dict[str, Any]:
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    root, _working_dir, _allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     entries = _read_recycle_manifest(root)
     keyword = str(payload.get("keyword") or "").strip().lower()
     task_id = str(payload.get("task_id") or "").strip()
@@ -990,7 +1127,10 @@ def _restore_single_recycle_entry(
 
 
 def _restore_recycle(payload: dict[str, Any]) -> dict[str, Any]:
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    root, _working_dir, _allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     entry_id = str(payload.get("entry_id") or "").strip()
     original_path = str(payload.get("path") or "").strip()
     task_id_filter = str(payload.get("task_id") or "").strip()
@@ -1065,7 +1205,10 @@ def _purge_recycle(payload: dict[str, Any]) -> dict[str, Any]:
     支持指定 ``entry_id`` 精确清理单条（平台回收站到期销毁时携带）；
     未指定时批量清理所有已过期条目。
     """
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    root, _working_dir, _allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     now = time.time()
     entry_id = str(payload.get("entry_id") or "").strip()
     entries = _read_recycle_manifest(root)
@@ -1433,15 +1576,17 @@ def _do_rollback_entry(
 
 def _rollback_file(payload: dict[str, Any]) -> dict[str, Any]:
     """按路径回滚单文件（可选 snapshot_id 精确回滚到指定版本）。"""
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
-    working_dir = str(payload.get("working_dir") or "").strip() or root
-    working_dir = _resolve_safe_root(working_dir)
+    root, working_dir, allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     path = str(payload.get("path") or "").strip()
     snapshot_id = str(payload.get("snapshot_id") or "").strip()
     if not path:
         return {"ok": False, "error": "path 不能为空"}
     resolved = _normalize_resolved_path(path, working_dir)
-    if not _is_path_within(root, resolved):
+    # 路径校验用允许集合（安全根 ∪ 会话授权根）；manifest 基点仍是操作根
+    if not _match_allowed_root(resolved, allowed_roots):
         return {"ok": False, "error": "路径超出允许目录"}
 
     # 先取目标路径锁，再短持快照 manifest 锁：与 apply（路径锁外层）保持同一
@@ -1500,7 +1645,10 @@ def _rollback_turn(payload: dict[str, Any]) -> dict[str, Any]:
     写操作发生前的状态）逐一写回。逐文件持路径锁再短持 manifest 锁，锁序与
     _rollback_file / apply 一致。
     """
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    root, _working_dir, _allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     turn = str(payload.get("conversation_turn") or "").strip()
     if not turn:
         return {"ok": False, "error": "conversation_turn 不能为空"}
@@ -1584,9 +1732,10 @@ def _rollback_turn(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _list_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
-    working_dir = str(payload.get("working_dir") or "").strip() or root
-    working_dir = _resolve_safe_root(working_dir)
+    root, working_dir, _allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     path = str(payload.get("path") or "").strip()
     turn = str(payload.get("conversation_turn") or "").strip()
     try:
@@ -1676,7 +1825,10 @@ def _gc_snapshots(safe_root: str) -> dict[str, Any]:
 
 def _snapshot_operation(payload: dict[str, Any]) -> dict[str, Any]:
     """/snapshot 端点调度：rollback_file / rollback_turn / list_snapshots。"""
-    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    root, _working_dir, _allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     op = str(payload.get("op") or "").strip().lower()
     if op in {"rollback_file", "rollback_turn"}:
         try:
@@ -2326,19 +2478,22 @@ _TRAILING_PUNCT_RE = re.compile(r"[.,;:)\]}>'\"]+$")
 _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT = 8
 
 
-def _collect_exec_snapshot_roots(command: str, cwd: str, safe_root: str) -> list[str]:
+def _collect_exec_snapshot_roots(command: str, cwd: str, allowed_roots: list[str]) -> list[str]:
     """收集本次执行需要纳入写前快照的目录根。
 
-    cwd 之外：命令文本中出现的、安全根内**真实存在**的绝对路径（Windows 盘符形式与
-    GitBash 的 /d/... 形式）取其最近存在祖先目录。用于覆盖「一条命令顺手改了 cwd 之外
-    的文件」的场景——快照/回滚范围必须跟随 Agent 的实际写入面，而不是只盯 cwd。
-    cwd 内的路径天然被 cwd 扫描覆盖，自动去重；上限 _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT。
+    cwd 之外：命令文本中出现的、**允许集合内**（安全根 ∪ 会话授权根）真实存在的绝对
+    路径（Windows 盘符形式与 GitBash 的 /d/... 形式）取其最近存在祖先目录。用于覆盖
+    「一条命令顺手改了 cwd 之外的文件」的场景——快照/回滚范围必须跟随 Agent 的实际
+    写入面，而不是只盯 cwd。cwd 内的路径天然被 cwd 扫描覆盖，自动去重；
+    上限 _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT。
     """
     roots: list[str] = [cwd]
     seen = {cwd}
 
     def _add_target(target: str) -> None:
-        if not target or _is_path_within(cwd, target) or not _is_path_within(safe_root, target):
+        if not target or _is_path_within(cwd, target):
+            return
+        if not _match_allowed_root(target, allowed_roots):
             return
         if target not in seen and len(roots) < _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT:
             seen.add(target)
@@ -2527,7 +2682,12 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     command = str(payload.get("command") or "").strip()
     # 默认 gitbash（Unix 语法对模型更友好）；不可用时返回可读错误并提示改用 cmd
     shell = str(payload.get("shell") or "gitbash").strip().lower() or "gitbash"
-    root = _resolve_safe_root(str(payload.get("working_dir") or "").strip())
+    # root = 操作根（manifest/校验基点，安全根或会话授权根）；
+    # working_dir = 真实 cwd（请求目录自身，在允许集合内时）
+    root, working_dir, allowed_roots, denied = _resolve_scope_context(payload)
+    denied_response = _scope_denied_response(denied)
+    if denied_response:
+        return denied_response
     try:
         timeout_seconds = int(
             payload.get("timeout_seconds") or TERMINAL_DEFAULT_TIMEOUT_SECONDS
@@ -2541,7 +2701,7 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     if len(command) > TERMINAL_MAX_COMMAND_CHARS:
         return {"ok": False, "error": f"命令过长（上限 {TERMINAL_MAX_COMMAND_CHARS} 字符）"}
 
-    blocked = _find_blocked_delete(command, cwd=root)
+    blocked = _find_blocked_delete(command, cwd=working_dir)
     if blocked:
         return {
             "ok": False,
@@ -2555,15 +2715,14 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     if executable is None:
         return {"ok": False, "error": error, "shell": shell}
 
-    # 写前快照（fail-closed）：范围 = cwd + 命令引用的安全根内目录（覆盖 cwd 外写入）；
-    # manifest 统一落安全根。快照失败说明环境异常（磁盘满/权限），此时拒绝执行，
-    # 保证「执行过的命令都可回滚」。
-    safe_root = _resolve_safe_root("")
-    snapshot_roots = _collect_exec_snapshot_roots(command, root, safe_root)
+    # 写前快照（fail-closed）：范围 = cwd + 命令引用的允许集合内目录（覆盖 cwd 外写入）；
+    # manifest 落 cwd 所在的操作根（安全根或会话授权根）。快照失败说明环境异常
+    # （磁盘满/权限），此时拒绝执行，保证「执行过的命令都可回滚」。
+    snapshot_roots = _collect_exec_snapshot_roots(command, working_dir, allowed_roots)
     try:
         snapshot_report, before_state = _snapshot_exec_tree_before(
             snapshot_roots,
-            safe_root=safe_root,
+            safe_root=root,
             session_id=str(payload.get("session_id") or ""),
             conversation_turn=str(payload.get("conversation_turn") or ""),
         )
@@ -2596,7 +2755,7 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         proc = subprocess.Popen(
             args,
-            cwd=root,
+            cwd=working_dir,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2633,7 +2792,7 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
             else:
                 merged_after.update(after_one[0])
                 _exec_tree_state[scan_root] = after_one[0]
-    changes = _diff_exec_tree(before_state, merged_after or None, root=root)
+    changes = _diff_exec_tree(before_state, merged_after or None, root=working_dir)
 
     result: dict[str, Any] = {
         "ok": (not timed_out) and exit_code == 0,
@@ -2641,7 +2800,7 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
         "stdout": stdout,
         "stderr": stderr,
         "shell": shell,
-        "cwd": root,
+        "cwd": working_dir,
         "duration_ms": duration_ms,
         "truncated": out_truncated or err_truncated,
         "snapshot": snapshot_report,

@@ -290,8 +290,8 @@ def test_exec_rejects_empty_command(tmp_path, monkeypatch):
     assert result.get("blocked") is not True
 
 
-def test_exec_working_dir_outside_safe_root_falls_back(tmp_path, monkeypatch):
-    """working_dir 越界时回退安全根（不报错、不逃逸）。"""
+def test_exec_working_dir_outside_allowed_returns_needs_scope_grant(tmp_path, monkeypatch):
+    """存在但未授权的目录：拒绝执行并返回 needs_scope_grant（引导走授权流），不静默回退。"""
     safe = tmp_path / "safe"
     safe.mkdir()
     outside = tmp_path / "outside"
@@ -307,8 +307,106 @@ def test_exec_working_dir_outside_safe_root_falls_back(tmp_path, monkeypatch):
         }
     )
 
+    assert result["ok"] is False
+    assert result["needs_scope_grant"] is True
+    assert os.path.normcase(result["path"]) == os.path.normcase(str(outside))
+    assert "os_workspace_scope" in result["message"]
+
+
+def test_exec_working_dir_missing_inside_allowed_reports_start_failure(tmp_path, monkeypatch):
+    """允许范围内但不存在的目录：明确报错——绝不在"以为的目标目录"之外的目录执行命令。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+
+    result = _exec_operation(
+        {
+            "command": "echo x",
+            "shell": _native_shell(),
+            "working_dir": str(tmp_path / "not-exists"),
+            "timeout_seconds": 20,
+        }
+    )
+
+    assert result["ok"] is False
+    assert "not-exists" in str(result.get("error") or "") or "启动命令失败" in str(
+        result.get("error") or ""
+    )
+
+
+def test_exec_working_dir_missing_outside_allowed_falls_back(tmp_path, monkeypatch):
+    """允许范围外且不存在（typo 到别处）：宽容回退安全根，不触发授权流。"""
+    safe = tmp_path / "safe"
+    safe.mkdir()
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(safe))
+
+    result = _exec_operation(
+        {
+            "command": "echo x",
+            "shell": _native_shell(),
+            "working_dir": str(tmp_path / "nope"),
+            "timeout_seconds": 20,
+        }
+    )
+
     assert result["ok"] is True
-    assert result["cwd"] == str(safe)
+    assert os.path.normcase(result["cwd"]) == os.path.normcase(str(safe))
+
+
+def test_exec_authorized_scope_allows_outside_dir(tmp_path, monkeypatch):
+    """payload.session_scopes 携带用户授权的目录 → 会话工作区授权生效、快照/回滚同根。"""
+    safe = tmp_path / "safe"
+    safe.mkdir()
+    granted = tmp_path / "granted"
+    granted.mkdir()
+    target = granted / "doc.txt"
+    target.write_text("original", encoding="utf-8")
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(safe))
+
+    result = _exec_operation(
+        {
+            "command": f'echo changed > "{target}"',
+            "shell": _native_shell(),
+            "working_dir": str(granted),
+            "session_scopes": [str(granted)],
+            "conversation_turn": "scope-turn-1",
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert os.path.normcase(result["cwd"]) == os.path.normcase(str(granted))
+    assert result["snapshot"]["status"] == "captured"
+
+    rollback = _rollback_file(
+        {
+            "path": str(target),
+            "working_dir": str(granted),
+            "session_scopes": [str(granted)],
+        }
+    )
+    assert rollback["ok"] is True, rollback
+    assert target.read_text(encoding="utf-8") == "original"
+
+
+def test_exec_scope_entries_must_be_existing_dirs(tmp_path, monkeypatch):
+    """授权根条目必须是真实存在的目录：不存在/文件的条目被忽略（不放宽边界）。"""
+    from scripts.os_automation_worker import _allowed_scope_roots
+
+    safe = tmp_path / "safe"
+    safe.mkdir()
+    not_dir = tmp_path / "plain.txt"
+    not_dir.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(safe))
+
+    roots = _allowed_scope_roots(
+        {
+            "session_scopes": [
+                str(tmp_path / "ghost"),
+                str(not_dir),
+                str(safe),  # 与安全根重复 → 去重
+            ]
+        }
+    )
+
+    assert roots == [str(safe)]
 
 
 def test_exec_nonzero_exit_code_reported(tmp_path, monkeypatch):
@@ -647,20 +745,20 @@ def test_collect_snapshot_roots_extracts_referenced_dirs(tmp_path, monkeypatch):
     (other / "x.txt").write_text("x", encoding="utf-8")
 
     roots = _collect_exec_snapshot_roots(
-        f'copy "C:\nonexistent\zz.txt" "{other / "x.txt"}"', str(cwd), str(tmp_path)
+        f'copy "C:\nonexistent\zz.txt" "{other / "x.txt"}"', str(cwd), [str(tmp_path)]
     )
     assert roots[0] == str(cwd)
     assert str(other) in roots
 
     # cwd 内路径已被 cwd 扫描覆盖，不重复收录
     roots2 = _collect_exec_snapshot_roots(
-        f'echo hi > "{cwd / "y.txt"}"', str(cwd), str(tmp_path)
+        f'echo hi > "{cwd / "y.txt"}"', str(cwd), [str(tmp_path)]
     )
     assert roots2 == [str(cwd)]
 
     # 安全根之外的一律不收（治理下限不放宽）
     roots3 = _collect_exec_snapshot_roots(
-        'type "C:\Windows\win.ini"', str(cwd), str(tmp_path)
+        'type "C:\Windows\win.ini"', str(cwd), [str(tmp_path)]
     )
     assert roots3 == [str(cwd)]
 
@@ -731,3 +829,107 @@ def test_exec_no_recovery_hint_on_success(tmp_path, monkeypatch):
     assert result["ok"] is True
     assert result["changes"]["created_count"] == 1
     assert "recovery_hint" not in result
+
+
+def test_recycle_delete_uses_owning_root_across_scopes(tmp_path, monkeypatch):
+    """批量删除跨安全根与会话授权根：各自进所属根回收站，均可独立恢复。"""
+    from scripts.os_automation_worker import _recycle_operation
+
+    safe = tmp_path / "safe"
+    safe.mkdir()
+    granted = tmp_path / "granted"
+    granted.mkdir()
+    inside = safe / "a.txt"
+    inside.write_text("a", encoding="utf-8")
+    outside = granted / "b.txt"
+    outside.write_text("b", encoding="utf-8")
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(safe))
+    scopes = [str(granted)]
+
+    deleted = _recycle_operation(
+        {
+            "op": "delete",
+            "paths": [str(inside), str(outside)],
+            "working_dir": str(safe),
+            "session_scopes": scopes,
+        }
+    )
+
+    assert deleted["ok"] is True, deleted
+    assert len(deleted["entries"]) == 2
+    assert not inside.exists() and not outside.exists()
+
+    by_name = {os.path.basename(e["original_path"]): e for e in deleted["entries"]}
+    restored_safe = _recycle_operation(
+        {"op": "restore", "entry_id": by_name["a.txt"]["entry_id"], "working_dir": str(safe)}
+    )
+    restored_granted = _recycle_operation(
+        {
+            "op": "restore",
+            "entry_id": by_name["b.txt"]["entry_id"],
+            "working_dir": str(granted),
+            "session_scopes": scopes,
+        }
+    )
+
+    assert restored_safe["ok"] is True, restored_safe
+    assert restored_granted["ok"] is True, restored_granted
+    assert inside.read_text(encoding="utf-8") == "a"
+    assert outside.read_text(encoding="utf-8") == "b"
+
+
+def test_file_patch_inside_authorized_scope(tmp_path, monkeypatch):
+    """os_file_task 补丁在会话授权根内可用：校验、快照、回滚同一根。"""
+    from scripts.os_automation_worker import _file_operation
+
+    safe = tmp_path / "safe"
+    safe.mkdir()
+    granted = tmp_path / "granted"
+    granted.mkdir()
+    target = granted / "cfg.txt"
+    target.write_text("old-line\n", encoding="utf-8")
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(safe))
+    scopes = [str(granted)]
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {target}\n@@\n-old-line\n+new-line\n"
+        "*** End Patch\n"
+    )
+
+    result = _file_operation(
+        {
+            "op": "patch",
+            "patch": patch,
+            "mode": "apply",
+            "working_dir": str(granted),
+            "session_scopes": scopes,
+        }
+    )
+
+    assert result.get("ok") is True, result
+    assert target.read_text(encoding="utf-8") == "new-line\n"
+
+    rollback = _rollback_file(
+        {"path": str(target), "working_dir": str(granted), "session_scopes": scopes}
+    )
+    assert rollback["ok"] is True, rollback
+    assert target.read_text(encoding="utf-8") == "old-line\n"
+
+
+def test_patch_outside_allowed_returns_needs_scope_grant(tmp_path, monkeypatch):
+    """未授权目录的补丁：拒绝并要求先授权（不静默改到别处）。"""
+    from scripts.os_automation_worker import _file_operation
+
+    safe = tmp_path / "safe"
+    safe.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(safe))
+    patch = "*** Begin Patch\n*** End Patch\n"
+
+    result = _file_operation(
+        {"op": "patch", "patch": patch, "mode": "apply", "working_dir": str(outside)}
+    )
+
+    assert result["ok"] is False
+    assert result["needs_scope_grant"] is True

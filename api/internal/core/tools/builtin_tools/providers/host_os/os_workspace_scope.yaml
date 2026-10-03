@@ -1,0 +1,15 @@
+name: os_workspace_scope
+label: 工作区授权申请
+description: 申请把某个目录加入当前会话的工作区授权（用户确认弹窗后生效）；批准后 os_file_task/os_recycle_bin/os_snapshot/os_terminal 可在该目录正常工作并享受同样的快照/回收站治理。触发时机：本机工具返回 needs_scope_grant 时。
+params: []
+task_keywords:
+  - 授权
+  - 目录授权
+  - 工作区
+  - 工作目录
+  - 越界
+  - 访问权限
+  - scope
+  - workspace
+  - 允许访问
+  - 权限申请

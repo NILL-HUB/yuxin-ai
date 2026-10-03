@@ -91,6 +91,8 @@ class OsRecycleBinTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsRecycleBinInput
     requester: str = ""
+    device_id: str = ""
+    session_id: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         op = _normalize_text(kwargs.get("op") or "").lower()
@@ -105,6 +107,8 @@ class OsRecycleBinTool(BaseTool):
             "retention_days": int(kwargs.get("retention_days") or 7),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "device_id": _normalize_text(kwargs.get("device_id") or self.device_id),
+            "session_id": _normalize_text(kwargs.get("session_id") or self.session_id),
         }
         result = _call_worker(payload)
         self._sync_platform_recycle(op, payload, result)
@@ -158,4 +162,8 @@ class OsRecycleBinTool(BaseTool):
 
 def os_recycle_bin(**kwargs: Any) -> BaseTool:
     """工厂函数：返回本机回收站工具。"""
-    return OsRecycleBinTool(requester=_normalize_text(kwargs.get("requester")))
+    return OsRecycleBinTool(
+        requester=_normalize_text(kwargs.get("requester")),
+        device_id=_normalize_text(kwargs.get("device_id")),
+        session_id=_normalize_text(kwargs.get("session_id")),
+    )

@@ -324,6 +324,36 @@ class AssistantAgentService(BaseService):
 
         return conversation
 
+    def _apply_conversation_device_binding(
+        self,
+        account: Account,
+        conversation: Conversation,
+        device_field: Any,
+    ) -> str:
+        """应用请求中的设备绑定变更，返回本会话生效的 device_id（可能为空串）。
+
+        - device_field 缺省/None：不改动，返回会话现有绑定；
+        - 显式空串：解绑（回到「默认设备 > 最近在线」的自动解析）；
+        - 非空：校验设备属于该账号且未解绑后写入会话绑定；校验失败抛 NotFoundException
+          （宁可直接失败，也不静默落到别的设备执行——「指定设备」语义必须显式）。
+        """
+        raw = getattr(device_field, "data", device_field) if device_field is not None else None
+        current = str(getattr(conversation, "desktop_device_id", "") or "")
+        if raw is None:
+            return current
+        requested = str(raw).strip()
+        if requested == current:
+            return current
+        if not requested:
+            self.update(conversation, desktop_device_id=None)
+            return ""
+        from internal.service.desktop_device_service import DesktopDeviceService
+
+        if not DesktopDeviceService(db=self.db).device_bindable(account.id, requested):
+            raise NotFoundException("指定的设备不存在或已解绑，请在设备列表中选择其他设备后重试")
+        self.update(conversation, desktop_device_id=requested)
+        return requested
+
     def get_capabilities(self) -> dict[str, Any]:
         """返回辅助 Agent 当前可用能力。"""
         if self.language_model_service is None:
@@ -968,6 +998,7 @@ class AssistantAgentService(BaseService):
         conversation_turn: str = "",
         message_id: str = "",
         conversation_id: str = "",
+        device_id: str = "",
     ) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用、全局 MCP 绑定和用户知识库检索。
 
@@ -979,6 +1010,10 @@ class AssistantAgentService(BaseService):
         message_id / conversation_id：异步视频工具（渲染/剪辑）专用。这些工具的产物
         要等 Celery 跑完才就绪，届时需据此把成品**回填到原消息**，用户才能在对话里
         看到成片（否则只能自己去成品库翻）。
+
+        device_id：会话绑定的桌面设备（手机/Web 显式选设备后写入 conversation）。
+        透传给 os_*/computer/browser 等**走设备 bridge** 的工具；为空时保持
+        「默认设备 > 最近在线」的自动解析。
         """
         search_public_agents_tool = (
             self.public_agent_registry_service.convert_public_agent_search_to_tool()
@@ -1020,6 +1055,8 @@ class AssistantAgentService(BaseService):
                     "os_recycle_bin",
                     "os_snapshot",
                     "os_terminal",
+                    # 会话工作区授权申请：安全根之外的目录经用户确认后可用
+                    "os_workspace_scope",
                 ):
                     os_tool_factory = (
                         self.app_config_service.builtin_provider_manager.get_tool(
@@ -1033,6 +1070,7 @@ class AssistantAgentService(BaseService):
                                 requester=str(account_id),
                                 session_id=session_id,
                                 conversation_turn=conversation_turn,
+                                device_id=device_id,
                             )
                         )
             except Exception:
@@ -1063,7 +1101,7 @@ class AssistantAgentService(BaseService):
                     )
                 )
                 if cc_tool_factory is not None:
-                    tools.append(cc_tool_factory(requester=str(account_id)))
+                    tools.append(cc_tool_factory(requester=str(account_id), device_id=device_id))
             except Exception:
                 logger.warning("构建计算机控制工具失败，不影响其他工具", exc_info=True)
 
@@ -1079,7 +1117,7 @@ class AssistantAgentService(BaseService):
                     )
                 )
                 if browser_tool_factory is not None:
-                    tools.append(browser_tool_factory(requester=str(account_id)))
+                    tools.append(browser_tool_factory(requester=str(account_id), device_id=device_id))
             except Exception:
                 logger.warning("构建浏览器自动化工具失败，不影响其他工具", exc_info=True)
 
@@ -1829,6 +1867,12 @@ class AssistantAgentService(BaseService):
             allowed_invoke_from=invoke_from,
         )
 
+        # 2.1 会话级设备绑定：请求显式携带 device_id 时更新绑定（空串=解绑，缺省=不改动），
+        #     返回本会话生效的绑定值，透传给本机工具（os_*/computer/browser）的注入点。
+        bound_device_id = self._apply_conversation_device_binding(
+            account, conversation, getattr(req, "device_id", None)
+        )
+
         # 进程级 checkpoint 的 thread_id 默认策略：调用方未显式指定时，
         # 若管理员在公共 AI 配置开启「会话级 Checkpoint 续跑」则以会话维度启用——
         # 同一会话（conversation）内的执行共享一条 checkpoint 链，崩溃后
@@ -1971,6 +2015,7 @@ class AssistantAgentService(BaseService):
             conversation_turn=f"{conversation.id}:{message.id}",
             message_id=str(message.id),
             conversation_id=str(conversation.id),
+            device_id=bound_device_id,
         )
 
         # 6.0 工具池治理挂载：读取 orchestrator 决策的 tool_subset，与固有工具合并

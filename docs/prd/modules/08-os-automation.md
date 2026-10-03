@@ -168,6 +168,7 @@
 | `os_file_task`（读/搜/补丁） | 逐文件精确快照 + 删除进回收站；敏感读黑名单 | 安全根（默认用户主目录） | 超过单文件上限（50MB）的内容不做快照 |
 | `os_recycle_bin`（删除） | 移入本机回收站 + 平台回收站同步（按 deleted_by_type 区分留存期） | 安全根 | — |
 | `os_terminal`（命令） | 删除命令硬阻断 + 写前快照（cwd + 命令引用目录）+ `changes` 清单 + `recovery_hint` 自愈信号 | 安全根内、跟随命令实际写入面 | 排除目录（node_modules 等）不回滚；目录超限降级并明示 |
+| `os_workspace_scope`（范围扩展） | 用户逐次确认（`always_confirm_tool_names`，不受轮内放行/智能审批影响）+ TTL 12h + 上限 8 个/会话 + 可撤销 | 扩展至任意目录，但每次扩展都是**用户显式批准** | 授权目录应由用户判断是否可信（确认弹窗显示目录与原因） |
 | `computer_action`（GUI） | **按入参分档确认**（`ToolPolicy.requires_confirmation`）：纯观察动作（screenshot/capture/list_apps/list_windows）免确认；会改 GUI 状态的动作轮内首次确认、批准后本轮回合内放行（`authorized_tools` 随 state 累积）；文件操作禁令（工具描述与系统提示词双层） | 整机（GUI 天然全机可达） | 模型违反禁令经 GUI 改文件时无快照兜底——由确认弹窗的人审把关，这是刻意的分档而非漏洞 |
 
 **边界成立性论证**：
@@ -178,13 +179,14 @@
 3. 终端删除命令被 worker 端硬阻断（与工具/提示词无关的最终闸门），GUI 路径被禁令
    引导回三件套，电脑控制的确认弹窗构成最后的人审闸门。
 
-**会话级工作区（覆盖缺口的正解，设计已出、未实现）**：三件套与 GUI 的覆盖缺口 = 安全根
-之外的目录。解法为会话绑定授权根目录——用户显式批准后 scope 内复用同构快照/回收站，
-安全根降级为默认边界；设计见
-[superpowers/specs/2026-10-04-session-workspace-scope-design.md](../superpowers/specs/2026-10-04-session-workspace-scope-design.md)。
-现有 `working_dir`（每次显式）+ 安全根（静态下限）+ manifest 安全根级唯一，已支持同一轮
-跨目录（多个 cwd）的批量回滚。GUI 体验侧已落地：纯观察动作免确认、轮内一次放行、
-管理员智能审批策略可进一步放行。
+**会话级工作区授权（已落地 2026-10-04）**：三件套与 GUI 的覆盖缺口 = 安全根之外的目录，
+已实现会话绑定授权根：工具越界返回 `needs_scope_grant` → Agent 调用 `os_workspace_scope`
+（高风险、**每次必确认**）→ 用户批准 → 落 `session_workspace_scope` 表（TTL 12h、
+上限 8 个/会话）→ 后续调用经 `worker_client` 单点注入 `session_scopes` → worker 按
+「安全根 ∪ 会话授权根」校验，scope 内享受同构治理（写前快照/回收站/删除守卫）。
+未授权越界**拒绝执行**（不再静默回退，避免在错误目录执行命令）；不存在的目录仍宽容回退。
+GUI 体验侧：纯观察动作免确认、轮内一次放行、管理员智能审批策略可进一步放行。
+设计与落地记录见 [archive/superpowers-specs/2026-10-04-session-workspace-scope-design.md](../archive/superpowers-specs/2026-10-04-session-workspace-scope-design.md)。
 
 ## 环境变量
 
@@ -224,6 +226,10 @@ curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/health
 - `os_recycle_bin`：op=`delete`（移入回收站，不物理删除）/ `list` / `restore` / `purge`。
   删除天然免确认（可恢复）。
 - `os_snapshot`：op=`rollback_file` / `rollback_turn` / `list_snapshots`，管理写前快照并回滚。
+- `os_workspace_scope`（2026-10-04 新增）：申请把某个目录加入当前会话的工作区授权
+  （用户确认弹窗显示目录与原因；高风险、每次必确认）。批准后该目录在会话内获得与
+  安全根一致的治理能力；触发时机为本机工具返回 `needs_scope_grant`。授权记录落
+  `session_workspace_scope` 表，worker 侧只接受真实存在的目录（自动过滤幽灵条目）。
 - `os_terminal`（2026-10-03 新增，2026-10-04 重定位）：**本机任务的主力执行手段**
   （不是可选补充）——查看目录与文件、Git 操作、安装依赖、构建编译、运行测试与脚本、
   查看系统与进程信息、批量处理等，由 Agent 自主判断并主动用真实命令完成，而非逐个手工操作。
