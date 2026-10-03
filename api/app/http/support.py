@@ -307,6 +307,9 @@ async def _resolve_account(account_id_override: str | None = None):
                 except UnauthorizedException:
                     return None, _err("unauthorized", "登录会话已失效，请重新登录", 401)
                 account = await asyncio.to_thread(_load_account, UUID(account_id))
+                if account is None:
+                    # token 有效但账号已被删除/注销：返回 404，避免调用方拿到 (None, None) 后崩溃
+                    return None, _err("account_not_found", "账号不存在或已注销", 404)
                 return account, None
         except UnauthorizedException:
             pass
@@ -332,6 +335,8 @@ async def _resolve_account(account_id_override: str | None = None):
         return None, _err("forbidden", "该接口仅管理员可用", 403)
     try:
         account = await asyncio.to_thread(_load_account, UUID(requested_id))
+        if account is None:
+            return None, _err("account_not_found", "账号不存在", 404)
         return account, None
     except Exception:
         logger.exception("async 端点加载 account 失败: account_id=%s", requested_id)

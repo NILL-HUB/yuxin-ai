@@ -49,21 +49,7 @@ class FileCenterService:
         `list_children` 保留纯 ORM 语义供 Agent 工具使用；本方法供 HTTP 层使用。
         """
         entries = self.list_children(account_id, parent_id=parent_id)
-        file_ids = [e.upload_file_id for e in entries if e.upload_file_id]
-        url_map: dict = {}
-        if file_ids and self.storage is not None:
-            rows = (
-                db.session.query(UploadFile)
-                .filter(UploadFile.id.in_(file_ids))
-                .all()
-            )
-            for row in rows:
-                try:
-                    url_map[str(row.id)] = self.storage.get_file_url(
-                        row.key, download_name=row.name
-                    )
-                except Exception:
-                    url_map[str(row.id)] = None
+        url_map = self._file_url_map(e.upload_file_id for e in entries)
         return [
             {
                 "id": e.id,
@@ -95,6 +81,7 @@ class FileCenterService:
             .limit(page_size)
             .all()
         )
+        url_map = self._file_url_map(row.upload_file_id for row in rows)
         items = [
             {
                 "entry_id": str(row.id),
@@ -103,6 +90,7 @@ class FileCenterService:
                 "source": row.source,
                 "origin": row.origin,
                 "organized": True,
+                "url": url_map.get(str(row.upload_file_id)) if row.upload_file_id else None,
             }
             for row in rows
         ]
@@ -340,6 +328,22 @@ class FileCenterService:
     # ------------------------------------------------------------------ #
     #  内部工具
     # ------------------------------------------------------------------ #
+    def _file_url_map(self, upload_file_ids) -> dict:
+        """批量把 upload_file id 映射为可访问 URL；生成失败的项为 None。"""
+        url_map: dict = {}
+        ids = [i for i in upload_file_ids if i]
+        if not ids or self.storage is None:
+            return url_map
+        rows = db.session.query(UploadFile).filter(UploadFile.id.in_(ids)).all()
+        for row in rows:
+            try:
+                url_map[str(row.id)] = self.storage.get_file_url(
+                    row.key, download_name=row.name
+                )
+            except Exception:
+                url_map[str(row.id)] = None
+        return url_map
+
     def _recycle_file(
         self, account_id, entry: FileCenterEntry, deleted_by_type: str, retention_days
     ) -> None:
