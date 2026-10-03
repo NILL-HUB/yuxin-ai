@@ -84,6 +84,11 @@ class OsTerminalTool(BaseTool):
         "超时默认 60 秒（上限 300），超长输出会截断。"
         "工具分工：执行命令用本工具；**改写文件内容**（编辑/新建/打补丁）优先用 "
         "os_file_task（有写前快照、可回滚）；**删除**只能走 os_recycle_bin。"
+        "执行前会自动对工作目录做**增量写前快照**（内容寻址，排除 node_modules/.git "
+        "等可再生目录）：命令若改坏文件，可用 os_snapshot 回滚——rollback_file 恢复单个"
+        "文件、rollback_turn 按本轮（同一 conversation_turn）批量恢复；结果里的 changes "
+        "字段列出本次被改动的文件。工作目录过大或快照失败会在结果中明确提示（后者拒绝"
+        "执行）。建议 working_dir 指向具体项目目录，快照更快、覆盖更准。"
         "⚠️ 删除类命令被系统硬阻断：rm/del/rd/Remove-Item 等物理删除、"
         "内联解释器代码（python -c、bash -c、powershell -Command）、脚本文件内容、"
         "管道到解释器（curl | bash）等形态一律拒绝并报错——"
@@ -91,6 +96,8 @@ class OsTerminalTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsTerminalInput
     requester: str = ""
+    session_id: str = ""
+    conversation_turn: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         try:
@@ -104,6 +111,11 @@ class OsTerminalTool(BaseTool):
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "timeout_seconds": timeout_seconds,
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            # 写前快照按会话/轮次分组：os_snapshot rollback_turn 可回滚本轮全部终端改动
+            "session_id": _normalize_text(kwargs.get("session_id") or self.session_id),
+            "conversation_turn": _normalize_text(
+                kwargs.get("conversation_turn") or self.conversation_turn
+            ),
         }
         # urllib 超时需大于命令自身超时，否则超时结果在回传前被客户端掐断
         result = _call_worker(payload, timeout=max(60, timeout_seconds + 30))
@@ -115,4 +127,8 @@ class OsTerminalTool(BaseTool):
 
 def os_terminal(**kwargs: Any) -> BaseTool:
     """工厂函数：返回本机终端工具。"""
-    return OsTerminalTool(requester=_normalize_text(kwargs.get("requester")))
+    return OsTerminalTool(
+        requester=_normalize_text(kwargs.get("requester")),
+        session_id=_normalize_text(kwargs.get("session_id")),
+        conversation_turn=_normalize_text(kwargs.get("conversation_turn")),
+    )

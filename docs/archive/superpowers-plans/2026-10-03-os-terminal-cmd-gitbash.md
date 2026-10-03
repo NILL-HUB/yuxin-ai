@@ -142,3 +142,24 @@ POST /exec  {"command": str, "shell": "cmd"|"gitbash", "working_dir": str,
 4. **提示词一致性**：原第 14 条允许直接删除临时目录，与守卫（无路径语义、一律阻断）矛盾——统一改为走 `os_recycle_bin`。
 5. **补丁密度收敛**：新增第 4 个工具前先测量——`_call_worker` 已有 3 份近似副本，属「同一逻辑各写一套」，故收敛到 `worker_client.py` 单一入口，而非新增第 4 份。
 6. **禁用于全局**：守卫在 worker 端对 cmd/gitbash 统一生效（不分 shell），GitBash 里的 `cmd //c del` 等跨 shell 调用同样被拦。
+
+## 后续演进（2026-10-04，已落地）
+
+1. **终端定位修正（主力执行手段）**：初版把 `os_terminal` 写成"用户要求时使用"的可选工具，
+   与"命令行是 AI 干活的主路径"相悖。已重写工具描述（"本机任务的主力执行手段，不是可选补充"）、
+   系统提示词（规则 10 主动式 / 11 三件套分工 / 12 删除禁令）、`task_keywords`（覆盖作业语义），
+   并新增 7 个 ToolSelector 真实性回归用例（读 `os_terminal.yaml`，锁住"作业语义 query →
+   关键词快通道命中"）；默认 shell 由 cmd 改为 gitbash（Unix 语法对模型更友好）。
+2. **写前快照（改坏可回滚）**：终端命令改动面不可预知，补丁式"按目标文件精确快照"不适用。
+   已实现**工作目录级增量写前快照**（内容寻址、复用补丁的快照 manifest 与 `os_snapshot`
+   回滚链路，`source=os_terminal` / `taken_before=terminal`、按 `conversation_turn` 分组）：
+   (size, mtime_ns) 指纹增量；排除 node_modules/.git/dist 等可再生目录；扫描超 20000 文件
+   或 500MB 降级并提示（命令仍执行）；快照写入失败则拒绝执行（fail-closed）；执行后对比
+   指纹产出 `changes`（modified/created/removed）。回滚复用 `rollback_file` / `rollback_turn`，
+   并新增 `session_id`/`conversation_turn` 透传使终端快照可按轮批量回滚。
+3. **provider 调用单入口收编**：`worker_client.py` 提升到 `providers/` 包根并参数化
+   （静态回退 env 名 / 不可用文案 / 超时），`browser_action`、`computer_action` 与 host_os
+   四工具共六份 `_call_worker` 全部收敛；文档标注"禁止再新增同构副本"。
+4. **cmd 引号缺陷修复**：Python `list2cmdline` 的 `\"` 转义与 cmd.exe 解析规则不兼容，
+   会把 `> "C:\a b\x.txt"` 这类引号路径弄坏；改用字符串命令行 `cmd /d /s /c "<命令>"`
+   逐字传递，并加 cmd/gitbash 双回归用例。

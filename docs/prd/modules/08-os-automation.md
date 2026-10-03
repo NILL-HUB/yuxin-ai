@@ -126,6 +126,28 @@
    不可判定问题，由提示词约束 + 平台侧调用审计兜底。命中与误伤取舍按 fail-closed：
    字符串中出现删除命令名（如 `node -e "x=['rm','-f']"`）会被拒绝，Agent 应改用
    `os_file_task` / `os_recycle_bin` 完成任务。
+9. **终端写前快照（改坏可回滚）**：终端命令会改哪些文件无法预知，不能像 V4A 补丁那样按
+   目标文件精确快照，因此 `/exec` 在启动进程前对**工作目录**做增量快照（内容寻址，与补丁
+   共用 `.yujianwo_snapshots` manifest 与 `os_snapshot` 回滚链路；条目标记
+   `source=os_terminal`、`taken_before=terminal`，并按注入的 `conversation_turn` 分组）：
+   - **增量**：以 (size, mtime_ns) 指纹判断，只有自上次快照后变化的文件才重新计算哈希/落盘；
+     首次进入某工作目录为全量。Worker 重启后缓存清空、自动回到全量，语义不变；
+   - **排除**：node_modules / .git / dist / build / venv / \_\_pycache\_\_ / target /
+     .yujianwo_recycle / .yujianwo_snapshots 等可再生或自管目录不进快照（这些目录内的
+     改动不提供回滚，重装/重建即可恢复）；
+   - **上限降级**：单次扫描超过 20000 文件或 500MB 时降级为"不快照"，结果携带
+     `snapshot.status="skipped_too_large"` 与引导文案（建议 `working_dir` 指向具体项目
+     目录），命令仍执行——不因大目录阻断终端可用性；
+   - **fail-closed**：快照写入失败（磁盘满/权限异常）时**拒绝执行**命令，保证
+     「执行过的命令都可回滚」这一不变式；
+   - **改动清单**：执行后重新对比指纹，结果附 `changes`（modified/created/removed，
+     相对工作目录，各截断 50 条）——Agent 与用户都能看到本次命令实际动了哪些文件；
+   - **回滚入口（复用，不新增）**：`os_snapshot` 的 `rollback_file`（单文件）与
+     `rollback_turn`（按轮批量，覆盖该轮终端与补丁的全部改动）。
+   **cmd 引号处理**：Windows 侧用字符串命令行 `cmd.exe /d /s /c "<命令>"` 而非 list 传参
+   ——Python 的 `list2cmdline` 转义（`\"`）与 cmd.exe 解析规则不兼容，会把命令里的引号
+   路径（如 `> "C:\a b\x.txt"`）弄坏；`/s` 剥掉外层引号、命令原文逐字传递（回归测试
+   `test_exec_cmd_handles_quoted_path_with_spaces`）。
 
 ## 环境变量
 
@@ -171,7 +193,9 @@ curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/health
   `shell=gitbash`（默认，Unix 语法；需本机安装 Git for Windows，`GIT_BASH_PATH` 可显式指定）
   或 `shell=cmd`（Windows 原生命令）；`/health` 的 `terminal_shells` 报告两者可用性；
   非 Windows 平台两者统一映射到 `sh -c`。`working_dir` 限安全根内、`timeout_seconds`
-  默认 60／上限 300。
+  默认 60／上限 300。**执行前自动对工作目录做增量写前快照**（见安全模型第 9 条），
+  返回结果含 `snapshot`（快照报告）与 `changes`（本次改动文件清单）；命令改坏文件时
+  用 `os_snapshot` 的 `rollback_file` / `rollback_turn` 回滚。
   **工具分工（写进工具描述与系统提示词规则 10/11/12）**：执行命令 → `os_terminal`；
   改写文件内容 → `os_file_task`（写前快照、可回滚，避免终端改写丢失快照兜底）；
   删除 → `os_recycle_bin`。删除类命令被硬阻断（见安全模型第 8 条），返回结构化
@@ -214,7 +238,9 @@ python -m pytest test/scripts/test_os_automation_worker.py \
 单文件/按轮批量回滚、GC 清理、os_file_task 免确认（不再弹确认卡）；终端侧覆盖
 cmd/gitbash 真实执行、删除命令正例（cmd/PowerShell/GitBash/嵌套内联/脚本/管道/base64）
 命中与反例（`echo "rm -rf"`、`grep -r 'rm -rf'`、`python -c "print('rm -rf')"`）不误伤、
-工作目录越界回退、超时杀进程树、子进程 env 剥离、输出截断。
+工作目录越界回退、超时杀进程树、子进程 env 剥离、输出截断；写前快照侧覆盖
+改坏→`rollback_file`/`rollback_turn` 恢复、增量去重、排除可再生目录、超限降级、
+快照失败 fail-closed 拒绝执行、被阻断命令不产生快照、cmd/gitbash 含空格引号路径。
 
 真机验证（Windows，worker 直连）：
 

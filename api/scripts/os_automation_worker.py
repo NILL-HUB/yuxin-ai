@@ -1708,6 +1708,50 @@ TERMINAL_MAX_OUTPUT_CHARS = 200_000
 TERMINAL_SCRIPT_SCAN_MAX_BYTES = 256 * 1024
 _GUARD_MAX_DEPTH = 3
 
+# --- 终端写前快照（增量）---
+# 终端命令会改哪些文件无法预知，不能像 V4A 补丁那样"按目标文件精确快照"。折中：
+# 以工作目录为单位做增量快照（内容寻址，与补丁共用 manifest 与 os_snapshot 回滚链路），
+# 让「一条命令改坏文件」可恢复。代价与边界：
+# - 排除可再生目录（node_modules/.git/dist 等）与 worker 自管目录（回收站/快照）；
+# - 单次扫描文件数/总字节超限时降级为"不快照"并在结果中明确提示（引导指定更小的
+#   working_dir），保证终端不被超大目录卡死；
+# - 首次在某工作目录执行是全量，之后按 (size, mtime_ns) 增量，只快照变化的文件；
+# - 快照失败（磁盘满/权限等）时拒绝执行命令（fail-closed：不可回滚的命令不跑）。
+EXEC_SNAPSHOT_MAX_FILES = 20000
+EXEC_SNAPSHOT_MAX_TOTAL_BYTES = 500 * 1024 * 1024
+EXEC_SNAPSHOT_SKIPPED_HINT = (
+    "工作目录过大，本次未做写前快照：该次命令若改坏文件将无法经 os_snapshot 回滚。"
+    "请把 working_dir 指向具体项目目录；改写文件内容优先用 os_file_task（有精确快照）。"
+)
+_EXEC_SNAPSHOT_EXCLUDE_DIRS: frozenset[str] = frozenset(
+    {
+        SNAPSHOT_DIR_NAME.lower(),
+        RECYCLE_DIR_NAME.lower(),
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".next",
+        ".nuxt",
+        "target",
+        ".cache",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".vscode",
+        "$recycle.bin",
+        "system volume information",
+    }
+)
+# 工作目录 → {文件绝对路径: (size, mtime_ns)}，记录「最近一次已快照时的指纹」
+_exec_tree_state: dict[str, dict[str, tuple[int, int]]] = {}
+_exec_tree_state_lock = threading.Lock()
+
 # 终端命令不得读到 worker 自身凭证：否则一条 echo %OS_AUTOMATION_TOKEN% 即可
 # 拿到直接调用本机 worker 全部端点的能力，绕过所有平台侧治理。
 _CHILD_ENV_STRIPPED_KEYS = (
@@ -2270,8 +2314,135 @@ def _kill_process_tree(proc: "subprocess.Popen[bytes]") -> None:
         pass
 
 
+def _scan_exec_tree(root: str) -> tuple[dict[str, tuple[int, int]], int, int] | None:
+    """扫描工作目录下需纳入快照的文件指纹。
+
+    返回 (指纹表, 文件数, 总字节)；返回 None 表示降级不做快照（目录过大/不可遍历）。
+    不跟随符号链接（避免越界与循环）；排除目录按名称小写匹配（Windows 大小写不敏感）。
+    """
+    state: dict[str, tuple[int, int]] = {}
+    file_count = 0
+    total_bytes = 0
+    stack = [Path(root)]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name.lower() in _EXEC_SNAPSHOT_EXCLUDE_DIRS:
+                        continue
+                    stack.append(Path(entry.path))
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                stat = entry.stat()
+            except OSError:
+                continue
+            file_count += 1
+            total_bytes += stat.st_size
+            if (
+                file_count > EXEC_SNAPSHOT_MAX_FILES
+                or total_bytes > EXEC_SNAPSHOT_MAX_TOTAL_BYTES
+            ):
+                return None
+            state[entry.path] = (stat.st_size, stat.st_mtime_ns)
+    return state, file_count, total_bytes
+
+
+def _snapshot_exec_tree_before(
+    root: str, *, session_id: str, conversation_turn: str
+) -> tuple[dict[str, Any], dict[str, tuple[int, int]] | None]:
+    """终端执行前的增量写前快照；返回 (报告, 执行前指纹表)。
+
+    指纹表供执行后对比（changes 清单）。快照写入失败时抛 OSError，由调用方
+    fail-closed 拒绝执行——保证"执行了就可回滚"这一不变式。
+    """
+    scanned = _scan_exec_tree(root)
+    if scanned is None:
+        return (
+            {
+                "status": "skipped_too_large",
+                "hint": EXEC_SNAPSHOT_SKIPPED_HINT,
+                "max_files": EXEC_SNAPSHOT_MAX_FILES,
+                "max_total_bytes": EXEC_SNAPSHOT_MAX_TOTAL_BYTES,
+            },
+            None,
+        )
+    state, file_count, total_bytes = scanned
+    with _exec_tree_state_lock:
+        previous = _exec_tree_state.get(root)
+    batch_id = uuid.uuid4().hex
+    captured = 0
+    skipped_large = 0
+    for path, meta in state.items():
+        # 与上次快照时指纹一致 → 内容已快照过（内容寻址去重），无需重复
+        if previous is not None and previous.get(path) == meta:
+            continue
+        entry = _capture_single_file_snapshot(
+            path,
+            root,
+            source="os_terminal",
+            session_id=session_id,
+            conversation_turn=conversation_turn,
+            batch_id=batch_id,
+            taken_before="terminal",
+        )
+        if entry.get("skipped"):
+            skipped_large += 1
+        else:
+            captured += 1
+    return (
+        {
+            "status": "captured",
+            "captured": captured,
+            "inspected": file_count,
+            "skipped_large": skipped_large,
+            "total_bytes": total_bytes,
+            "batch_id": batch_id,
+        },
+        state,
+    )
+
+
+def _diff_exec_tree(
+    before: dict[str, tuple[int, int]] | None,
+    after: dict[str, tuple[int, int]] | None,
+    *,
+    root: str,
+    limit: int = 50,
+) -> dict[str, Any] | None:
+    """对比执行前后指纹，给出本次命令的改动清单（相对工作目录，截断展示）。"""
+    if before is None or after is None:
+        return None
+
+    def _relative(path: str) -> str:
+        try:
+            return os.path.relpath(path, root)
+        except ValueError:
+            return path
+
+    modified = sorted(p for p, meta in after.items() if p in before and before[p] != meta)
+    created = sorted(p for p in after if p not in before)
+    removed = sorted(p for p in before if p not in after)
+    return {
+        "modified": [_relative(p) for p in modified[:limit]],
+        "modified_count": len(modified),
+        "created": [_relative(p) for p in created[:limit]],
+        "created_count": len(created),
+        "removed": [_relative(p) for p in removed[:limit]],
+        "removed_count": len(removed),
+    }
+
+
 def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
-    """/exec 端点：在本机以 cmd / GitBash 执行单条命令（删除命令硬阻断）。"""
+    """/exec 端点：在本机以 cmd / GitBash 执行单条命令（删除命令硬阻断）。
+
+    执行前对工作目录做增量写前快照（可经 os_snapshot 回滚），执行后返回改动清单。
+    """
     command = str(payload.get("command") or "").strip()
     # 默认 gitbash（Unix 语法对模型更友好）；不可用时返回可读错误并提示改用 cmd
     shell = str(payload.get("shell") or "gitbash").strip().lower() or "gitbash"
@@ -2303,12 +2474,32 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     if executable is None:
         return {"ok": False, "error": error, "shell": shell}
 
-    if os.name == "nt":
-        args = (
-            [executable, "/d", "/s", "/c", command]
-            if shell == "cmd"
-            else [executable, "-c", command]
+    # 写前快照（fail-closed）：快照失败说明环境异常（磁盘满/权限），此时拒绝执行，
+    # 保证「执行过的命令都可回滚」这一不变式。
+    try:
+        snapshot_report, before_state = _snapshot_exec_tree_before(
+            root,
+            session_id=str(payload.get("session_id") or ""),
+            conversation_turn=str(payload.get("conversation_turn") or ""),
         )
+    except OSError as exc:
+        logger.warning("终端写前快照失败，拒绝执行命令: %s", exc)
+        return {
+            "ok": False,
+            "error": f"写前快照失败，已拒绝执行（保证改动可回滚）: {exc}",
+            "snapshot": {"status": "failed", "error": str(exc)},
+            "shell": shell,
+        }
+
+    if os.name == "nt":
+        if shell == "cmd":
+            # 必须用字符串命令行：Python 对 list 参数的 list2cmdline 转义（\" 等）与
+            # cmd.exe 自身的解析规则不兼容，会把命令里的引号路径（> "C:\a b\x.txt"）
+            # 弄坏成非法文件名。/s 的语义正是"剥掉外层引号、其余原样保留"，
+            # 因此这里手动包一层引号把命令原文逐字交给 cmd。
+            args: Any = f'"{executable}" /d /s /c "{command}"'
+        else:
+            args = [executable, "-c", command]
         popen_kwargs: dict[str, Any] = {
             "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
         }
@@ -2346,6 +2537,17 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
     stderr, err_truncated = _truncate_output(_decode_console_output(raw_err or b""))
     exit_code = proc.returncode
 
+    # 执行后指纹：产出本次改动清单，并作为"下一次执行前的已快照基线"
+    after_scan = _scan_exec_tree(root)
+    after_state = after_scan[0] if after_scan else None
+    changes = _diff_exec_tree(before_state, after_state, root=root)
+    with _exec_tree_state_lock:
+        if after_state is None:
+            # 降级/不可遍历：清基线，避免下次误判"已快照"
+            _exec_tree_state.pop(root, None)
+        else:
+            _exec_tree_state[root] = after_state
+
     result: dict[str, Any] = {
         "ok": (not timed_out) and exit_code == 0,
         "exit_code": exit_code,
@@ -2355,7 +2557,10 @@ def _exec_operation(payload: dict[str, Any]) -> dict[str, Any]:
         "cwd": root,
         "duration_ms": duration_ms,
         "truncated": out_truncated or err_truncated,
+        "snapshot": snapshot_report,
     }
+    if changes is not None:
+        result["changes"] = changes
     if timed_out:
         result["timed_out"] = True
         result["error"] = f"命令执行超时（{timeout_seconds}s），已终止进程树"

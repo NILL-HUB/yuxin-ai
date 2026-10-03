@@ -14,7 +14,10 @@ from scripts.os_automation_worker import (
     _build_child_env,
     _exec_operation,
     _find_blocked_delete,
+    _read_snapshot_manifest,
     _resolve_terminal_shell,
+    _rollback_file,
+    _rollback_turn,
     _truncate_output,
 )
 
@@ -408,3 +411,222 @@ def test_exec_reports_shell_resolution_error_when_gitbash_absent(tmp_path, monke
     result = _exec_operation({"command": "echo x", "shell": "gitbash"})
     assert result["ok"] is False
     assert "Git" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# 终端写前快照：改坏可回滚 / 增量去重 / 排除可再生目录 / 超限降级 / fail-closed
+# ---------------------------------------------------------------------------
+def test_exec_snapshot_enables_rollback_of_clobbered_file(tmp_path, monkeypatch):
+    """核心治理用例：一条命令改坏文件 → 写前快照 → os_snapshot 回滚恢复原内容。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / "app.py"
+    original = "print('original')\n"
+    target.write_text(original, encoding="utf-8")
+
+    result = _exec_operation(
+        {
+            "command": f'echo broken > "{target}"',
+            "shell": _native_shell(),
+            "working_dir": str(tmp_path),
+            "conversation_turn": "conv-1:msg-1",
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert "broken" in target.read_text(encoding="utf-8")
+    assert result["snapshot"]["status"] == "captured"
+    assert result["snapshot"]["captured"] >= 1
+    assert result["changes"]["modified_count"] >= 1
+
+    rollback = _rollback_file({"path": str(target), "working_dir": str(tmp_path)})
+
+    assert rollback["ok"] is True, rollback
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_exec_rollback_turn_restores_all_terminal_changes(tmp_path, monkeypatch):
+    """终端快照按 conversation_turn 分组：rollback_turn 批量回滚该轮全部终端改动。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    first = tmp_path / "one.txt"
+    second = tmp_path / "two.txt"
+    first.write_text("one-original", encoding="utf-8")
+    second.write_text("two-original", encoding="utf-8")
+
+    for name in ("one.txt", "two.txt"):
+        result = _exec_operation(
+            {
+                "command": f'echo changed > "{tmp_path / name}"',
+                "shell": _native_shell(),
+                "working_dir": str(tmp_path),
+                "conversation_turn": "conv-9:msg-7",
+            }
+        )
+        assert result["ok"] is True, result
+
+    rollback = _rollback_turn(
+        {"conversation_turn": "conv-9:msg-7", "working_dir": str(tmp_path)}
+    )
+
+    assert rollback["ok"] is True, rollback
+    assert first.read_text(encoding="utf-8") == "one-original"
+    assert second.read_text(encoding="utf-8") == "two-original"
+
+
+def test_exec_snapshot_is_incremental(tmp_path, monkeypatch):
+    """增量：未变化文件不重复快照；改动前内容已在库中时回滚仍可恢复。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    stable = tmp_path / "stable.txt"
+    stable.write_text("stable", encoding="utf-8")
+
+    first = _exec_operation(
+        {"command": "echo first", "shell": _native_shell(), "working_dir": str(tmp_path)}
+    )
+    assert first["snapshot"]["captured"] >= 1
+
+    second = _exec_operation(
+        {"command": "echo second", "shell": _native_shell(), "working_dir": str(tmp_path)}
+    )
+    assert second["snapshot"]["captured"] == 0
+
+    third = _exec_operation(
+        {
+            "command": f'echo changed > "{stable}"',
+            "shell": _native_shell(),
+            "working_dir": str(tmp_path),
+        }
+    )
+    # 改动前内容（stable）首次已入库 → 指纹一致去重跳过；回滚目标仍是它
+    assert third["snapshot"]["captured"] == 0
+    rollback = _rollback_file({"path": str(stable), "working_dir": str(tmp_path)})
+    assert rollback["ok"] is True, rollback
+    assert stable.read_text(encoding="utf-8") == "stable"
+
+
+def test_exec_snapshot_excludes_regenerable_dirs(tmp_path, monkeypatch):
+    """node_modules/.git 等可再生目录不进快照（避免体积与耗时失控）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    node_modules = tmp_path / "node_modules"
+    node_modules.mkdir()
+    (node_modules / "lib.js").write_text("x", encoding="utf-8")
+    (tmp_path / "src.txt").write_text("y", encoding="utf-8")
+
+    result = _exec_operation(
+        {"command": "echo run", "shell": _native_shell(), "working_dir": str(tmp_path)}
+    )
+
+    assert result["ok"] is True
+    paths = [str(entry.get("path", "")) for entry in _read_snapshot_manifest(str(tmp_path))]
+    assert any(path.endswith("src.txt") for path in paths)
+    assert not any("node_modules" in path for path in paths)
+
+
+def test_exec_snapshot_skips_when_tree_too_large(tmp_path, monkeypatch):
+    """目录超限降级：不做快照但命令照常执行，结果给出引导（不阻断终端可用性）。"""
+    import scripts.os_automation_worker as worker
+
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.setattr(worker, "EXEC_SNAPSHOT_MAX_FILES", 1)
+    for index in range(3):
+        (tmp_path / f"f{index}.txt").write_text("x", encoding="utf-8")
+
+    result = _exec_operation(
+        {"command": "echo run", "shell": _native_shell(), "working_dir": str(tmp_path)}
+    )
+
+    assert result["ok"] is True
+    assert result["snapshot"]["status"] == "skipped_too_large"
+    assert "working_dir" in result["snapshot"]["hint"]
+    assert "changes" not in result
+
+
+def test_exec_refuses_to_run_when_snapshot_fails(tmp_path, monkeypatch):
+    """fail-closed：快照失败（磁盘满/权限）→ 拒绝执行，保证「执行了就可回滚」。"""
+    import scripts.os_automation_worker as worker
+
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+    side_effect = tmp_path / "should_not_exist.txt"
+
+    def _boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(worker, "_capture_single_file_snapshot", _boom)
+
+    result = _exec_operation(
+        {
+            "command": f'echo x > "{side_effect}"',
+            "shell": _native_shell(),
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is False
+    assert "写前快照失败" in result["error"]
+    assert not side_effect.exists(), "快照失败时命令不得执行"
+
+
+def test_blocked_delete_creates_no_snapshot(tmp_path, monkeypatch):
+    """删除被守卫阻断时命令未执行 → 不产生快照条目（快照只服务于真实执行）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    victim = tmp_path / "keep.txt"
+    victim.write_text("keep", encoding="utf-8")
+    command = f'del "{victim}"' if os.name == "nt" else f'rm "{victim}"'
+
+    result = _exec_operation(
+        {"command": command, "shell": _native_shell(), "working_dir": str(tmp_path)}
+    )
+
+    assert result["blocked"] is True
+    assert victim.exists()
+    assert _read_snapshot_manifest(str(tmp_path)) == []
+
+
+def test_exec_cmd_handles_quoted_path_with_spaces(tmp_path, monkeypatch):
+    """回归：cmd 下带引号的含空格路径不得被引号转义弄坏。
+
+    根因：Python list2cmdline 的 `\\"` 转义与 cmd.exe 解析规则不兼容；改为字符串
+    命令行 + `/d /s /c "<命令>"` 后，cmd 剥掉外层引号、命令原文逐字传递。
+    """
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    spaced = tmp_path / "with space"
+    spaced.mkdir()
+    target = spaced / "out.txt"
+
+    result = _exec_operation(
+        {
+            "command": f'echo quoted-ok > "{target}"',
+            "shell": "cmd",
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert target.is_file()
+    assert "quoted-ok" in target.read_text(encoding="utf-8", errors="replace")
+    # 写前快照覆盖了带空格子目录内的文件 → 可回滚
+    assert result["snapshot"]["status"] == "captured"
+    assert result["changes"]["created_count"] == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows GitBash 专属")
+def test_exec_gitbash_handles_quoted_path_with_spaces(tmp_path, monkeypatch):
+    """GitBash 侧同样验证含空格引号路径（bash 遵循 MSVC 转义规则，list 形式安全）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    exe, _error = _resolve_terminal_shell("gitbash")
+    if exe is None:
+        pytest.skip("本机未安装 GitBash")
+
+    spaced = tmp_path / "with space"
+    spaced.mkdir()
+    target = spaced / "out.txt"
+
+    result = _exec_operation(
+        {
+            "command": f'echo quoted-ok > "{target}"',
+            "shell": "gitbash",
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is True, result
+    assert "quoted-ok" in target.read_text(encoding="utf-8", errors="replace")
