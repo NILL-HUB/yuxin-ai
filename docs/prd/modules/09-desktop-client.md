@@ -108,7 +108,17 @@ Electron 主进程（desktop/main.js，唯一入口）
 - **设备定向推送**：Socket.IO 房间 `device:<device_id>`（`subscribe_device_notification`，订阅前校验归属）；设备注册「非在线→在线」跃迁与吊销广播 `device_status_changed`（心跳不广播，避免 60s 噪音）。
 - **前端**：`/devices` 设备列表页（在线态/重命名/设默认/解绑/使用此设备）；「使用此设备」→ `/home?device_id=…` → 发送时随 `/assistant-agent/chat` 透传。
 - **手机壳构建链**：`mobile/` 补齐 `typescript` 依赖（`capacitor.config.ts` 需要），`cap sync` 可通过；APK/模拟器验证走 CI（`.github/workflows/mobile-build.yml`）。
-- 仍未实现（P1）：设备网关（WS 下行通道 + 设备级 token，见 [plan](../../superpowers/plans/2026-10-04-device-gateway-p1.md)）、系统级推送（个推为主、友盟为辅的双通道 admin 热切换）——见 spec §4.11。
+
+### 1e. 设备网关：云端 → 设备常驻下行通道（P1，2026-10-04 落地）
+
+解决 bridge 在 NAT 后面、公网不可达的问题（此前直连依赖 `host.docker.internal`，仅同机 Docker 可用）。
+
+- **桌面端**（`desktop/device-gateway.js`）：注册成功后建立到云端 Socket.IO `/device` 命名空间的常驻连接，鉴权 `device_id + bridge_token`（复用注册凭证，吊销即失效）；自管指数退避重连（1s→60s）、30s `device_ping` 续期；收到 `device_dispatch` 后按白名单调本地 bridge（`127.0.0.1:<port><purpose>`），再经 HTTP `POST /desktop/gateway/result` 回传（上行无 NAT 问题）。
+- **服务端**：`device_gateway_handlers.py`（connect/断开/ping，Redis 键 `device-link:<id>` 标记可下发性，TTL 180s）、`DeviceGatewayService`（`is_online` / `call_device` 经 RedisManager 广播下发 + 按 `request_id` 订阅等待，多 worker 下靠 Redis pub/sub 关联回发起进程 / `publish_result`）、`POST /desktop/gateway/result`（设备 Bearer 鉴权）。
+- **路由模式**：`desktop_client_config.gateway_mode`（admin 配置，env `DESKTOP_GATEWAY_MODE` 兜底，**默认 off 零行为变化**）：`prefer`=网关优先（公网部署推荐；一旦下发即最终结果，绝不回退直连防重复执行）；`fallback`=直连仅网络类失败（OSError）且链路在线时经网关重试一次。
+- **边界**：网关路由仅对**已绑定设备**的调用生效（网关按 device_id 路由）；未绑定设备的自动解析调用仍走直连，`execution_target`（P2）再统一。
+- 测试：服务端 19 例（服务/处理器/路由/配置）+ 工具路由 7 例 + 桌面端 9 例；真机冒烟清单（启动桌面端 → Redis 出现 `device-link:*` → 服务端 `call_device` 收到回传）待执行。
+- 仍未实现（P1 后续）：系统级推送（个推为主、友盟为辅的双通道 admin 热切换，需先办厂商资质/备案）——见 spec §4.11。
 
 ### 2. 服务器地址注入（server-config + /api/desktop-config）
 
