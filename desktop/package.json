@@ -14,7 +14,8 @@
     "dist": "npm run build:ui && npm run stage:cua && npm run stage:render && electron-builder --win"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",

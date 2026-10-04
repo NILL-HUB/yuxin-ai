@@ -23,6 +23,7 @@ const {
 const { createTray } = require('./tray')
 const { setupUpdater, configureUpdater, checkForUpdates, schedulePeriodicChecks, autoUpdater } = require('./updater')
 const { computeWindowOptions, loadState, saveState } = require('./window-state')
+const { createDeviceGateway } = require('./device-gateway')
 
 let mainWindow = null
 let workers = new Map()
@@ -39,6 +40,8 @@ let serverConfigRefreshing = false
 let windowStateFilePath = null
 let deviceIdFilePath = null
 let bridgeAccessInfo = null
+// 设备网关（云端 → 设备 常驻下行通道）：注册成功后启动，登出/退出时停止。
+let deviceGateway = null
 
 function randomToken() {
   return crypto.randomBytes(24).toString('hex')
@@ -291,6 +294,43 @@ function stopDeviceHeartbeat() {
   deviceHeartbeatTimer = null
 }
 
+/**
+ * 启动/刷新设备网关常驻连接（凭注册成功后的凭证；token 每次启动重新生成）。
+ * 失败只告警不影响主流程——网关不可用时服务端回退直连 bridge（gateway_mode=off 时本连接仅备用）。
+ */
+function startDeviceGateway() {
+  if (!bridgeAccessInfo) return
+  const cfg = syncConfig()
+  if (!cfg || !cfg.socketUrl || !cfg.apiBase) return
+  const gatewayConfig = {
+    socketUrl: cfg.socketUrl,
+    socketPath: cfg.socketPath,
+    apiBase: cfg.apiBase,
+    deviceId: bridgeAccessInfo.deviceId,
+    bridgeToken: bridgeAccessInfo.token,
+    bridgePort: Number(process.env.DESKTOP_BRIDGE_PORT || 9876),
+  }
+  try {
+    if (!deviceGateway) {
+      deviceGateway = createDeviceGateway(gatewayConfig)
+      deviceGateway.start()
+      return
+    }
+    deviceGateway.refreshCredentials(gatewayConfig)
+  } catch (err) {
+    console.warn(`[desktop] 设备网关启动失败: ${err && err.message ? err.message : err}`)
+  }
+}
+
+function stopDeviceGateway() {
+  if (!deviceGateway) return
+  try {
+    deviceGateway.stop()
+  } catch (err) {
+    /* 退出路径忽略 */
+  }
+}
+
 async function registerThisDevice({ silent = false } = {}) {
   // 登录后把本机 bridge 地址与随机 token 上报服务端，按账号动态解析，
   // 解决「随机 token 无法与静态 DESKTOP_BRIDGE_* 对齐」的断链问题。
@@ -316,6 +356,7 @@ async function registerThisDevice({ silent = false } = {}) {
   } else {
     if (!silent) console.log('[desktop] 设备注册成功')
     startDeviceHeartbeat()
+    startDeviceGateway()
   }
   return result
 }
@@ -575,7 +616,8 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('desktop:clear-credential', async () => {
     // 先吊销设备（需要 token），再清本地凭证；否则服务端仍会向已登出设备转发本机操作。
-    // 同时停止心跳：登出后不应再上报，避免服务端把已登出设备判为在线。
+    // 同时停止心跳与网关连接：登出后不应再上报，避免服务端把已登出设备判为在线。
+    stopDeviceGateway()
     stopDeviceHeartbeat()
     await revokeThisDevice()
     if (credentialStore) credentialStore.clear()
@@ -742,6 +784,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  stopDeviceGateway()
   stopDeviceHeartbeat()
   for (const name of [...workers.keys()]) stopWorker(name)
   stopCuaDriver()
