@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { Button } from '@arco-design/web-vue'
+import { Button, Tag } from '@arco-design/web-vue'
 import FileCard from '../components/FileCard.vue'
 
 const knownSources = ['upload', 'artifact', 'render_output', 'platform']
@@ -15,7 +15,7 @@ vi.mock('vue-i18n', () => ({
 }))
 
 const globalOptions = {
-  components: { 'a-button': Button },
+  components: { 'a-button': Button, 'a-tag': Tag },
   stubs: {
     'icon-edit': true,
     'icon-relation': true,

@@ -10,6 +10,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import AppButton from '@/components/AppButton.vue'
+import AppConfirmModal from '@/components/AppConfirmModal.vue'
+import AppEmpty from '@/components/AppEmpty.vue'
 import FileCard from './components/FileCard.vue'
 import {
   createFileCenterFolder,
@@ -319,15 +321,20 @@ onMounted(() => {
             />
           </div>
 
-          <div v-else-if="!loading" class="file-empty">
-            <div class="file-empty__icon"><icon-folder /></div>
-            <p class="file-empty__title">{{ t('fileCenter.empty') }}</p>
-            <p class="file-empty__hint">{{ t('fileCenter.emptyBrowseHint') }}</p>
-            <AppButton variant="primary" @click="onCreateFolder">
-              <template #icon><icon-folder-add /></template>
-              {{ t('fileCenter.newFolder') }}
-            </AppButton>
-          </div>
+          <AppEmpty
+            v-else-if="!loading"
+            variant="page"
+            :title="t('fileCenter.empty')"
+            :hint="t('fileCenter.emptyBrowseHint')"
+          >
+            <template #icon><icon-folder /></template>
+            <template #actions>
+              <AppButton variant="primary" @click="onCreateFolder">
+                <template #icon><icon-folder-add /></template>
+                {{ t('fileCenter.newFolder') }}
+              </AppButton>
+            </template>
+          </AppEmpty>
         </a-spin>
       </a-tab-pane>
 
@@ -346,11 +353,14 @@ onMounted(() => {
             />
           </div>
 
-          <div v-else-if="!allLoading" class="file-empty">
-            <div class="file-empty__icon"><icon-folder /></div>
-            <p class="file-empty__title">{{ t('fileCenter.empty') }}</p>
-            <p class="file-empty__hint">{{ t('fileCenter.emptyAllHint') }}</p>
-          </div>
+          <AppEmpty
+            v-else-if="!allLoading"
+            variant="page"
+            :title="t('fileCenter.empty')"
+            :hint="t('fileCenter.emptyAllHint')"
+          >
+            <template #icon><icon-folder /></template>
+          </AppEmpty>
         </a-spin>
 
         <div v-if="allTotal > allPageSize" class="file-pagination">
@@ -407,20 +417,15 @@ onMounted(() => {
     </a-modal>
 
     <!-- 删除确认（移入回收站，可恢复） -->
-    <a-modal v-model:visible="deleteVisible" :title="t('fileCenter.deleteTitle')" :footer="false">
-      <p class="file-delete-text">
-        {{ t('fileCenter.deleteConfirm') }}
-      </p>
-      <p v-if="deleteTarget" class="file-delete-target">{{ deleteTarget.name }}</p>
-      <div class="file-modal-footer">
-        <AppButton variant="text" @click="deleteVisible = false">
-          {{ t('fileCenter.cancel') }}
-        </AppButton>
-        <AppButton variant="danger" :loading="deleteSubmitting" @click="submitDelete">
-          {{ t('fileCenter.deleteAction') }}
-        </AppButton>
-      </div>
-    </a-modal>
+    <AppConfirmModal
+      v-model:visible="deleteVisible"
+      :title="t('fileCenter.deleteTitle')"
+      :message="t('fileCenter.deleteConfirm')"
+      :target="deleteTarget?.name || ''"
+      :confirm-text="t('fileCenter.deleteAction')"
+      :loading="deleteSubmitting"
+      @confirm="submitDelete"
+    />
   </div>
 </template>
 
@@ -500,44 +505,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-/* ---------------- 空状态 ---------------- */
-
-.file-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  padding: 56px 16px;
-  text-align: center;
-}
-
-.file-empty__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 4px;
-  border-radius: 50%;
-  background: var(--aicss-accent-soft);
-  color: var(--aicss-accent);
-  font-size: 30px;
-}
-
-.file-empty__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--aicss-text);
-}
-
-.file-empty__hint {
-  margin: 0 0 8px;
-  max-width: 420px;
-  font-size: 13px;
-  color: var(--aicss-muted);
-}
-
 /* ---------------- 分页与弹窗 ---------------- */
 
 .file-pagination {
@@ -551,21 +518,5 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
-}
-
-.file-delete-text {
-  margin: 0;
-  font-size: 13px;
-  color: var(--aicss-text-2);
-}
-
-.file-delete-target {
-  margin: 8px 0 0;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--aicss-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

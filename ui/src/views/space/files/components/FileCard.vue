@@ -9,6 +9,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppButton from '@/components/AppButton.vue'
 import AppCard from '@/components/AppCard.vue'
+import AppTag from '@/components/AppTag.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -75,7 +76,7 @@ const iconName = computed(() => (props.isFolder ? 'icon-folder' : fileIconName(p
       <span class="file-card__name" :title="name">{{ name }}</span>
     </template>
     <template #meta>
-      <span class="file-card__source">{{ sourceText }}</span>
+      <AppTag variant="brand" size="small">{{ sourceText }}</AppTag>
     </template>
     <template v-if="showOps" #actions>
       <AppButton
@@ -139,15 +140,5 @@ const iconName = computed(() => (props.isFolder ? 'icon-folder' : fileIconName(p
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.file-card__source {
-  align-self: flex-start;
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 0 8px;
-  border-radius: 999px;
-  color: var(--aicss-accent-text);
-  background: var(--aicss-accent-soft);
 }
 </style>

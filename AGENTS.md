@@ -191,7 +191,13 @@
 **统一的是「抽象与封装」，不是「视觉款式」。** 系统允许存在多种不同样式的组件（A 页面用 A 型按钮、B 页面用 B 型卡片），前提是它们都是**统一抽象、封装良好、可复用**的组件；被禁止的是样式散落——在页面/调用处裸写样式、复制粘贴样式块、写一次性内联样式。
 
 - **同类元素必须以可复用组件形式存在**：按钮、卡片、空状态、标签类 UI 元素需要新样式时，要么复用既有基座（下条），要么新建一个**组件**（如板块专用的 `XxxButton` / `XxxCard`，命名清晰、props/插槽语义明确、可被多处复用），样式写在组件文件内部。**禁止**把颜色/圆角/阴影直接写在页面模板或调用处（历史教训：`#165dff`、`#1d4ed8` 等硬编码色散落 20+ 处，改一个按钮颜色要满仓找——「一个蓝色按钮改半天」）。
-- **基础抽象层（基座）**：`ui/src/components/AppButton.vue`（按钮基座：`variant: primary/secondary/outline/text/ghost/danger` + `status/size/iconOnly` + icon 插槽）与 `ui/src/components/AppCard.vue`（卡片基座：`variant: surface/outline/plain` + `interactive/selected/actionsVisible/padding` + `media/title/meta/actions` 插槽）。新样式组件**优先基于基座扩展**（包装 + props/插槽），或独立封装但遵循下方 token 约定。
+- **基础抽象层（基座）**（`ui/src/components/`）：
+  - `AppButton.vue`：按钮基座（`variant: primary/secondary/outline/text/ghost/danger` + `status/size/iconOnly` + icon 插槽）
+  - `AppCard.vue`：卡片基座（`variant: surface/outline/plain` + `interactive/selected/actionsVisible/padding` + `media/title/meta/actions` 插槽）
+  - `AppEmpty.vue`：空状态基座（`variant: page/inline` + `icon/title/hint/actions` 插槽）
+  - `AppTag.vue`：语义标签基座（`variant: brand/neutral/success/warning/danger/info` + `size`；不再逐处写 Arco color 枚举与样式覆盖类）
+  - `AppConfirmModal.vue`：确认弹窗基座（标题/说明/目标名 + 取消/确认，确认按钮默认 danger）
+  新样式组件**优先基于基座扩展**（包装 + props/插槽），或独立封装但遵循下方 token 约定。
 - **颜色只用主题 token**：组件样式只允许引用 `--aicss-*`、`--tw-*` 或 Arco 语义 token（`--primary-*` 等），**禁止硬编码 hex/rgb**。需要品牌色时用 `var(--aicss-accent)` / `var(--tw-brand)`。
 - **主题 token 分层不可错位**（`ui/src/theme/theme.css`）：
   - `--tw-*` / `--aicss-*` 定义在 `:root` / `[data-theme=...]`（html 层），无竞争者；
