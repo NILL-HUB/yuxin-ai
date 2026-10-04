@@ -212,6 +212,32 @@ class DesktopDeviceService(BaseService):
         self._emit_device_status(device.device_id, "revoked", name=device.name)
         return True
 
+    def verify_bridge_token(self, device_id: str, token: str) -> bool:
+        """校验设备身份：device_id + bridge_token（解密比对，常量时间）；吊销即失效。
+
+        设备网关（/device 连接鉴权）与结果回传端点共用；凭证复用注册时上报的
+        随机 bridge_token，不新增 token 类型——吊销设备即同时失去网关访问。
+        """
+        import hmac as _hmac
+
+        device_id = str(device_id or "").strip()
+        token = str(token or "").strip()
+        if not device_id or not token:
+            return False
+        device = (
+            self.db.session.query(DesktopDevice)
+            .filter(DesktopDevice.device_id == device_id)
+            .first()
+        )
+        if device is None or device.status == "revoked" or not device.bridge_token_encrypted:
+            return False
+        try:
+            expected = _decrypt_value(device.bridge_token_encrypted)
+        except ValueError:
+            logger.warning("设备 token 解密失败 device=%s", device_id)
+            return False
+        return _hmac.compare_digest(str(expected), token)
+
     @staticmethod
     def _emit_device_status(device_id: str, status: str, *, name: str = "") -> None:
         """向订阅了该设备的连接广播状态变更（设备列表实时刷新用）。

@@ -669,3 +669,34 @@ def test_revoke_emits_revoked(monkeypatch):
     _service(session).revoke(device.account_id, "dev-1")
 
     assert emitted and emitted[0][0] == "dev-1" and emitted[0][1]["status"] == "revoked"
+
+
+# ------------------------------------------------- verify_bridge_token（设备网关鉴权）
+
+def test_verify_bridge_token_accepts_matching_token():
+    device = DesktopDevice(
+        device_id="dev-1",
+        account_id=uuid4(),
+        bridge_origin="http://h:1",
+        bridge_token_encrypted=_encrypt_value("secret-token"),
+        status="online",
+    )
+    session = _SessionStub([_QueryStub(first_result=device)])
+
+    assert _service(session).verify_bridge_token("dev-1", "secret-token") is True
+
+
+def test_verify_bridge_token_rejects_wrong_revoked_or_missing():
+    wrong = DesktopDevice(
+        device_id="dev-1", account_id=uuid4(), bridge_origin="http://h:1",
+        bridge_token_encrypted=_encrypt_value("secret-token"), status="online",
+    )
+    revoked = DesktopDevice(
+        device_id="dev-1", account_id=uuid4(), bridge_origin="http://h:1",
+        bridge_token_encrypted=_encrypt_value("secret-token"), status="revoked",
+    )
+
+    assert _service(_SessionStub([_QueryStub(first_result=wrong)])).verify_bridge_token("dev-1", "other") is False
+    assert _service(_SessionStub([_QueryStub(first_result=revoked)])).verify_bridge_token("dev-1", "secret-token") is False
+    assert _service(_SessionStub([_QueryStub(first_result=None)])).verify_bridge_token("missing", "t") is False
+    assert _service(_SessionStub()).verify_bridge_token("", "t") is False

@@ -5,6 +5,7 @@
 - GET /desktop/devices：设备列表（需登录）
 - PATCH /desktop/devices/<device_id>：更新设备展示名/默认标记（需登录）
 - POST /desktop/devices/<device_id>/revoke：吊销设备（需登录）
+- POST /desktop/gateway/result：设备网关结果回传（设备 Bearer 鉴权，非账号）
 
 设备注册用于打通「服务端 → 宿主机 worker」链路：桌面端上报 bridge 地址与
 随机 token，服务端按账号动态解析，替代静态 DESKTOP_BRIDGE_* 配置。
@@ -163,3 +164,43 @@ def register_routes(quart_app):
             a._get_service(DesktopDeviceService).revoke, account.id, device_id
         )
         return a._ok({"revoked": True})
+
+    @quart_app.post("/desktop/gateway/result")
+    async def async_desktop_gateway_result() -> Response:
+        """设备网关结果回传（设备侧调用）：Bearer = 该设备的 bridge_token。
+
+        上行方向无 NAT 问题，因此走 HTTP 而非 WS；服务端按 request_id 唤醒等待侧，
+        无人等待（超时/重启）时按一次性语义静默丢弃。"""
+        from app.http import asgi_app as a
+        from internal.service.desktop_device_service import DesktopDeviceService
+        from internal.service.device_gateway_service import DeviceGatewayService
+
+        auth_header = str(request.headers.get("Authorization") or "")
+        token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+        payload = await request.get_json(force=True, silent=True) or {}
+        device_id = str(payload.get("device_id") or "").strip()
+        request_id = str(payload.get("request_id") or "").strip()
+        if not device_id or not request_id or not token:
+            return a._json_resp(
+                code="validate_error",
+                message="device_id/request_id/token 不能为空",
+                data={},
+                status=400,
+            )
+
+        verified = await a._to_thread(
+            a._get_service(DesktopDeviceService).verify_bridge_token, device_id, token
+        )
+        if not verified:
+            return a._json_resp(code="unauthorized", message="设备凭证无效", data={}, status=401)
+
+        published = await a._to_thread(
+            a._get_service(DeviceGatewayService).publish_result,
+            request_id,
+            ok=bool(payload.get("ok")),
+            result=payload.get("result"),
+            error=str(payload.get("error") or ""),
+        )
+        if not published:
+            return a._json_resp(code="fail", message="结果回传通道不可用", data={}, status=503)
+        return a._ok({"accepted": True})
