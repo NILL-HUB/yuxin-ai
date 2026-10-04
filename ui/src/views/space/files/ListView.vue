@@ -4,12 +4,13 @@
  *
  * 视图：「我的文件」（目录浏览，网格卡片）/「全部文件」（平铺分页）。
  * 删除进入回收站（可恢复）；文件点击经接口返回的 url 打开。
- * 按钮统一走 AppButton（颜色与圆角全部来自主题 token）。
+ * 按钮与卡片均走统一抽象层：AppButton + AppCard 基座派生的 FileCard。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import AppButton from '@/components/AppButton.vue'
+import FileCard from './components/FileCard.vue'
 import {
   createFileCenterFolder,
   deleteFileCenterEntry,
@@ -20,42 +21,10 @@ import {
 import type { FileCenterAllFile, FileCenterEntry } from '@/models/file-center'
 import { getErrorMessage } from '@/utils/error'
 
-const { t, te } = useI18n()
+const { t } = useI18n()
 
 type ViewKey = 'browse' | 'all'
 const activeView = ref<ViewKey>('browse')
-
-/* ---------------- 展示辅助 ---------------- */
-
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
-const VIDEO_EXTS = ['mp4', 'mov', 'webm', 'avi', 'mkv']
-const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac']
-
-const extOf = (name: string) => name.split('.').pop()?.toLowerCase() || ''
-const isImageName = (name: string) => IMAGE_EXTS.includes(extOf(name))
-
-/** 按扩展名映射文件图标（未注册的图标名会解析失败，新增时同步 plugins/arco.ts） */
-const fileIconName = (name: string) => {
-  const ext = extOf(name)
-  if (IMAGE_EXTS.includes(ext)) return 'icon-file-image'
-  if (ext === 'pdf') return 'icon-file-pdf'
-  if (VIDEO_EXTS.includes(ext)) return 'icon-file-video'
-  if (AUDIO_EXTS.includes(ext)) return 'icon-file-audio'
-  return 'icon-file'
-}
-
-const sourceLabel = (source: string) => {
-  const key = `fileCenter.sources.${source}`
-  return te(key) ? t(key) : source
-}
-
-/** 缩略图加载失败的节点（回退为类型图标） */
-const thumbErrors = ref<Record<string, boolean>>({})
-const markThumbError = (id: string) => {
-  thumbErrors.value = { ...thumbErrors.value, [id]: true }
-}
-const canUseThumb = (id: string, name: string, url: string | null, isFolder = false) =>
-  !isFolder && !!url && isImageName(name) && !thumbErrors.value[id]
 
 /* ---------------- 我的文件（目录浏览） ---------------- */
 
@@ -336,62 +305,18 @@ onMounted(() => {
 
         <a-spin :loading="loading" class="file-spin">
           <div v-if="entries.length" class="file-grid">
-            <article
+            <FileCard
               v-for="entry in entries"
               :key="entry.id"
-              class="file-card"
+              :name="entry.name"
+              :is-folder="entry.is_folder"
+              :source="entry.source"
+              :url="entry.url"
               @click="openEntry(entry)"
-            >
-              <div class="file-card__thumb">
-                <img
-                  v-if="canUseThumb(entry.id, entry.name, entry.url, entry.is_folder)"
-                  :src="entry.url as string"
-                  :alt="entry.name"
-                  loading="lazy"
-                  @error="markThumbError(entry.id)"
-                />
-                <component
-                  :is="entry.is_folder ? 'icon-folder' : fileIconName(entry.name)"
-                  v-else
-                  class="file-card__icon"
-                  :class="{ 'is-folder': entry.is_folder }"
-                />
-              </div>
-              <div class="file-card__body">
-                <span class="file-card__name" :title="entry.name">{{ entry.name }}</span>
-                <span class="file-card__source">{{ sourceLabel(entry.source) }}</span>
-              </div>
-              <div class="file-card__ops" @click.stop>
-                <AppButton
-                  variant="ghost"
-                  size="mini"
-                  icon-only
-                  :title="t('fileCenter.rename')"
-                  @click="onRename(entry)"
-                >
-                  <template #icon><icon-edit /></template>
-                </AppButton>
-                <AppButton
-                  variant="ghost"
-                  size="mini"
-                  icon-only
-                  :title="t('fileCenter.move')"
-                  @click="onMove(entry)"
-                >
-                  <template #icon><icon-relation /></template>
-                </AppButton>
-                <AppButton
-                  variant="ghost"
-                  size="mini"
-                  icon-only
-                  status="danger"
-                  :title="t('fileCenter.delete')"
-                  @click="onDelete(entry)"
-                >
-                  <template #icon><icon-delete /></template>
-                </AppButton>
-              </div>
-            </article>
+              @rename="onRename(entry)"
+              @move="onMove(entry)"
+              @delete="onDelete(entry)"
+            />
           </div>
 
           <div v-else-if="!loading" class="file-empty">
@@ -410,27 +335,15 @@ onMounted(() => {
       <a-tab-pane key="all" :title="t('fileCenter.tabs.all')">
         <a-spin :loading="allLoading" class="file-spin">
           <div v-if="allFiles.length" class="file-grid">
-            <article
+            <FileCard
               v-for="item in allFiles"
               :key="item.entry_id"
-              class="file-card"
+              :name="item.name"
+              :source="item.source"
+              :url="item.url"
+              :show-ops="false"
               @click="openFile(item)"
-            >
-              <div class="file-card__thumb">
-                <img
-                  v-if="canUseThumb(item.entry_id, item.name, item.url)"
-                  :src="item.url as string"
-                  :alt="item.name"
-                  loading="lazy"
-                  @error="markThumbError(item.entry_id)"
-                />
-                <component :is="fileIconName(item.name)" v-else class="file-card__icon" />
-              </div>
-              <div class="file-card__body">
-                <span class="file-card__name" :title="item.name">{{ item.name }}</span>
-                <span class="file-card__source">{{ sourceLabel(item.source) }}</span>
-              </div>
-            </article>
+            />
           </div>
 
           <div v-else-if="!allLoading" class="file-empty">
@@ -579,100 +492,12 @@ onMounted(() => {
   font-size: 12px;
 }
 
-/* ---------------- 网格与卡片 ---------------- */
+/* ---------------- 网格（卡片视觉见 AppCard / FileCard） ---------------- */
 
 .file-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 12px;
-}
-
-.file-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--aicss-border);
-  border-radius: var(--aicss-radius);
-  background: var(--aicss-surface);
-  cursor: pointer;
-  transition: border-color 0.16s, box-shadow 0.16s, transform 0.16s;
-}
-
-.file-card:hover {
-  border-color: var(--aicss-border-strong);
-  box-shadow: var(--aicss-shadow-card);
-  transform: translateY(-2px);
-}
-
-.file-card__thumb {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 4 / 3;
-  border-radius: var(--aicss-radius-sm);
-  background: var(--aicss-bg-subtle);
-  overflow: hidden;
-}
-
-.file-card__thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.file-card__icon {
-  font-size: 34px;
-  color: var(--aicss-muted);
-}
-
-.file-card__icon.is-folder {
-  color: var(--aicss-accent);
-}
-
-.file-card__body {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.file-card__name {
-  font-size: 13px;
-  color: var(--aicss-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-card__source {
-  align-self: flex-start;
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 0 8px;
-  border-radius: 999px;
-  color: var(--aicss-accent-text);
-  background: var(--aicss-accent-soft);
-}
-
-.file-card__ops {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--aicss-border);
-  border-radius: 999px;
-  background: var(--aicss-surface);
-  box-shadow: var(--aicss-shadow-card);
-  opacity: 0;
-  transition: opacity 0.16s;
-}
-
-.file-card:hover .file-card__ops {
-  opacity: 1;
 }
 
 /* ---------------- 空状态 ---------------- */

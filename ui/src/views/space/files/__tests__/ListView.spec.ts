@@ -42,6 +42,7 @@ const globalOptions = {
     'icon-delete': true,
     'icon-file': true,
     'icon-file-image': true,
+    'icon-file-pdf': true,
   },
 }
 
