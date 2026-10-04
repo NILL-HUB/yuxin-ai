@@ -56,10 +56,14 @@ class SandboxConfig(Base):
     # 是否激活：同一能力域内仅一个后端可激活
     is_active = Column(Boolean, nullable=False, server_default=text("false"))
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
+    # 注意：`onupdate` 是 ORM 层写入（生成 SET updated_at）。
+    # 不可用 `server_onupdate`——PostgreSQL 没有 MySQL 式 ON UPDATE 语义，
+    # 无触发器时 DB 不会自动刷新该列（历史 bug：全表 updated_at 停在创建时间，
+    # 而 `get_active_backend` 依赖 updated_at 排序定位最新激活行）。
     updated_at = Column(
         DateTime,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP(0)"),
-        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
         default=_utcnow_naive,
+        onupdate=_utcnow_naive,
     )
