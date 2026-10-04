@@ -29,7 +29,6 @@ export default {
   operateFailed: 'Operation failed',
   nameRequired: 'Please enter a name',
   namePlaceholder: 'Enter a name',
-  cancel: 'Cancel',
   confirm: 'Confirm',
   typeFolder: 'Folder',
   typeFile: 'File',

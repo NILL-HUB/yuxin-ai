@@ -27,7 +27,6 @@ export default {
   operateFailed: '操作失败',
   nameRequired: '请输入名称',
   namePlaceholder: '请输入名称',
-  cancel: '取消',
   confirm: '确定',
   typeFolder: '文件夹',
   typeFile: '文件',

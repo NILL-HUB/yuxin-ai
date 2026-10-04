@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n'
 import AppButton from '@/components/AppButton.vue'
 import AppConfirmModal from '@/components/AppConfirmModal.vue'
 import AppEmpty from '@/components/AppEmpty.vue'
+import AppModal from '@/components/AppModal.vue'
 import FileCard from './components/FileCard.vue'
 import {
   createFileCenterFolder,
@@ -377,28 +378,28 @@ onMounted(() => {
     </a-tabs>
 
     <!-- 新建 / 重命名 -->
-    <a-modal v-model:visible="showNameModal.visible" :title="showNameModal.title" :footer="false">
+    <AppModal
+      v-model:visible="showNameModal.visible"
+      :title="showNameModal.title"
+      :confirm-text="t('fileCenter.confirm')"
+      :loading="nameSubmitting"
+      @confirm="submitNameModal"
+    >
       <a-input
         v-model="nameModalValue"
         :placeholder="t('fileCenter.namePlaceholder')"
         allow-clear
         @press-enter="submitNameModal"
       />
-      <div class="file-modal-footer">
-        <AppButton variant="text" @click="showNameModal.visible = false">
-          {{ t('fileCenter.cancel') }}
-        </AppButton>
-        <AppButton variant="primary" :loading="nameSubmitting" @click="submitNameModal">
-          {{ t('fileCenter.confirm') }}
-        </AppButton>
-      </div>
-    </a-modal>
+    </AppModal>
 
     <!-- 移动到 -->
-    <a-modal
+    <AppModal
       v-model:visible="moveModalVisible"
       :title="t('fileCenter.moveTitle')"
-      :footer="false"
+      :confirm-text="t('fileCenter.confirm')"
+      :loading="moveSubmitting"
+      @confirm="submitMove"
     >
       <a-select v-model="moveToFolder" :placeholder="t('fileCenter.movePlaceholder')">
         <a-option value="">{{ t('fileCenter.root') }}</a-option>
@@ -406,15 +407,7 @@ onMounted(() => {
           {{ option.label }}
         </a-option>
       </a-select>
-      <div class="file-modal-footer">
-        <AppButton variant="text" @click="moveModalVisible = false">
-          {{ t('fileCenter.cancel') }}
-        </AppButton>
-        <AppButton variant="primary" :loading="moveSubmitting" @click="submitMove">
-          {{ t('fileCenter.confirm') }}
-        </AppButton>
-      </div>
-    </a-modal>
+    </AppModal>
 
     <!-- 删除确认（移入回收站，可恢复） -->
     <AppConfirmModal
@@ -505,18 +498,11 @@ onMounted(() => {
   gap: 12px;
 }
 
-/* ---------------- 分页与弹窗 ---------------- */
+/* ---------------- 分页 ---------------- */
 
 .file-pagination {
   display: flex;
   justify-content: center;
   margin-top: 16px;
-}
-
-.file-modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 20px;
 }
 </style>

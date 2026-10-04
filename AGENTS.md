@@ -197,6 +197,7 @@
   - `AppEmpty.vue`：空状态基座（`variant: page/inline` + `icon/title/hint/actions` 插槽）
   - `AppTag.vue`：语义标签基座（`variant: brand/neutral/success/warning/danger/info` + `size`；不再逐处写 Arco color 枚举与样式覆盖类）
   - `AppConfirmModal.vue`：确认弹窗基座（标题/说明/目标名 + 取消/确认，确认按钮默认 danger）
+  - `AppModal.vue`：弹窗外壳基座（标题 + 默认插槽内容 + 取消/确认按钮区，`confirmVariant`/`loading`/`hideFooter`；表单/选择类弹窗与 AppConfirmModal 均基于它组合）
   新样式组件**优先基于基座扩展**（包装 + props/插槽），或独立封装但遵循下方 token 约定。
 - **颜色只用主题 token**：组件样式只允许引用 `--aicss-*`、`--tw-*` 或 Arco 语义 token（`--primary-*` 等），**禁止硬编码 hex/rgb**。需要品牌色时用 `var(--aicss-accent)` / `var(--tw-brand)`。
 - **主题 token 分层不可错位**（`ui/src/theme/theme.css`）：
