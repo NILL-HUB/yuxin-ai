@@ -1,7 +1,7 @@
 export default {
   title: 'Sandbox Config',
   subtitle:
-    'Manage sandbox backends per capability with hot switching (affects new sessions only). Secrets stay in environment variables and are never persisted.',
+    'Manage sandbox backends per capability with hot switching (affects new sessions only). Credentials can be configured here; they are stored encrypted and only shown masked.',
   capabilityLabel: {
     code_interpreter: 'Code interpreter (deep thinking / execute_code)',
     skill_exec: 'Skill execution (SCF / sandbox)',
@@ -28,6 +28,8 @@ export default {
   credentialEmpty: 'Not configured',
   saveConfig: 'Save config',
   saveSuccess: 'Config saved',
+  saveSuccessNotActivated:
+    'Config saved. This backend is not active yet — click "Activate" for it to take effect.',
   addConfigItem: 'Add config item',
   removeConfigItem: 'Remove',
   keyPlaceholder: 'Key',

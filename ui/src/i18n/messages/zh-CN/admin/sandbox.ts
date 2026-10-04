@@ -1,7 +1,7 @@
 export default {
   title: '沙箱配置',
   subtitle:
-    '统一管理各能力域的沙箱后端，支持多后端热切换（切换仅影响新会话）；密钥仍走环境变量，不入库。',
+    '统一管理各能力域的沙箱后端，支持多后端热切换（切换仅影响新会话）；凭证可在此配置，加密入库、仅回显掩码。',
   capabilityLabel: {
     code_interpreter: '代码解释器（深度思考 / execute_code）',
     skill_exec: '技能执行（SCF / 沙箱）',
@@ -28,6 +28,7 @@ export default {
   credentialEmpty: '未配置',
   saveConfig: '保存配置',
   saveSuccess: '配置已保存',
+  saveSuccessNotActivated: '配置已保存；该后端尚未激活，点击「设为激活」后才会生效',
   addConfigItem: '新增配置项',
   removeConfigItem: '删除',
   keyPlaceholder: '配置键',

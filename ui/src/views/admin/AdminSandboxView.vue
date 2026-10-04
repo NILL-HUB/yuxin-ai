@@ -9,7 +9,7 @@ import {
   probeSandbox,
   updateSandboxConfig,
 } from '@/services/admin-sandbox'
-import type { SandboxCapabilityOverview } from '@/models/admin-sandbox'
+import type { SandboxCapabilityOverview, SandboxConfigItem } from '@/models/admin-sandbox'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
 
@@ -17,6 +17,7 @@ const { t } = useI18n()
 const adminStore = useAdminStore()
 
 type ConfigDraft = { key: string; value: string }
+type CredentialMeta = { keys: string[]; masked: Record<string, string> }
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -28,7 +29,7 @@ const drafts = ref<Record<string, ConfigDraft[]>>({})
 /** 探测结果：键为 capability */
 const probeResults = ref<Record<string, { ok: boolean; reason: string }>>({})
 /** 凭证元信息（可配键 + 掩码）：键为 `${capability}::${backend}` */
-const credentialMeta = ref<Record<string, { keys: string[]; masked: Record<string, string> }>>({})
+const credentialMeta = ref<Record<string, CredentialMeta>>({})
 /** 凭证草稿（仅暂存待提交值）：键为 `${capability}::${backend}` */
 const credentialDrafts = ref<Record<string, Record<string, string>>>({})
 /** 已编辑过的凭证键：`${capability}::${backend}::${key}`（只提交被编辑项，避免误清空） */
@@ -38,6 +39,37 @@ const canUpdate = computed(() => adminStore.hasPermission('sandbox:update'))
 
 const draftKey = (capability: string, backend: string) => `${capability}::${backend}`
 const draftKeyOf = (capability: string) => draftKey(capability, selectedBackend.value[capability])
+
+/** 配置行 → 草稿项（仅含后端返回的白名单键，可直接回显编辑）。 */
+const toDraft = (row: SandboxConfigItem): ConfigDraft[] =>
+  Object.entries(row.configs || {}).map(([key, value]) => ({
+    key,
+    value: value === null || value === undefined ? '' : String(value),
+  }))
+
+const toCredentialDraft = (keys: string[]) =>
+  Object.fromEntries(keys.map((key) => [key, '']))
+
+/** 用后端返回的一行覆盖该行草稿与凭证掩码，并清除该行的凭证编辑标记。 */
+const applyRowState = (row: SandboxConfigItem) => {
+  const rowKey = draftKey(row.capability, row.backend)
+  const credentialKeys = row.credential_keys || []
+  drafts.value[rowKey] = toDraft(row)
+  credentialMeta.value[rowKey] = { keys: credentialKeys, masked: row.credentials || {} }
+  credentialDrafts.value[rowKey] = toCredentialDraft(credentialKeys)
+  const touched = new Set(credentialTouched.value)
+  for (const key of credentialKeys) touched.delete(`${rowKey}::${key}`)
+  credentialTouched.value = touched
+}
+
+/** 仅刷新各能力域概览（激活态 / 可用性 / 原因），不动草稿与用户选择。 */
+const refreshOverview = async () => {
+  const resp = await getSandboxOverview()
+  overview.value = resp.data.items || []
+}
+
+const activeBackendOf = (capability: string) =>
+  overview.value.find((item) => item.capability === capability)?.active_backend
 
 const capabilityLabel = (capability: string) => {
   const key = `admin.sandbox.capabilityLabel.${capability}`
@@ -82,17 +114,14 @@ const loadAll = async () => {
 
     // 以配置行为准重建草稿（每行仅含白名单键，可直接回显编辑）
     const nextDrafts: Record<string, ConfigDraft[]> = {}
-    const nextCredentialMeta: Record<string, { keys: string[]; masked: Record<string, string> }> = {}
+    const nextCredentialMeta: Record<string, CredentialMeta> = {}
     const nextCredentialDrafts: Record<string, Record<string, string>> = {}
     for (const row of configsResp.data.items || []) {
       const rowKey = draftKey(row.capability, row.backend)
-      nextDrafts[rowKey] = Object.entries(row.configs || {}).map(([key, value]) => ({
-        key,
-        value: value === null || value === undefined ? '' : String(value),
-      }))
       const credentialKeys = row.credential_keys || []
+      nextDrafts[rowKey] = toDraft(row)
       nextCredentialMeta[rowKey] = { keys: credentialKeys, masked: row.credentials || {} }
-      nextCredentialDrafts[rowKey] = Object.fromEntries(credentialKeys.map((key) => [key, '']))
+      nextCredentialDrafts[rowKey] = toCredentialDraft(credentialKeys)
     }
     drafts.value = nextDrafts
     credentialMeta.value = nextCredentialMeta
@@ -120,7 +149,8 @@ const activate = async (capability: string) => {
   try {
     await activateSandboxBackend(capability, backend)
     Message.success(t('admin.sandbox.activateSuccess'))
-    await loadAll()
+    // 只刷新概览（激活态 / 可用性 / 原因），不重建草稿、不重置用户选择
+    await refreshOverview()
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.sandbox.actionFailed')))
   } finally {
@@ -158,9 +188,17 @@ const saveConfig = async (capability: string) => {
   }
   actionLoading.value = true
   try {
-    await updateSandboxConfig(capability, backend, configs, credentials)
-    Message.success(t('admin.sandbox.saveSuccess'))
-    await loadAll()
+    const resp = await updateSandboxConfig(capability, backend, configs, credentials)
+    // 只同步该行（白名单回显 + 掩码刷新），不整页重建：保留其它卡片的未保存编辑与当前选择
+    applyRowState(resp.data.item)
+    if (backend === activeBackendOf(capability)) {
+      // 保存的是激活后端：配置变化会影响可用性展示，刷新概览
+      await refreshOverview()
+      Message.success(t('admin.sandbox.saveSuccess'))
+    } else {
+      // 保存 ≠ 切换：明确提示尚未激活，避免"保存成功即已切换"的误解
+      Message.success(t('admin.sandbox.saveSuccessNotActivated'))
+    }
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.sandbox.actionFailed')))
   } finally {
