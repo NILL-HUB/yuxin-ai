@@ -3,9 +3,14 @@
 问题：`internal/core/**` 是框架无关层（无 injector、无 DB），但沙箱后端构造
 发生在 core。配置又必须来自 admin（DB）。
 
-解法：service 层在启动时**注册一个加载器**（`register_sandbox_runtime_loader`），
-core 通过 `get_sandbox_runtime(capability)` 读取；缓存带 TTL（默认 10s），
-因此 admin 端"热切换"后各 worker 会在 TTL 内自动生效，无需重启。
+解法：service 层在**每个执行进程的入口**注册一个加载器
+（`register_sandbox_runtime_loader`），core 通过 `get_sandbox_runtime(capability)`
+读取；缓存带 TTL（默认 10s），因此 admin 端"热切换"后各 worker 会在 TTL 内
+自动生效，无需重启。
+
+注册入口（新增执行进程必须补注册，否则沙箱恒为「未开通」并打 WARNING）：
+- API/ASGI 进程：`app.http.app` 的 `run_startup_sync_initialization()`
+- Celery worker：`app.http.celery_app._ensure_runtime()`
 
 - 单一权威仍是 `SandboxConfigService.resolve_runtime()`（加载器内部调用它）
 - core 侧不读 DB、不读 env —— 只读注册表
@@ -29,6 +34,8 @@ DEFAULT_TTL_SECONDS = 10.0
 _loader: Callable[[str], SandboxRuntime] | None = None
 _cache: dict[str, tuple[float, SandboxRuntime]] = {}
 _ttl_seconds: float = DEFAULT_TTL_SECONDS
+# 已告警过的能力域：未注册时只告警一次，避免高频调用刷屏（重注册后重置）
+_unregistered_warned: set[str] = set()
 
 
 def register_sandbox_runtime_loader(
@@ -41,6 +48,7 @@ def register_sandbox_runtime_loader(
     _loader = loader
     _ttl_seconds = float(ttl_seconds) if ttl_seconds and ttl_seconds > 0 else DEFAULT_TTL_SECONDS
     _cache.clear()
+    _unregistered_warned.clear()
     logger.info("已注册沙箱运行时加载器（TTL=%ss）", _ttl_seconds)
 
 
@@ -56,6 +64,16 @@ def get_sandbox_runtime(capability: str) -> SandboxRuntime:
     「未开通」分支，而非静默降级。
     """
     if _loader is None:
+        # 显式暴露「漏注册」：历史断链（Celery worker 未注册加载器）曾表现为
+        # admin 保存/切换全部成功但运行时恒不可用，且无任何日志线索
+        if capability not in _unregistered_warned:
+            _unregistered_warned.add(capability)
+            logger.warning(
+                "沙箱运行时加载器未注册：capability=%s 按「未开通」处理。"
+                "该进程入口需调用 register_sandbox_runtime_loader"
+                "（API: app.http.app 启动初始化；Celery: celery_app._ensure_runtime）",
+                capability,
+            )
         return SandboxRuntime(
             capability=capability,
             backend=BACKEND_DISABLED,

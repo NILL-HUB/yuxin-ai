@@ -189,8 +189,15 @@ def run_startup_sync_initialization() -> None:
         except Exception:
             logging.exception("启动时初始化全局控制配置失败")
 
-    # 启动时确保沙箱配置存在（依当前 env 幂等补齐激活后端，保证升级期行为零变化）
-    # 并注册运行时加载器：core 侧经注册表读取，admin 热切换后 TTL 内自动生效
+    # 启动时确保沙箱配置存在（依当前 env 幂等补齐激活后端，保证升级期行为零变化），
+    # 并注册沙箱运行时加载器（core 侧经注册表读取，admin 热切换后 TTL 内自动生效）。
+    #
+    # ⚠️ 这两件事的适用范围不同，切勿整体挪动：
+    #   - `ensure_default_config()` 是 DB seed，只在 API 进程跑（Celery 侧靠 env 推断兜底）；
+    #   - `register_sandbox_runtime_loader()` 是**进程级注册**，每个会执行沙箱的进程都必须有
+    #     （Celery 侧在 `app.http.celery_app._ensure_runtime()` 注册）。
+    #     历史断链：注册曾随 seed 一起被限定在非 Celery 分支，Celery worker 从未注册，
+    #     导致定时任务/后台 Agent 里沙箱恒「未开通」，admin 保存与切换全部不生效。
     if os.getenv("MODE", "api") != "celery":
         try:
             from internal.core.agent.sandbox_runtime_registry import (

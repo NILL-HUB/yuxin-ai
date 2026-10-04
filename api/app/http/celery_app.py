@@ -17,6 +17,26 @@ from celery import Celery, Task
 logger = logging.getLogger(__name__)
 
 
+def _register_sandbox_runtime_loader(injector) -> None:
+    """注册沙箱运行时加载器（**进程级**；与 API 侧同源，幂等）。
+
+    core 层（`sandbox_runtime_registry`）只读进程内注册表，而注册发生在各执行
+    进程的入口：API 进程在 `app.http.app` 的启动初始化里注册。Celery worker
+    此前漏注册，导致 `skill_exec` / `code_interpreter` 在定时任务/后台 Agent
+    里恒为「未开通」——admin 保存与切换看似成功却始终不生效。
+    """
+    try:
+        from internal.core.agent.sandbox_runtime_registry import (
+            register_sandbox_runtime_loader,
+        )
+        from internal.service.sandbox.sandbox_config_service import SandboxConfigService
+
+        register_sandbox_runtime_loader(injector.get(SandboxConfigService).resolve_runtime)
+    except Exception:
+        # 注册失败不阻断任务：沙箱将按「未开通」显式报错，日志留痕便于定位
+        logger.exception("注册沙箱运行时加载器失败（Celery 侧）")
+
+
 def _ensure_runtime() -> None:
     """惰性初始化共享运行时容器，避免 Celery 任务访问 current_app 时断流。"""
     from internal.context import current_app, init_runtime
@@ -31,6 +51,8 @@ def _ensure_runtime() -> None:
     container = Http("app.http.celery_app", conf=Config())
     container.injector = injector
     init_runtime(container)
+    # 容器就绪后立即注册沙箱加载器：任务体执行前必须已生效
+    _register_sandbox_runtime_loader(injector)
 
 
 class AppContextTask(Task):
