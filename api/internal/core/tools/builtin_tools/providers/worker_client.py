@@ -44,6 +44,52 @@ def _inject_session_scopes(payload: dict[str, Any]) -> dict[str, Any]:
     return {**payload, "session_scopes": roots}
 
 
+def _resolve_gateway_mode() -> str:
+    """设备网关路由模式（admin 配置优先、env 兜底、默认 off；异常按 off fail-safe）。"""
+    try:
+        from app.http.module import injector
+        from internal.service.desktop_client_config_service import (
+            DesktopClientConfigService,
+        )
+
+        return injector.get(DesktopClientConfigService).resolve_gateway_mode()
+    except Exception:
+        return "off"
+
+
+def _try_gateway(
+    device_id: str,
+    *,
+    purpose: str,
+    payload: dict[str, Any],
+    timeout: int,
+) -> dict[str, Any] | None:
+    """尝试经设备网关下发一次；返回 None 表示「本次不走网关」（继续直连）。
+
+    - 仅当调用方**已明确设备**（payload.device_id）时可用：网关按 device_id 路由，
+      未绑定设备的自动解析调用仍走直连（P2 execution_target 再统一）。
+    - 设备链路不在线或网关异常 → None（由调用方决定直连兜底或报错）。
+    - 一旦下发成功（返回 dict），调用方必须以其为最终结果，**不得再回退直连**，
+      避免同一指令在设备上重复执行。
+    """
+    device_id = str(device_id or "").strip()
+    if not device_id:
+        return None
+    try:
+        from app.http.module import injector
+        from internal.service.device_gateway_service import DeviceGatewayService
+
+        gateway = injector.get(DeviceGatewayService)
+        if not gateway.is_online(device_id):
+            return None
+        return gateway.call_device(device_id, purpose=purpose, payload=payload, timeout=timeout)
+    except Exception:
+        logger.warning(
+            "设备网关调用失败，按未走网关处理 device=%s purpose=%s", device_id, purpose, exc_info=True
+        )
+        return None
+
+
 def call_host_worker(
     payload: dict[str, Any],
     *,
@@ -76,6 +122,16 @@ def call_host_worker(
     # 0.会话绑定的设备（可选）：非空时只解析该设备，不回退静态配置——避免
     #   「指定设备」语义下静默换到别的机器执行。
     requested_device = str(payload.get("device_id") or "").strip()
+    gateway_mode = _resolve_gateway_mode()
+
+    # 0.1 网关优先（gateway_mode=prefer 且已绑定设备）：下行走常驻链路，绕过 NAT。
+    #     网关一旦下发即以其结果为最终结果，绝不回退直连（防设备重复执行）。
+    if gateway_mode == "prefer":
+        gateway_result = _try_gateway(
+            requested_device, purpose=purpose, payload=payload, timeout=timeout
+        )
+        if gateway_result is not None:
+            return gateway_result
 
     # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
     resolved = resolve_desktop_bridge(
@@ -119,4 +175,13 @@ def call_host_worker(
             error_payload = {"error": str(exc)}
         return {"ok": False, "error": error_payload.get("error", str(exc))}
     except Exception as exc:
+        # fallback 模式：仅对**网络类失败**（连接失败/超时等 OSError；HTTPError 已在上面
+        # 单独处理、JSON 解析失败走 ValueError 不在此列）且设备链路在线时，经网关重试一次。
+        # 注意判定在 urlopen 之外：响应已成功返回后绝不重试，避免设备重复执行。
+        if gateway_mode == "fallback" and isinstance(exc, OSError):
+            gateway_result = _try_gateway(
+                requested_device, purpose=purpose, payload=payload, timeout=timeout
+            )
+            if gateway_result is not None:
+                return gateway_result
         return {"ok": False, "error": f"{error_prefix}: {exc}"}

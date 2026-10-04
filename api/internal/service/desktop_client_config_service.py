@@ -21,7 +21,20 @@ DEFAULT_KEYS = {
     "api_origin": "",
     "update_feed_url": "",
     "update_enabled": False,
+    # 设备网关路由模式（部署级开关，默认 off 保持零行为变化）：
+    # - off：仅直连 bridge；- prefer：优先经网关（公网部署推荐）；- fallback：直连失败后经网关重试
+    "gateway_mode": "off",
 }
+
+GATEWAY_MODES = ("off", "prefer", "fallback")
+
+
+def _normalize_gateway_mode(value, field_label: str = "网关模式") -> str:
+    """校验网关模式：off / prefer / fallback（大小写不敏感），其余抛 ValueError。"""
+    normalized = str(value or "").strip().lower()
+    if normalized not in GATEWAY_MODES:
+        raise ValueError(f"{field_label}只能是 off / prefer / fallback 之一")
+    return normalized
 
 
 def _normalize_http_url(value, field_label: str) -> str:
@@ -71,10 +84,29 @@ class DesktopClientConfigService:
             cfg["update_feed_url"] = _normalize_http_url(payload["update_feed_url"], "更新包地址")
         if "update_enabled" in payload:
             cfg["update_enabled"] = _normalize_bool(payload["update_enabled"])
+        if "gateway_mode" in payload:
+            cfg["gateway_mode"] = _normalize_gateway_mode(payload["gateway_mode"])
         row = self._row()
         row.configs = cfg
         self.session.commit()
         return cfg
+
+    def resolve_gateway_mode(self) -> str:
+        """设备网关路由模式（DB 配置优先、env 兜底、默认 off，异常 fail-safe 为 off）。
+
+        - off：仅直连 bridge（默认，零行为变化）；
+        - prefer：优先经网关下发（公网部署推荐，直连不可达时也可用）；
+        - fallback：直连网络类失败且设备链路在线时，经网关重试一次。
+        """
+        import os
+
+        try:
+            value = str(self.get_config().get("gateway_mode") or "").strip().lower()
+        except Exception:
+            value = ""
+        if value not in GATEWAY_MODES:
+            value = str(os.getenv("DESKTOP_GATEWAY_MODE") or "").strip().lower()
+        return value if value in GATEWAY_MODES else "off"
 
     def resolve_api_origin(self, fallback_origin: str) -> str:
         """桌面端引导用：返回配置的 api_origin；未配置时回退同源。"""
