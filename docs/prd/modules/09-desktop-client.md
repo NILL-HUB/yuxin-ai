@@ -108,7 +108,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 - **设备定向推送**：Socket.IO 房间 `device:<device_id>`（`subscribe_device_notification`，订阅前校验归属）；设备注册「非在线→在线」跃迁与吊销广播 `device_status_changed`（心跳不广播，避免 60s 噪音）。
 - **前端**：`/devices` 设备列表页（在线态/重命名/设默认/解绑/使用此设备）；「使用此设备」→ `/home?device_id=…` → 发送时随 `/assistant-agent/chat` 透传。
 - **手机壳构建链**：`mobile/` 补齐 `typescript` 依赖（`capacitor.config.ts` 需要），`cap sync` 可通过；APK/模拟器验证走 CI（`.github/workflows/mobile-build.yml`）。
-- 仍未实现（P1）：设备网关（WS 下行通道 + 设备级 token）、系统级推送（友盟/个推双通道）——见 spec §4.11。
+- 仍未实现（P1）：设备网关（WS 下行通道 + 设备级 token，见 [plan](../../superpowers/plans/2026-10-04-device-gateway-p1.md)）、系统级推送（个推为主、友盟为辅的双通道 admin 热切换）——见 spec §4.11。
 
 ### 2. 服务器地址注入（server-config + /api/desktop-config）
 

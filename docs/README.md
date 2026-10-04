@@ -54,6 +54,7 @@
 - [superpowers plans & specs](superpowers/)：**仅保留尚未落地或仍在途**的实现计划与规格
   - [手机端遥控与多设备协作设计](superpowers/specs/2026-10-03-mobile-remote-control-multi-device-design.md)：手机端精简遥控面（设备自动发现/显式选设备/任务卡/审批/系统级推送）+ 设备网关（子项目 B）+ 执行位置路由 + 审批挂起-复活模型 + 消息准入三途径；**设计稿，未实现**（推送已定：友盟+个推双通道 admin 热切换）
   - [手机端遥控 P0 实施计划](superpowers/plans/2026-10-03-mobile-p0-device-list-and-binding.md)：设备管理接口、会话级设备绑定与按设备解析 bridge、设备定向推送房间、设备列表页、Capacitor 壳与遥控面骨架；**P0 已落地（2026-10-04）**——系统推送、设备网关（WS 下行）与审批挂起待 P1
+  - [设备网关 P1 实施计划](superpowers/plans/2026-10-04-device-gateway-p1.md)：云端→设备常驻下行通道（`/device` 命名空间 + bridge_token 鉴权 + Redis 关联等待 + 设备 HTTP 回传 + `gateway_mode` 路由）；**进行中**
   - [用户侧统一文件中心（虚拟目录树）设计](superpowers/specs/2026-09-30-user-file-center-design.md)：用户可见的文件目录树管理面 + 可被 Agent 使用的 `file_center` 工具集（阶段 1 已落地；阶段 2 服务端已落地、桌面端 UI 与互传未做；阶段 3 外部云盘未实现——见 §10 落地状态）
   - [L2 全模态（说话人切分/OCR 块）实现计划](superpowers/plans/2026-09-24-kb-l2-omni-diarization.md)：未实现
   - [Qwen 多模态插件 + 助手 Omni 计划](superpowers/plans/2026-09-24-qwen-mm-plugins-assistant-omni.md)：未实现
