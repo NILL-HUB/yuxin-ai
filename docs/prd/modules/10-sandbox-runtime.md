@@ -85,7 +85,7 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
 | --- | --- | --- |
 | `SandboxRuntime` | `api/internal/core/agent/entities/sandbox_runtime_entity.py` | 跨层纯数据契约（`capability` / `backend` / `configs` / `enabled` / `reason`）+ 能力域与后端常量 |
 | `SandboxConfigService` | `api/internal/service/sandbox/sandbox_config_service.py` | 唯一权威读取入口 `resolve_runtime`；`upsert_config` / `set_active_backend` / `ensure_default_config` / `overview` / `probe`；无 DB 记录时回退 env 判定（迁移期零变化） |
-| 运行时注册表 | `api/internal/core/agent/sandbox_runtime_registry.py` | 弥合「core 无 DB」与「service 有 DB」：service 在启动时 `register_sandbox_runtime_loader(service.resolve_runtime)`；core 经 `get_sandbox_runtime(capability)` 读取（TTL 缓存） |
+| 运行时注册表 | `api/internal/core/agent/sandbox_runtime_registry.py` | 弥合「core 无 DB」与「service 有 DB」：**每个会执行沙箱的进程**在入口注册 `register_sandbox_runtime_loader(service.resolve_runtime)`（API：`app.py` 启动初始化；Celery worker：`celery_app._ensure_runtime()`）；core 经 `get_sandbox_runtime(capability)` 读取（TTL 缓存）。未注册时按「未开通」返回并打一次 WARNING |
 | 后端工厂 | `api/internal/core/agent/backends/factory.py` | `build_sandbox_backend(runtime)`；`register_sandbox_backend(name, builder)` 是**接入新后端的唯一扩展点** |
 | HTTP 传输句柄 | `api/internal/core/agent/backends/factory.py` `HttpSandboxHandle` | HTTP 后端的**唯一传输入口**：`execute(payload)` = 向 endpoint 发一次请求并回传解析后的 JSON（含云函数网关 `body` 解包），统一收敛 endpoint 校验 / 超时 / 状态码 / 非 JSON / 网络异常。**不是 `BaseSandbox`**（HTTP 无 shell/文件系统语义），故消费方各自构造 payload、但不再各自 `requests.post` |
 | 技能执行入口 | `api/internal/core/skills/skill_executor.py` `SkillExecutor` | 技能执行的**单一入口**：按 `skill_exec` 的 active 后端选协议（`http_sandbox` → `SkillScfClient`；`baidu_cfc`/`disabled` → `SkillSandboxExecutor`）。**决策只在此一处**——此前藏在 `SkillToolFactory` 的 try/except 里，导致 E2B 模式每次刷伪警告、双失败时吞掉原始错误 |
@@ -100,12 +100,14 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
   - `POST /admin/sandbox/activate`：body `{capability, backend}`，同 capability 内互斥置位
   - `POST /admin/sandbox/probe`：body `{capability}`，返回配置层可用性判定与原因
 - 权限：`sandbox:read` / `sandbox:update`（`api/internal/core/rbac.py` 的 `PERMISSION_CATALOG`；viewer 默认持有 `sandbox:read`）；映射在 `api/app/http/support.py` 的 `_admin_route_permission`
-- 前端：`ui/src/views/admin/AdminSandboxView.vue`（卡片式后端选择 + 激活 + 探测 + 配置键值编辑）、`ui/src/services/admin-sandbox.ts`、`ui/src/models/admin-sandbox.ts`、`ui/src/i18n/messages/{zh-CN,en-US}/admin/sandbox.ts`；菜单在 `AdminLayout.vue` 系统配置组
+- 前端：`ui/src/views/admin/AdminSandboxView.vue`（卡片式后端选择 + 激活 + 探测 + 配置键值编辑）；**保存仅同步单个卡片**（不整页重建，保留其它卡片未保存草稿与当前选择），保存非激活后端时提示需「设为激活」才生效；`ui/src/services/admin-sandbox.ts`、`ui/src/models/admin-sandbox.ts`、`ui/src/i18n/messages/{zh-CN,en-US}/admin/sandbox.ts`；菜单在 `AdminLayout.vue` 系统配置组
 
 ## 5. 热切换语义
 
 - **会话粒度**：切换后**新会话**走新后端；**运行中会话**绑定自身后端直到结束。
 - **生效路径**：`upsert_config` / `set_active_backend` 调用 `invalidate_sandbox_runtime_cache()` → **本进程立即生效**；其他 worker 依赖注册表 **TTL（默认 10s）** 自动跟进，无需重启。
+- **进程注册（TTL 跟进的前提）**：各执行进程必须先注册加载器——API 进程在 `app.py` 启动初始化注册，Celery worker 在 `celery_app._ensure_runtime()` 注册（每个 pool worker 子进程各注册一次）。**新增执行进程必须补注册**；未注册进程恒返回「未开通」并打一次 WARNING。历史断链（2026-10-04 修复）：注册曾与 `ensure_default_config` 一起被限定在 `MODE != "celery"` 分支，Celery worker 从未注册，导致定时任务/后台 Agent 的沙箱恒不可用、admin 保存与切换全部不生效。
+- **保存与激活分离**：`POST /configs/<capability>/<backend>`（保存配置）只写配置/凭证，**不会**切换激活后端；切换必须调 `POST /activate`。前端保存非激活后端时会提示「尚未激活，点击设为激活后生效」，避免"保存成功即已切换"的误解。
 - **无需迁移**：沙箱每次执行新建会话，无存量数据（比 storage 简单，无 `migration` 端点）。
 - **切换安全**：写入走 `auto_commit`；可先 `probe` 校验目标后端再切换；切换仅影响新会话，可随时切回。
 
@@ -157,6 +159,6 @@ Admin 端与全部消费方自动识别新后端（前端按 `overview.backends`
 
 ## 9. 迁移与零变化
 
-- 迁移**只建表**；`ensure_default_config()` 在启动时（`app.py` 的 `ensure_*` 序列，`MODE != celery`）幂等补齐各 (capability, backend) 行，并依**当前 env** 推断 active（`E2B_*` 齐 → `baidu_cfc`；`SKILL_SCF_URL`/`SANDBOX_URL` 非占位 → `http_sandbox`；否则 `disabled`），使库内状态与升级前运行时一致。
+- 迁移**只建表**；`ensure_default_config()` 在启动时（`app.py` 的 `ensure_*` 序列，`MODE != celery`）幂等补齐各 (capability, backend) 行，并依**当前 env** 推断 active（`E2B_*` 齐 → `baidu_cfc`；`SKILL_SCF_URL`/`SANDBOX_URL` 非占位 → `http_sandbox`；否则 `disabled`），使库内状态与升级前运行时一致。注意：**运行时加载器注册不是 seed**——它是进程级注册，Celery 侧在 `celery_app._ensure_runtime()` 单独执行，勿随 seed 一起限定进程。
 - `resolve_runtime` 在**无 DB 记录**时回退 env 判定 → 升级瞬间行为不变。
-- 注册表未注册加载器时（脚本 / 单测）`get_sandbox_runtime` 返回 `disabled`，调用方走「未开通」分支（不崩溃、不静默）。
+- 注册表未注册加载器时（脚本 / 单测）`get_sandbox_runtime` 返回 `disabled`，调用方走「未开通」分支（不崩溃、不静默）；**执行进程漏注册会打一次 WARNING**（见 §5「进程注册」），便于第一时间定位断链。
