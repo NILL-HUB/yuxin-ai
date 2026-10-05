@@ -141,6 +141,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/payment-config', label: t('admin.adminLayout.menu.paymentConfig'), permission: 'payment_config:read' },
       { to: '/admin/mail-config', label: t('admin.adminLayout.menu.mailConfig'), permission: 'system_config:manage' },
       { to: '/admin/sms-config', label: t('admin.adminLayout.menu.smsConfig'), permission: 'system_config:manage' },
+      { to: '/admin/push-config', label: t('admin.adminLayout.menu.pushConfig'), permission: 'system_config:manage' },
       { to: '/admin/global-control-config', label: t('admin.adminLayout.menu.globalControlConfig'), permission: 'system_config:manage' },
     ],
   },

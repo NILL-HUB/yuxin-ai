@@ -272,6 +272,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
             },
             {
+              path: 'push-config',
+              name: 'admin-push-config',
+              component: () => import('@/views/admin/AdminPushConfigView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
+            },
+            {
               path: 'global-control-config',
               name: 'admin-global-control-config',
               component: () => import('@/views/admin/GlobalControlConfigView.vue'),

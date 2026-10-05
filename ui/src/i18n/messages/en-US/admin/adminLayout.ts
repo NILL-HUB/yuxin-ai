@@ -52,6 +52,7 @@ export default  {
         paymentConfig: 'Payment Config',
         mailConfig: 'Mail Config',
         smsConfig: 'SMS Config',
+      pushConfig: 'System Push',
         globalControlConfig: 'Global Control Config',
         schedules: 'Scheduled Tasks',
         openapi: 'API Management',

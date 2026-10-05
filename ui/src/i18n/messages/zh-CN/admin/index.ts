@@ -29,6 +29,7 @@ import roles from './roles'
 import billing from './billing'
 import reconcile from './reconcile'
 import messageConfig from './messageConfig'
+import pushConfig from './pushConfig'
 import globalControlConfig from './globalControlConfig'
 import plans from './plans'
 import orders from './orders'
@@ -73,6 +74,7 @@ export default {
   billing,
   reconcile,
   messageConfig,
+  pushConfig,
   globalControlConfig,
   plans,
   orders,
