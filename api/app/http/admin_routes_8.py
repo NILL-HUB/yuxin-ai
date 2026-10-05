@@ -1877,6 +1877,66 @@ def register_routes(quart_app):
         return a._ok(result)
 
     # ------------------------------------------------------------------
+    # admin 系统推送配置（push_config 单行 JSONB）：读取 / 更新 / 测试推送
+    # 主备次序：个推为主、友盟为辅（密钥字段密文存储，读取掩码）
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/push-config")
+    async def admin_push_config_get():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        from internal.service.push_config_service import PushConfigService
+
+        cfg = await a._to_thread(a._get_service(PushConfigService).get_config)
+        return a._ok({"configs": cfg})
+
+    @quart_app.put("/admin/push-config")
+    async def admin_push_config_put():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        from internal.service.push_config_service import PushConfigService
+
+        try:
+            cfg = await a._to_thread(
+                a._get_service(PushConfigService).update_config,
+                payload.get("configs") or {},
+            )
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
+        return a._ok({"configs": cfg})
+
+    @quart_app.post("/admin/push-config/test")
+    async def admin_push_config_test():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        provider = str(payload.get("provider") or "").strip()
+        device_token = str(payload.get("device_token") or "").strip()
+        from internal.service.push_service import PushGatewayService
+
+        try:
+            result = await a._to_thread(
+                a._get_service(PushGatewayService).send_test,
+                provider=provider,
+                device_token=device_token,
+            )
+        except Exception as exc:
+            return a._ok({"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
+        return a._ok(result)
+
+    # ------------------------------------------------------------------
     # admin 桌面客户端连接配置（desktop_client_config 单行 JSONB）：读取 / 更新
     # ------------------------------------------------------------------
     @quart_app.get("/admin/desktop-client-config")

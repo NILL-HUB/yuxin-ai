@@ -535,3 +535,18 @@ end
             ws_manager.emit_notification_to_user(str(task.account_id), payload, event="schedule_task_result")
         except Exception as exc:
             logger.warning("定时任务结果推送失败: %s", exc)
+
+        # 系统推送（个推为主/友盟为辅）：离线手机也能收到任务结果。
+        # 未启用/未注册令牌时静默跳过；任何异常都不影响调度主流程。
+        try:
+            from app.http.module import injector
+            from internal.service.push_service import PushGatewayService
+
+            injector.get(PushGatewayService).notify_account(
+                task.account_id,
+                title=f"定时任务「{task.name}」{'执行成功' if run.status == ScheduleRunStatus.SUCCESS.value else '执行失败'}",
+                body=str(run.result_summary or run.error_message or "")[:200],
+                data={"type": "schedule_task", "task_id": str(task.id), "run_id": str(run.id), "status": run.status},
+            )
+        except Exception as exc:
+            logger.warning("定时任务系统推送失败: %s", exc)
