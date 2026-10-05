@@ -217,5 +217,6 @@ running ──触发高风险工具/需用户输入──▶ suspended（持久�
   - 手机壳构建链修通（`mobile` 补 `typescript`，`cap sync` 通过；APK/模拟器验证待 CI）。
   - 验证：后端 167 测试、前端 150 文件 / 736 测试通过；`vue-tsc` 0 错误。
 - **设备网关（P1 核心）已落地（2026-10-04）**：`/device` 命名空间 + bridge_token 鉴权（`203f1ffc`）、`gateway_mode` 工具层路由（`2abeedff`）、桌面端网关客户端（`3775bdf1`）；三模式默认 `off` 零行为变化，公网部署置 `prefer`。真机冒烟（Redis `device-link:*` → `call_device` 回传）待执行。
-- **未落地（P1/P2）**：系统级推送（个推为主、友盟为辅）、审批挂起-复活、消息准入三途径、`execution_target` 调度、跨设备协作。
+- **系统推送服务端骨架已落地（2026-10-04）**：`aa3cb83d`——`push_config` 单行 JSONB（凭证加密/掩码）+ 个推/友盟请求构造与主备自动切换+ 令牌注册接口 + 调度结果事件接线；移动端 SDK 集成与厂商资质并行，admin 前端卡片待补。
+- **未落地（P1/P2）**：审批挂起-复活、消息准入三途径、`execution_target` 调度、跨设备协作；推送的移动端 SDK 与 admin UI 详见计划 `docs/superpowers/plans/2026-10-04-push-channel-skeleton.md`。
 - 2026-10-03 更新：键鼠互斥按代码核实收敛为两条窄约束（§4.9）；推送确定为双通道 + admin 热切换（§4.7 / §6.1）；两项决策已记入 §7（#11 / #12）。

@@ -118,7 +118,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 - **路由模式**：`desktop_client_config.gateway_mode`（admin 配置，env `DESKTOP_GATEWAY_MODE` 兜底，**默认 off 零行为变化**）：`prefer`=网关优先（公网部署推荐；一旦下发即最终结果，绝不回退直连防重复执行）；`fallback`=直连仅网络类失败（OSError）且链路在线时经网关重试一次。
 - **边界**：网关路由仅对**已绑定设备**的调用生效（网关按 device_id 路由）；未绑定设备的自动解析调用仍走直连，`execution_target`（P2）再统一。
 - 测试：服务端 19 例（服务/处理器/路由/配置）+ 工具路由 7 例 + 桌面端 9 例；真机冒烟清单（启动桌面端 → Redis 出现 `device-link:*` → 服务端 `call_device` 收到回传）待执行。
-- 仍未实现（P1 后续）：系统级推送（个推为主、友盟为辅的双通道 admin 热切换，需先办厂商资质/备案）——见 spec §4.11。
+- **系统推送（个推为主、友盟为辅）服务端骨架已落地（2026-10-04）**：`push_config`（凭证 Fernet 加密/掩码）+ Provider 适配器与主备自动切换（个推 auth SHA256 签名、token 缓存与 10001 被动刷新；友盟 MD5 签名 unicast）+ 令牌注册接口（`POST /push/devices/register|unregister`）+ 调度结果事件接线（`schedule_execution_service._push_notification`）；admin 入口 `GET/PUT /admin/push-config` 与 `/test` 联调。移动端双 SDK 集成与厂商资质（企业认证/App 备案/软著）并行推进；admin 前端卡片随后补齐。新表需重启 `llmops-api`（或 `alembic upgrade head`）后生效。
 
 ### 2. 服务器地址注入（server-config + /api/desktop-config）
 
