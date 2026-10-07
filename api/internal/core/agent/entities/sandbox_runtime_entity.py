@@ -33,20 +33,29 @@ CAPABILITIES: tuple[str, ...] = (
 BACKEND_BAIDU_CFC = "baidu_cfc"      # 百度 CFC（E2B 协议）
 BACKEND_E2B_CLOUD = "e2b_cloud"      # 官方 E2B 云沙箱（E2B 协议）
 BACKEND_HTTP_SANDBOX = "http_sandbox"  # 通用 HTTP 远端执行（技能 SCF / 工作流代码节点共用，按能力域各自持 endpoint）
+BACKEND_TENCENT_SCF = "tencent_scf"  # 腾讯云函数 SDK 直调（InvokeFunction，IAM 鉴权、无需公网端点）
 BACKEND_DISABLED = "disabled"        # 显式未开通（不再静默降级）
 
 BACKENDS: tuple[str, ...] = (
     BACKEND_BAIDU_CFC,
     BACKEND_E2B_CLOUD,
     BACKEND_HTTP_SANDBOX,
+    BACKEND_TENCENT_SCF,
     BACKEND_DISABLED,
 )
 
 # 每个能力域允许的后端（校验用；`disabled` 一律允许，用于「诚实下线」）
+# 为什么 tencent_scf 不挂 code_interpreter：深思考需要 shell + 文件系统语义，
+# SDK 直调是「一次调用、一次结果」的无状态执行，语义不匹配（同 http_sandbox）。
 CAPABILITY_BACKENDS: dict[str, tuple[str, ...]] = {
     CAPABILITY_CODE_INTERPRETER: (BACKEND_BAIDU_CFC, BACKEND_E2B_CLOUD, BACKEND_DISABLED),
-    CAPABILITY_SKILL_EXEC: (BACKEND_HTTP_SANDBOX, BACKEND_BAIDU_CFC, BACKEND_DISABLED),
-    CAPABILITY_WORKFLOW_CODE: (BACKEND_HTTP_SANDBOX, BACKEND_DISABLED),
+    CAPABILITY_SKILL_EXEC: (
+        BACKEND_HTTP_SANDBOX,
+        BACKEND_TENCENT_SCF,
+        BACKEND_BAIDU_CFC,
+        BACKEND_DISABLED,
+    ),
+    CAPABILITY_WORKFLOW_CODE: (BACKEND_HTTP_SANDBOX, BACKEND_TENCENT_SCF, BACKEND_DISABLED),
 }
 
 

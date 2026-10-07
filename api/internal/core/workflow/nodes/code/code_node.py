@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 from langchain_core.runnables import RunnableConfig
-from internal.core.agent.backends import HttpSandboxHandle, build_sandbox_backend
+from internal.core.agent.backends import RemoteExecHandle, build_sandbox_backend
 from internal.core.agent.entities.sandbox_runtime_entity import CAPABILITY_WORKFLOW_CODE
 from internal.core.agent.sandbox_runtime_registry import get_sandbox_runtime
 from internal.core.workflow.entities.node_entity import NodeResult, NodeStatus
@@ -13,15 +13,16 @@ from internal.exception import FailException
 from .code_entity import CodeNodeData
 
 
-def _resolve_http_sandbox_handle() -> HttpSandboxHandle | None:
-    """解析工作流代码能力域当前激活的 HTTP 沙箱句柄。
+def _resolve_remote_sandbox_handle() -> RemoteExecHandle | None:
+    """解析工作流代码能力域当前激活的远端执行句柄。
 
     沙箱配置的**唯一权威入口**：经注册表读取运行时快照（由 `SandboxConfigService
-    .resolve_runtime` 解析，admin 热切换后生效），再经工厂构造 HTTP 传输句柄。
+    .resolve_runtime` 解析，admin 热切换后生效），再经工厂构造句柄
+    （HTTP POST 或腾讯云 SDK 直调，传输差异对消费方透明）。
     本模块**不再读 env、不再自己发请求**。
     """
     handle = build_sandbox_backend(get_sandbox_runtime(CAPABILITY_WORKFLOW_CODE))
-    return handle if isinstance(handle, HttpSandboxHandle) else None
+    return handle if isinstance(handle, RemoteExecHandle) else None
 
 
 class CodeNode(BaseNode):
@@ -68,8 +69,8 @@ class CodeNode(BaseNode):
     def _execute_function(cls, code: str, *args, **kwargs):
         """通过远端沙箱服务执行Python代码（句柄经沙箱配置中心解析，统一传输入口）。"""
         try:
-            # 1.解析该能力域当前激活的 HTTP 沙箱句柄（admin 可配、热切换）
-            handle = _resolve_http_sandbox_handle()
+            # 1.解析该能力域当前激活的远端执行句柄（admin 可配、热切换）
+            handle = _resolve_remote_sandbox_handle()
             if handle is None:
                 raise FailException("工作流代码沙箱未配置：请在 admin 沙箱配置中启用并填写 endpoint")
 

@@ -10,8 +10,8 @@
 | capability | 典型消费方 | 说明 |
 | --- | --- | --- |
 | `code_interpreter` | 深度思考（DeepThinkingAgent）、builtin 工具 `execute_code` | E2B 协议沙箱（百度 CFC / 官方 E2B 云） |
-| `skill_exec` | 技能包同步与执行（`SkillScfClient` / `SkillSandboxExecutor`） | HTTP 远端执行服务 或 E2B 协议沙箱 |
-| `workflow_code` | 工作流 Python 代码节点（`CodeNode`） | HTTP 远端执行服务 |
+| `skill_exec` | 技能包同步与执行（`SkillScfClient` / `SkillSandboxExecutor`） | HTTP 远端执行服务 / 腾讯云函数 SDK 直调 / E2B 协议沙箱 |
+| `workflow_code` | 工作流 Python 代码节点（`CodeNode`） | HTTP 远端执行服务 / 腾讯云函数 SDK 直调 |
 
 设计目标（对齐 `/admin/storage` 的存储源热切换范式）：
 
@@ -24,6 +24,7 @@
 > 密钥口径（2026-09-29 更新）：`E2B_API_KEY` / `E2B_DOMAIN` 等沙箱凭据现由管理员在 `/admin/sandbox` 配置，
 > **加密入库** `sandbox_config.credentials`（Fernet，键=env 名），运行时经 `resolve_credentials`「DB 解密优先 → env 兜底」读取，
 > 接口只回掩码。DB 为空时行为与升级前逐字节一致。与工具凭证（`builtin_tool_provider.credentials`）同口径。
+> 腾讯云 SDK 直调后端（2026-10-08 新增）的 `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` / `SANDBOX_TOKEN` 同走此口径。
 
 ## 2. 数据模型
 
@@ -33,9 +34,9 @@
 | --- | --- | --- |
 | `id` | uuid pk | |
 | `capability` | varchar(32) | `code_interpreter` / `skill_exec` / `workflow_code` |
-| `backend` | varchar(32) | `baidu_cfc` / `e2b_cloud` / `http_sandbox` / `disabled` |
-| `label` | varchar(64) | 展示名 |
-| `configs` | jsonb | **白名单键**（模板名/超时/endpoint），**不含密钥** |
+| `backend` | varchar(32) | `baidu_cfc` / `e2b_cloud` / `http_sandbox` / `tencent_scf` / `disabled` |
+| `label` | varchar(64) | 展示名（由 `_BACKEND_LABELS` 代码定义，启动时校正） |
+| `configs` | jsonb | **白名单键**（模板名/超时/endpoint/函数名），**不含密钥** |
 | `credentials` | jsonb | 后端凭证（**加密**，键=env 名，如 `E2B_API_KEY`）；键清单由 `_ALLOWED_CREDENTIAL_KEYS` 代码声明 |
 | `is_active` | boolean | 同 capability 内同一时间仅一行为 true |
 | `created_at` / `updated_at` | timestamp | |
@@ -48,8 +49,8 @@
 
 ```python
 code_interpreter: (baidu_cfc, e2b_cloud, disabled)
-skill_exec:       (http_sandbox, baidu_cfc, disabled)
-workflow_code:    (http_sandbox, disabled)
+skill_exec:       (http_sandbox, tencent_scf, baidu_cfc, disabled)
+workflow_code:    (http_sandbox, tencent_scf, disabled)
 ```
 
 ### 配置键白名单（`SandboxConfigService._ALLOWED_CONFIG_KEYS`）
@@ -59,7 +60,32 @@ workflow_code:    (http_sandbox, disabled)
 | `baidu_cfc` | `template_alias`、`fallback_template_alias`、`profile`、`execute_timeout_seconds`、`sandbox_timeout_seconds`、`allow_local_exec` |
 | `e2b_cloud` | `template_alias`、`execute_timeout_seconds`、`sandbox_timeout_seconds` |
 | `http_sandbox` | `endpoint`、`timeout_seconds`、`allow_local_exec` |
+| `tencent_scf` | `function_name`、`region`、`namespace`、`qualifier`、`timeout_seconds`、`allow_local_exec` |
 | `disabled` | （无） |
+
+### 腾讯云函数后端（`tencent_scf`，2026-10-08 落地）
+
+为什么是 SDK 直调而不是 HTTP 端点：腾讯云 **API 网关已停止售卖**（新建报
+`FailedOperation.LimitingResourceCreated: API网关产品已停止售卖`），SCF 亦无「函数 URL」
+公开接口（SDK / tccli / REST 三处核对均无该 Action）。改走 **`InvokeFunction` IAM 签名直调**，
+反而更优：函数零公网暴露面，鉴权由腾讯云签名承担，不需要在公网挂免鉴权端点再用共享 token 兜底。
+
+- 句柄：`factory.py::TencentScfHandle`，与 `HttpSandboxHandle` 同实现 `RemoteExecHandle` 协议
+  （`execute(payload, timeout=None) -> dict`），消费方无感知传输差异；
+- 配置键：`function_name`（必填）、`region`（默认 `ap-guangzhou`）、`namespace`（默认 `default`）、
+  `qualifier`（默认 `$LATEST`）、`timeout_seconds`；
+- 凭证键：`TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`（IAM 长期密钥）、
+  `SANDBOX_TOKEN`（可选，注入 payload 后由函数内 fail-closed 校验，纵深防御）；
+- 可用性判定（`_evaluate`）：SecretId + SecretKey + `function_name` 三者齐备才 enabled；
+- **函数侧实现**：`api/internal/core/skills/scf_handler.py`（仓库内为唯一权威版本，带测试）；
+  部署脚本 `api/scripts/deploy_tencent_scf.py` 把该文件打包为 `index.py` 上传，
+  保证云端版本与仓库同源（函数不存在则创建，存在则更新代码+配置，幂等）。
+  - 入参兼容两种形态：SDK 直调（event 即 payload）与 HTTP 触发（`event["body"]` 包裹）；
+  - `SANDBOX_TOKEN` 环境变量未配置时**拒绝一切请求**（fail-closed，防裸奔）；
+  - **标准运行时无第三方库**（实测 Python3.10 环境下 requests/numpy/PIL 等均
+    `ModuleNotFoundError`）；函数内 `_ALLOWED_IMPORTS` 为**标准库白名单**，
+    白名单外 import 明确报错。需要第三方依赖的技能请改用 E2B 类后端，
+    或为函数打包 Layer / 自定义镜像后再扩展白名单。
 
 ## 3. 单一权威入口（核心链路）
 
@@ -76,7 +102,9 @@ sandbox_runtime_registry（core，进程内 TTL 缓存，默认 10s）
 backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
    ▼
 消费方：DeepThinkingAgent / execute_code / CodeNode / SkillExecutor / SkillSandboxExecutor
-   └─ HTTP 后端（http_sandbox）：唯一传输入口 = HttpSandboxHandle.execute(payload)
+   └─ 远端执行（http_sandbox / tencent_scf）：唯一契约 = RemoteExecHandle.execute(payload)
+        ├─ HttpSandboxHandle        （HTTP POST）
+        └─ TencentScfHandle         （腾讯云 SDK InvokeFunction 直调）
 ```
 
 关键组件：
@@ -87,8 +115,10 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
 | `SandboxConfigService` | `api/internal/service/sandbox/sandbox_config_service.py` | 唯一权威读取入口 `resolve_runtime`；`upsert_config` / `set_active_backend` / `ensure_default_config` / `overview` / `probe`；无 DB 记录时回退 env 判定（迁移期零变化） |
 | 运行时注册表 | `api/internal/core/agent/sandbox_runtime_registry.py` | 弥合「core 无 DB」与「service 有 DB」：**每个会执行沙箱的进程**在入口注册 `register_sandbox_runtime_loader(service.resolve_runtime)`（API：`app.py` 启动初始化；Celery worker：`celery_app._ensure_runtime()`）；core 经 `get_sandbox_runtime(capability)` 读取（TTL 缓存）。未注册时按「未开通」返回并打一次 WARNING |
 | 后端工厂 | `api/internal/core/agent/backends/factory.py` | `build_sandbox_backend(runtime)`；`register_sandbox_backend(name, builder)` 是**接入新后端的唯一扩展点** |
-| HTTP 传输句柄 | `api/internal/core/agent/backends/factory.py` `HttpSandboxHandle` | HTTP 后端的**唯一传输入口**：`execute(payload)` = 向 endpoint 发一次请求并回传解析后的 JSON（含云函数网关 `body` 解包），统一收敛 endpoint 校验 / 超时 / 状态码 / 非 JSON / 网络异常。**不是 `BaseSandbox`**（HTTP 无 shell/文件系统语义），故消费方各自构造 payload、但不再各自 `requests.post` |
-| 技能执行入口 | `api/internal/core/skills/skill_executor.py` `SkillExecutor` | 技能执行的**单一入口**：按 `skill_exec` 的 active 后端选协议（`http_sandbox` → `SkillScfClient`；`baidu_cfc`/`disabled` → `SkillSandboxExecutor`）。**决策只在此一处**——此前藏在 `SkillToolFactory` 的 try/except 里，导致 E2B 模式每次刷伪警告、双失败时吞掉原始错误 |
+| 远端执行协议 | `api/internal/core/agent/backends/factory.py` `RemoteExecHandle` | 远端执行的**公共协议**：`execute(payload, timeout=None) -> Any`（一次调用、一次结果）。消费方只认此协议（`isinstance` 判定），传输差异各自收敛在实现内。**不是 `BaseSandbox`**（E2B 有 shell/文件系统语义） |
+| HTTP 传输句柄 | `api/internal/core/agent/backends/factory.py` `HttpSandboxHandle` | HTTP 后端的**唯一传输入口**：`execute(payload)` = 向 endpoint 发一次请求并回传解析后的 JSON（含云函数网关 `body` 解包），统一收敛 endpoint 校验 / 超时 / 状态码 / 非 JSON / 网络异常 |
+| 腾讯云函数句柄 | `api/internal/core/agent/backends/factory.py` `TencentScfHandle` | `tencent_scf` 后端的唯一传输实现：`execute(payload)` = 腾讯云 SDK `InvokeFunction` 同步直调（IAM 签名，无公网端点），返回 `RetMsg` 解析后的 JSON（同样做 `body` 解包）；签名临时注入 `SANDBOX_TOKEN` |
+| 技能执行入口 | `api/internal/core/skills/skill_executor.py` `SkillExecutor` | 技能执行的**单一入口**：按 `skill_exec` 的 active 后端选协议（`http_sandbox` / `tencent_scf` → `SkillScfClient`；`baidu_cfc`/`disabled` → `SkillSandboxExecutor`）。**决策只在此一处**——此前藏在 `SkillToolFactory` 的 try/except 里，导致 E2B 模式每次刷伪警告、双失败时吞掉原始错误 |
 | 占位符判定 | `api/internal/core/agent/backends/endpoint_utils.py` | `is_placeholder_endpoint`（历史 `_is_placeholder_url` 的唯一副本） |
 
 ## 4. 管理端
@@ -117,10 +147,10 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
 | --- | --- | --- |
 | 深度思考 | `api/internal/core/agent/agents/deep_thinking_agent.py` `_build_deep_agent` | `get_sandbox_runtime("code_interpreter")` → `build_sandbox_backend(runtime)` |
 | 代码执行工具 | `api/internal/core/tools/builtin_tools/providers/code_execution_tool/execute_code.py` | 同上；启用位 = 工具开关 `ENABLE_CODE_EXECUTION_TOOL` **且** `runtime.enabled` |
-| 工作流代码节点 | `api/internal/core/workflow/nodes/code/code_node.py` | `get_sandbox_runtime("workflow_code")` → `build_sandbox_backend(runtime)` → `HttpSandboxHandle.execute(payload)` |
-| 技能执行（单一入口） | `api/internal/core/skills/skill_executor.py` `SkillExecutor` | 按 `skill_exec` active 后端分发：`http_sandbox` → `SkillScfClient`；`baidu_cfc`/`disabled` → `SkillSandboxExecutor`。`SkillToolFactory`（工具展开）只委托它执行，不再自带 try/fallback |
-| 技能 SCF 客户端 | `api/internal/core/skills/skill_executor.py` `SkillScfClient` | `build_sandbox_backend(get_sandbox_runtime("skill_exec"))` → `HttpSandboxHandle.execute(payload)`（显式 `endpoint` 可覆盖，供测试）；另承担 `sync_package`（技能包同步，纯 HTTP，与执行协议无关） |
-| 技能沙箱执行器 | `api/internal/core/skills/skill_executor.py` `SkillSandboxExecutor` | `build_sandbox_backend(runtime)`；仅 `backend == baidu_cfc` 时走远端（HTTP 后端由 `SkillScfClient` 承担）；`disabled` 时走「未开通 / `allow_local_exec`」分支 |
+| 工作流代码节点 | `api/internal/core/workflow/nodes/code/code_node.py` | `get_sandbox_runtime("workflow_code")` → `build_sandbox_backend(runtime)` → `RemoteExecHandle.execute(payload)` |
+| 技能执行（单一入口） | `api/internal/core/skills/skill_executor.py` `SkillExecutor` | 按 `skill_exec` active 后端分发：`http_sandbox` / `tencent_scf` → `SkillScfClient`；`baidu_cfc`/`disabled` → `SkillSandboxExecutor`。`SkillToolFactory`（工具展开）只委托它执行，不再自带 try/fallback |
+| 技能 SCF 客户端 | `api/internal/core/skills/skill_executor.py` `SkillScfClient` | `build_sandbox_backend(get_sandbox_runtime("skill_exec"))` → `RemoteExecHandle.execute(payload)`（HTTP 或 SDK 直调，传输差异透明；显式 `endpoint` 可覆盖，供测试）；另承担 `sync_package`（技能包同步，与执行协议无关） |
+| 技能沙箱执行器 | `api/internal/core/skills/skill_executor.py` `SkillSandboxExecutor` | `build_sandbox_backend(runtime)`；仅 `backend == baidu_cfc` 时走远端（HTTP / SDK 后端由 `SkillScfClient` 承担）；`disabled` 时走「未开通 / `allow_local_exec`」分支 |
 
 > **不再散读 env**：收编后 `grep -rn "E2B_\|SANDBOX_" api/internal --include=*.py` 仅剩工厂 / 服务层 / 后端 SDK 作用域注入。
 
@@ -135,9 +165,12 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
 1. 在 `sandbox_runtime_entity.py` 的 `BACKENDS` 加一个后端名常量；
 2. 在 `CAPABILITY_BACKENDS` 里把它挂到对应能力域；
 3. 在 `factory.py` 写一个 `builder(runtime) -> 句柄 | None` 并 `register_sandbox_backend(名字, builder)`；
-   （如新后端有自己的配置键，再在 `SandboxConfigService._ALLOWED_CONFIG_KEYS` 与 `_BACKEND_LABELS` 登记。）
+   （如新后端有自己的配置键，再在 `SandboxConfigService._ALLOWED_CONFIG_KEYS` / `_ALLOWED_CREDENTIAL_KEYS` 与 `_BACKEND_LABELS` 登记，并在 `_evaluate` 加可用性判定分支。）
 
 Admin 端与全部消费方自动识别新后端（前端按 `overview.backends` 渲染候选项，配置键按白名单回显）。
+
+> 实测范例：`tencent_scf` 即按上述三步接入（2026-10-08），消费方仅把 `isinstance(handle, HttpSandboxHandle)`
+> 放宽为 `isinstance(handle, RemoteExecHandle)`，其余零改动。
 
 ## 8. 安全：本地兜底执行默认关闭 + 受限子进程隔离（S5）
 

@@ -11,6 +11,7 @@ export default {
     baidu_cfc: '百度 CFC 沙箱（E2B 协议）',
     e2b_cloud: 'E2B 云沙箱',
     http_sandbox: 'HTTP 远端执行服务',
+    tencent_scf: '腾讯云函数（SDK 直调）',
     disabled: '未开通',
   },
   activeBackend: '当前激活后端',

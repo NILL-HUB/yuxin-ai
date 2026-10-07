@@ -15,11 +15,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from internal.core.agent.backends import HttpSandboxHandle, build_sandbox_backend
+from internal.core.agent.backends import (
+    HttpSandboxHandle,
+    RemoteExecHandle,
+    build_sandbox_backend,
+)
 from internal.core.agent.backends.endpoint_utils import is_placeholder_endpoint
 from internal.core.agent.entities.sandbox_runtime_entity import (
     BACKEND_BAIDU_CFC,
     BACKEND_HTTP_SANDBOX,
+    BACKEND_TENCENT_SCF,
     CAPABILITY_SKILL_EXEC,
 )
 from internal.core.agent.sandbox_runtime_registry import get_sandbox_runtime
@@ -108,12 +113,12 @@ class SkillScfClient:
     def _runtime():
         return get_sandbox_runtime(CAPABILITY_SKILL_EXEC)
 
-    def _build_handle(self) -> HttpSandboxHandle | None:
-        """解析 HTTP 传输句柄 —— **HTTP 后端的唯一入口**（工厂/显式覆盖二选一）。
+    def _build_handle(self) -> RemoteExecHandle | None:
+        """解析远端执行句柄 —— **远端后端的唯一入口**（工厂/显式覆盖二选一）。
 
         显式 `endpoint`（测试/高级用法）优先；否则经 `build_sandbox_backend` 按
         `skill_exec` 运行时快照构造（工厂已保证 enabled 且 endpoint 非空；占位符
-        endpoint 在 service 层已判为未启用）。返回 None = 该能力域当前无可用 HTTP 后端。
+        endpoint 在 service 层已判为未启用）。返回 None = 该能力域当前无可用远端后端。
         """
         if self.endpoint:
             if is_placeholder_endpoint(self.endpoint):
@@ -123,7 +128,7 @@ class SkillScfClient:
                 timeout_seconds=self._resolve_timeout(),
             )
         handle = build_sandbox_backend(self._runtime())
-        return handle if isinstance(handle, HttpSandboxHandle) else None
+        return handle if isinstance(handle, RemoteExecHandle) else None
 
     def _resolve_timeout(self) -> int:
         if self.timeout_seconds:
@@ -729,7 +734,9 @@ class SkillExecutor:
     def execute_skill(self, payload: dict[str, Any]) -> Any:
         """按 active 后端分发执行（不依赖「先试 A 再兜 B」的异常控制流）。"""
         backend = self._runtime().backend
-        if backend == BACKEND_HTTP_SANDBOX:
+        if backend in (BACKEND_HTTP_SANDBOX, BACKEND_TENCENT_SCF):
+            # 两种后端对 SCF 客户端是同一契约（execute(payload) -> JSON），
+            # 传输差异（HTTP POST / SDK 直调）收敛在句柄内部
             return self.scf_client.execute_skill(payload)
         # baidu_cfc → 真 E2B 执行；disabled → 由沙箱执行器统一走
         # 「未开通」或 `allow_local_exec` 分支（如实报错，不静默降级）

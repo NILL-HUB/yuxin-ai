@@ -24,6 +24,7 @@ from internal.core.agent.entities.sandbox_runtime_entity import (
     BACKEND_DISABLED,
     BACKEND_E2B_CLOUD,
     BACKEND_HTTP_SANDBOX,
+    BACKEND_TENCENT_SCF,
     BACKENDS,
     CAPABILITY_BACKENDS,
     CAPABILITY_CODE_INTERPRETER,
@@ -65,6 +66,14 @@ _ALLOWED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
         "sandbox_timeout_seconds",
     ),
     BACKEND_HTTP_SANDBOX: ("endpoint", "timeout_seconds", "allow_local_exec"),
+    BACKEND_TENCENT_SCF: (
+        "function_name",
+        "region",
+        "namespace",
+        "qualifier",
+        "timeout_seconds",
+        "allow_local_exec",
+    ),
     BACKEND_DISABLED: (),
 }
 
@@ -75,6 +84,8 @@ _ALLOWED_CREDENTIAL_KEYS: dict[str, tuple[str, ...]] = {
     BACKEND_BAIDU_CFC: ("E2B_API_KEY", "E2B_DOMAIN"),
     BACKEND_E2B_CLOUD: ("E2B_API_KEY", "E2B_DOMAIN"),
     BACKEND_HTTP_SANDBOX: (),
+    # 腾讯云 SDK 直调：IAM 长期密钥 + 函数侧共享 token（纵深防御，函数已 fail-closed 校验）
+    BACKEND_TENCENT_SCF: ("TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY", "SANDBOX_TOKEN"),
     BACKEND_DISABLED: (),
 }
 
@@ -83,6 +94,7 @@ _BACKEND_LABELS: dict[str, str] = {
     BACKEND_BAIDU_CFC: "百度 CFC 沙箱（E2B 协议）",
     BACKEND_E2B_CLOUD: "E2B 云沙箱",
     BACKEND_HTTP_SANDBOX: "HTTP 远端执行服务",
+    BACKEND_TENCENT_SCF: "腾讯云函数（SDK 直调）",
     BACKEND_DISABLED: "未开通",
 }
 
@@ -109,7 +121,20 @@ _DEFAULT_CONFIGS: dict[tuple[str, str], dict] = {
         "sandbox_timeout_seconds": 300,
         "allow_local_exec": False,
     },
+    (CAPABILITY_SKILL_EXEC, BACKEND_TENCENT_SCF): {
+        "region": "ap-guangzhou",
+        "namespace": "default",
+        "qualifier": "$LATEST",
+        "timeout_seconds": 60,
+        "allow_local_exec": False,
+    },
     (CAPABILITY_WORKFLOW_CODE, BACKEND_HTTP_SANDBOX): {"timeout_seconds": 60},
+    (CAPABILITY_WORKFLOW_CODE, BACKEND_TENCENT_SCF): {
+        "region": "ap-guangzhou",
+        "namespace": "default",
+        "qualifier": "$LATEST",
+        "timeout_seconds": 60,
+    },
 }
 
 # 历史保护下限：深思考代码沙箱的超时曾被 `read_positive_int_env(..., minimum=default)`
@@ -124,6 +149,7 @@ _TIMEOUT_FLOORS: dict[str, dict[str, int]] = {
 # 缺凭据时的人类可读原因（如实展示，禁止静默降级）
 _REASON_E2B_MISSING = "E2B_API_KEY / E2B_DOMAIN 未配置"
 _REASON_ENDPOINT_MISSING = "远端 endpoint 未配置或为占位符"
+_REASON_TENCENT_MISSING = "腾讯云 SecretId / SecretKey 或函数名未配置"
 _REASON_DISABLED = "该能力域已显式关闭（未开通）"
 
 
@@ -435,6 +461,13 @@ class SandboxConfigService:
                             configs=dict(_DEFAULT_CONFIGS.get((capability, backend), {})),
                         )
                     )
+        # 展示名校正：label 由代码定义（Admin 无自定义入口）；历史行若落成裸 backend 名
+        # （如常量补充前创建的记录），在此收敛回 `_BACKEND_LABELS`。
+        for config in self.list_configs():
+            expected = _BACKEND_LABELS.get(config.backend)
+            if expected and config.label != expected:
+                with self.db.auto_commit():
+                    config.label = expected
         for capability in SUPPORTED_CAPABILITIES:
             has_active = any(c.is_active for c in self.list_configs(capability))
             if has_active:
@@ -478,6 +511,15 @@ class SandboxConfigService:
             endpoint = str(configs.get("endpoint") or "").strip()
             if is_placeholder_endpoint(endpoint):
                 return False, _REASON_ENDPOINT_MISSING
+            return True, ""
+        if backend == BACKEND_TENCENT_SCF:
+            has_secret = bool(
+                str(credentials.get("TENCENTCLOUD_SECRET_ID") or "").strip()
+                and str(credentials.get("TENCENTCLOUD_SECRET_KEY") or "").strip()
+            )
+            has_function = bool(str(configs.get("function_name") or "").strip())
+            if not (has_secret and has_function):
+                return False, _REASON_TENCENT_MISSING
             return True, ""
         return False, f"未知沙箱后端: {backend}"
 

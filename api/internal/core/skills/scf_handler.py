@@ -5,26 +5,55 @@ import os
 import traceback
 from typing import Any
 
+# 技能/工作流代码执行器（腾讯云 SCF 函数侧实现）。
+#
+# 入参形态（两条调用路径，见 `_load_payload`）：
+# - SDK 直调（`tencent_scf` 后端）：event 即 payload 本身；
+# - HTTP 触发（`http_sandbox` 后端）：event["body"] 为 payload（字符串或对象）。
+#
+# 安全（纵深防御）：函数侧强制校验 SANDBOX_TOKEN 环境变量与 payload["token"] 一致；
+# 未配置该环境变量时拒绝一切请求（fail-closed）。SDK 直调路径本身已由腾讯云
+# IAM 签名保护，此校验用于兜住"日后有人给函数挂了公网触发器"的场景。
+
 _REAL_IMPORT = __import__
+# 技能包与工作流代码可用的标准库白名单。
+# 注意：腾讯云 SCF 标准运行时**不预装任何第三方库**（实测 requests/numpy/PIL
+# 均 ModuleNotFoundError），需要第三方依赖的技能/代码请改用 E2B 类后端，
+# 或为函数打包层（Layer）/自定义镜像后再扩展此白名单。
 _ALLOWED_IMPORTS = {
     "__future__",
+    "base64",
     "collections",
     "contextlib",
+    "copy",
+    "csv",
+    "dataclasses",
     "datetime",
+    "decimal",
+    "enum",
+    "functools",
     "hashlib",
     "html",
     "importlib",
     "io",
+    "itertools",
     "json",
+    "math",
     "os",
     "pathlib",
+    "random",
     "re",
+    "secrets",
     "shlex",
+    "statistics",
+    "string",
     "tempfile",
     "textwrap",
+    "time",
     "traceback",
     "typing",
     "urllib",
+    "uuid",
 }
 
 
@@ -86,8 +115,14 @@ def _safe_builtins() -> dict[str, Any]:
     }
 
 
-def _load_body(event: dict[str, Any]) -> dict[str, Any]:
-    body_raw = event.get("body", {})
+def _load_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """统一取入参：兼容 SDK 直调（event 即 payload）与 HTTP 触发（body 包裹）。"""
+    if not isinstance(event, dict):
+        return {}
+    body_raw = event.get("body")
+    if body_raw is None:
+        # SDK 直调（tencent_scf 后端）：event 就是 payload 本身
+        return event
     if isinstance(body_raw, str):
         if not body_raw.strip():
             return {}
@@ -110,9 +145,34 @@ def _build_default_sync_code(payload: dict[str, Any]) -> str:
     )
 
 
+def _error_body(message: str, traceback_text: str = "") -> dict[str, Any]:
+    payload: dict[str, Any] = {"error": message}
+    if traceback_text:
+        payload["traceback"] = traceback_text
+    return {
+        "statusCode": 200,
+        "body": json.dumps(payload, ensure_ascii=False, default=str),
+    }
+
+
+def _check_token(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """校验共享 token（fail-closed）：返回 None 表示通过，否则返回错误响应体。"""
+    required = os.environ.get("SANDBOX_TOKEN", "").strip()
+    if not required:
+        return _error_body("unauthorized: SANDBOX_TOKEN not configured")
+    if str(payload.get("token") or "").strip() != required:
+        return _error_body("unauthorized: bad token")
+    return None
+
+
 def main_handler(event, context):
     try:
-        body = _load_body(event if isinstance(event, dict) else {})
+        body = _load_payload(event if isinstance(event, dict) else {})
+
+        unauthorized = _check_token(body)
+        if unauthorized is not None:
+            return unauthorized
+
         action = str(body.get("action") or "").strip()
         code = str(body.get("code") or "").strip()
         func_name = str(body.get("func_name") or "").strip()

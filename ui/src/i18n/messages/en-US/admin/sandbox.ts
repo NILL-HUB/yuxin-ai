@@ -11,6 +11,7 @@ export default {
     baidu_cfc: 'Baidu CFC sandbox (E2B protocol)',
     e2b_cloud: 'E2B cloud sandbox',
     http_sandbox: 'HTTP remote execution service',
+    tencent_scf: 'Tencent Cloud Function (SDK invoke)',
     disabled: 'Disabled',
   },
   activeBackend: 'Active backend',
