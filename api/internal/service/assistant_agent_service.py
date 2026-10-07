@@ -2145,6 +2145,50 @@ class AssistantAgentService(BaseService):
             )
         return
 
+    def _persist_tool_invocation_audits(
+        self, *, account_id, conversation_id, message_id, agent_thoughts,
+    ) -> None:
+        """把本轮工具类事件（AGENT_ACTION / DATASET_RETRIEVAL）写入审计流水。
+
+        尽力而为：审计失败不影响主流程（与 _persist_assistant_thoughts 同策略）。
+        落地表为 audit_log（resource_type=tool），入参只记参数**键名**（值不入库，
+        见 ToolInvocationAuditService._input_summary 的脱敏口径）。
+        """
+        try:
+            from internal.core.agent.entities.queue_entity import QueueEvent
+            from internal.service.tool_invocation_audit_service import (
+                ToolInvocationAuditService,
+            )
+
+            tool_event_names = {
+                QueueEvent.AGENT_ACTION.value,
+                QueueEvent.DATASET_RETRIEVAL.value,
+            }
+            service = ToolInvocationAuditService()
+            written = 0
+            for item in agent_thoughts or []:
+                event_val = getattr(item, "event", None)
+                event_name = event_val.value if hasattr(event_val, "value") else str(event_val or "")
+                if event_name not in tool_event_names:
+                    continue
+                tool_name = str(getattr(item, "tool", "") or "").strip() or event_name
+                service.record(
+                    account_id=str(account_id),
+                    tool_name=tool_name,
+                    risk_level="safe",
+                    input_data=dict(getattr(item, "tool_input", {}) or {}),
+                    action="tool_invocation",
+                    decision="success",
+                    resource_id=f"{conversation_id}:{message_id}:{tool_name}",
+                )
+                written += 1
+            if written:
+                logger.info(
+                    "工具调用审计已写入 %d 条 conversation=%s", written, conversation_id
+                )
+        except Exception:
+            logger.warning("工具调用审计写入失败（不影响主流程）", exc_info=True)
+
     def _persist_assistant_thoughts(
         self, account, assistant_agent_id, conversation, message, agent_thoughts,
         routing_decision, _chat_started_at: float = 0, resolved_model_name: str = "",
@@ -2226,6 +2270,16 @@ class AssistantAgentService(BaseService):
             self._update_routing_log_execution(
                 message, routing_decision, agent_thoughts, _chat_started_at,
                 resolved_model_name=resolved_model_name,
+            )
+            # 工具调用审计（2026-10-07 补）：把本轮工具类事件写入审计流水。
+            # 历史缺陷：审计写入点 ToolInvokerService 全仓无调用方（挂在从不执行的
+            # 孤儿服务上），audit_log 长期 0 行；本挂载点是主链路唯一收口
+            # （有 account/conversation/message 且持有完整 thought 列表）。
+            self._persist_tool_invocation_audits(
+                account_id=account.id,
+                conversation_id=conversation.id,
+                message_id=message.id,
+                agent_thoughts=agent_thoughts,
             )
         except Exception:
             logger.warning("持久化推理过程失败", exc_info=True)
