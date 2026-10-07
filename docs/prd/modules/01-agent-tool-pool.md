@@ -1279,7 +1279,7 @@ AssistantAgentService._build_assistant_runtime_tools(account_id)
 
 ## 13. 技能包同步状态机（`sync_status`）
 
-`executor_type=scf` 的技能包需要把代码（`skill.py` + 工具定义）推送到远端 **SCF 云函数执行服务**（`SkillScfClient`，endpoint 取 `SKILL_SCF_URL`，缺失时回落 `SANDBOX_URL`），推成功后 Agent 才能调用其工具；`executor_type=prompt` 的技能包不涉及远端。同步结果落在 `skill_package.sync_status` 与 `skill_package_version.sync_status`。
+`executor_type=scf` 的技能包需要把代码（`skill.py` + 工具定义）推送到远端 **SCF 云函数执行服务**（`SkillScfClient`；endpoint / 函数名等由 [admin 沙箱配置中心](./10-sandbox-runtime.md) 的 `skill_exec` 能力域决定——`http_sandbox` 取 `endpoint`，`tencent_scf` 取 `function_name`+`region`；迁移期 env 兜底 `SKILL_SCF_URL` / `SANDBOX_URL`），推成功后 Agent 才能调用其工具；`executor_type=prompt` 的技能包不涉及远端。同步结果落在 `skill_package.sync_status` 与 `skill_package_version.sync_status`。
 
 ### 13.1 取值与语义
 
@@ -1291,7 +1291,7 @@ AssistantAgentService._build_assistant_runtime_tools(account_id)
 | `synced` | 已成功同步到远端 SCF | 是 |
 | `failed` | 已尝试同步但失败（原因见 `sync_error`） | 是 |
 | `skipped` | 无需远端同步（非 scf 类型，或 scf 但无工具定义） | 是 |
-| `not_configured` | 远端 SCF 未配置（`SKILL_SCF_URL` / `SANDBOX_URL` 缺失或为占位符），未发起同步，原因见 `sync_error` | 否（刻意） |
+| `not_configured` | 远端执行服务未配置（`skill_exec` 能力域不可用：`http_sandbox` 缺 endpoint、或 `tencent_scf` 缺凭证/函数名），未发起同步，原因见 `sync_error` | 否（刻意） |
 
 **终态集合**为 `{synced, skipped, failed}`，用于 `_sync_local_package` 的"内容未变则不重推"短路判断。`pending` / `not_configured` **刻意不属终态**：远端配置补齐后，下次同步应自动补推。常量定义见 `skill_service.py` 顶部注释。
 

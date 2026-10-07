@@ -150,14 +150,14 @@ class SkillScfClient:
             logger.warning("skill_exec 远端未配置，跳过技能包同步: %s", payload.get("source_key", ""))
             return {
                 "skipped": True,
-                "reason": "技能远端服务未配置（admin 沙箱配置 → skill_exec → http_sandbox）",
+                "reason": "技能远端服务未配置（admin 沙箱配置 → skill_exec 选择 http_sandbox 或 tencent_scf 并填写配置）",
             }
         return self._post(self._build_sync_request_payload(payload))
 
     def execute_skill(self, payload: dict[str, Any]) -> Any:
         """调用 SCF 执行技能包工具。"""
         if not self.is_configured:
-            raise FailException("技能远端服务未配置（admin 沙箱配置 → skill_exec → http_sandbox）")
+            raise FailException("技能远端服务未配置（admin 沙箱配置 → skill_exec 选择 http_sandbox 或 tencent_scf 并填写配置）")
         return self._post(self._build_execute_request_payload(payload))
 
     def _build_sync_request_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -244,7 +244,7 @@ class SkillScfClient:
         """经统一 HTTP 句柄发请求，并解释技能侧契约（`error` / `result`）。"""
         handle = self._build_handle()
         if handle is None:
-            raise FailException("技能远端服务未配置（admin 沙箱配置 → skill_exec → http_sandbox）")
+            raise FailException("技能远端服务未配置（admin 沙箱配置 → skill_exec 选择 http_sandbox 或 tencent_scf 并填写配置）")
 
         try:
             # endpoint 校验、超时、状态码、非 JSON、网络异常统一由 HttpSandboxHandle 收敛

@@ -82,7 +82,8 @@ def _derive_local_task_keywords(local_package: LocalSkillPackage) -> list[str]:
 #   synced          已成功同步到远端 SCF
 #   failed          已尝试同步但失败（原因见 sync_error）
 #   skipped         无需远端同步（非 scf 类型，或 scf 但无工具定义）
-#   not_configured  远端 SCF 未配置（SKILL_SCF_URL / SANDBOX_URL 缺失或为占位符），
+#   not_configured  远端执行服务未配置（admin 沙箱配置 → skill_exec 不可用：
+#                   http_sandbox 缺 endpoint / tencent_scf 缺凭证或函数名），
 #                   未发起同步，原因见 sync_error
 #
 # 终态集合见 `_sync_local_package` 的去重判断：{synced, skipped, failed}。
