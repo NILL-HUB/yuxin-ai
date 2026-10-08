@@ -3,6 +3,9 @@ export default  {
       occurred: 'Consumed',
       cancelled: 'Stopped',
       unit: 'credits',
+      sessionTotal: 'Session total',
+      messageTotal: 'This message',
+      insufficient: 'Insufficient credits, please top up',
     },
     realtime: {
       occurred: 'Usage occurred',

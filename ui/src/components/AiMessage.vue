@@ -63,6 +63,8 @@ const props = defineProps({
   loading: { type: Boolean, default: false, required: false },
   latency: { type: Number, default: 0, required: false },
   total_token_count: { type: Number, default: 0, required: false },
+  // 本条消息的算力消耗（-1 = 无数据不显示）。2026-10-07 起替代旧「X Tokens」展示。
+  credits: { type: Number, default: -1, required: false },
   agent_thoughts: {
     type: Array as PropType<Array<Record<string, unknown>>>,
     default: () => [],
@@ -385,9 +387,11 @@ const handleMarkdownClick = async (event: MouseEvent) => {
               @click="handleMarkdownClick"
             >
               <div class="aicss-message-bubble__body" v-html="part.html"></div>
+              <!-- 流式期仅显示光标：不传 :text——该组件会把 text 原样输出（裸 markdown），
+                   与上方 v-html 渲染层叠加显示造成「格式全掉成裸 MD」的观感
+                   （2026-10-07 实测）。内容展示统一由 renderedTextParts 的 markdown 层负责。 -->
               <ai-streaming-text
                 v-if="props.loading && props.answer"
-                :text="props.answer"
                 :streaming="true"
               />
             </div>
@@ -433,7 +437,11 @@ const handleMarkdownClick = async (event: MouseEvent) => {
               <icon-check />
               {{ safeLatency.toFixed(2) }}s
             </div>
-            <div class="text-gray-500">{{ safeTotalTokenCount }} Tokens</div>
+            <!-- 旧「X Tokens」为旧系统遗留，2026-10-07 改为展示算力消耗（仅最新一轮有数据；
+                 历史消息的消耗待服务端补充后展示） -->
+            <div v-if="props.credits >= 0" class="text-gray-500">
+              {{ t('billing.usage.messageTotal') }} {{ props.credits }} {{ t('billing.usage.unit') }}
+            </div>
           </a-space>
           <!-- 播放音频&暂停播放 -->
           <div class="flex items-center gap-2">

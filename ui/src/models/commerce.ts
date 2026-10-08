@@ -1,6 +1,8 @@
 import { type BasePaginatorResponse, type BaseResponse } from '@/models/base'
+import { type PlanType } from '@/models/billing'
 
-export type PlanType = 'balance' | 'membership' | 'credits'
+// PlanType 的唯一事实源在 @/models/billing（含 storage_addon）；
+// 此处不再本地定义，避免同一概念两处取值分叉。
 
 export type BalanceProfile = {
   balance: number

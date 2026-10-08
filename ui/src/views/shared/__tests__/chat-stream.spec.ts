@@ -573,6 +573,43 @@ describe('chat-stream', () => {
     expect(message.agent_thoughts).toHaveLength(0)
   })
 
+  it('memory_confirmation_required 应归一化机密记忆确认卡片状态', () => {
+    const message = createMessage()
+    const state = createState()
+
+    const event = {
+      event: QueueEvent.memoryConfirmationRequired,
+      data: {
+        confirmation_id: 'mem-conf-1',
+        count: 1,
+        memory_items: [
+          {
+            memory_id: 'm1',
+            types: ['phone'],
+            label: '手机号',
+            preview: '我的手机号是 [PHONE_REDACTED]',
+          },
+        ],
+      },
+    } as unknown as StreamEventResponse
+
+    const result = applyChatStreamEvent(message, event, state)
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.memoryConfirmationPrompt?.confirmation_id).toBe('mem-conf-1')
+    expect(result.state.memoryConfirmationPrompt?.status).toBe('pending')
+    expect(result.state.memoryConfirmationPrompt?.count).toBe(1)
+    expect(result.state.memoryConfirmationPrompt?.items).toEqual([
+      {
+        memory_id: 'm1',
+        types: ['phone'],
+        label: '手机号',
+        preview: '我的手机号是 [PHONE_REDACTED]',
+      },
+    ])
+    expect(message.agent_thoughts).toHaveLength(0)
+  })
+
   it('os_file_task agent_action 应把执行结果回填到确认卡片', () => {
     const message = createMessage()
     let state = createState()

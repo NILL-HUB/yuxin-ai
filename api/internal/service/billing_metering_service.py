@@ -142,13 +142,11 @@ class BillingUsageAggregator:
         return event
 
     def final(self, reconciliation_service: Any = None) -> BillingUsageDelta:
-        event = self._record(
-            BillingEventType.FINAL.value,
-            "summary",
-            "billing",
-            0,
-            "billing_final",
-        )
+        # 扣费先于事件记录（2026-10-07 调整）：把扣减结果里的「算力不足」带进
+        # billing_final 事件的 metadata，供前端明确提示用户；此前扣费返回值被丢弃，
+        # 余额耗尽时仅静默扣 0（用户无感知，且误以为正常工作）。
+        insufficient = False
+        insufficient_reason = ""
         # 实际扣费：如果注入了 credit_service 和 account_id，则调用 CreditService。
         # 计价口径（2026-09 修复）：同任务同模型的多笔调用先合并 token，再按
         # 模型单价一次精确计价（一次 ceil），避免每笔独立 ceil 把不足 1 算力的
@@ -187,7 +185,7 @@ class BillingUsageAggregator:
                         )
                         if ev_total <= 0:
                             continue
-                        self.credit_service.consume_for_feature(
+                        consume_result = self.credit_service.consume_for_feature(
                             account_id=self.account_id,
                             feature_key=self.feature_key,
                             token_count=ev_total,
@@ -197,16 +195,35 @@ class BillingUsageAggregator:
                             output_tokens=group["output_tokens"],
                             cached_input_tokens=group["cached_input_tokens"],
                         )
+                        if isinstance(consume_result, dict) and consume_result.get("insufficient"):
+                            insufficient = True
+                            insufficient_reason = str(consume_result.get("reason") or "")
                 elif self.total_tokens > 0:
-                    self.credit_service.consume_for_feature(
+                    consume_result = self.credit_service.consume_for_feature(
                         account_id=self.account_id,
                         feature_key=self.feature_key,
                         token_count=self.total_tokens,
                     )
+                    if isinstance(consume_result, dict) and consume_result.get("insufficient"):
+                        insufficient = True
+                        insufficient_reason = str(consume_result.get("reason") or "")
             except Exception:
                 logger.warning(
                     "BillingUsageAggregator 扣费失败 task_id=%s", self.task_id, exc_info=True
                 )
+
+        event = self._record(
+            BillingEventType.FINAL.value,
+            "summary",
+            "billing",
+            0,
+            "billing_final",
+            metadata=(
+                {"insufficient": True, "reason": insufficient_reason or "credits_exhausted"}
+                if insufficient
+                else None
+            ),
+        )
 
         # P2：对账回调——把事件落库并结算（幂等）
         if (

@@ -187,7 +187,8 @@ describe('AiMessage.vue', () => {
   it('shows reasoning details and metrics by default on user-facing surfaces', () => {
     const wrapper = mountAiMessage({
       latency: 1.8,
-      total_token_count: 123,
+      // 2026-10-07 起消息底部展示「本次消耗算力值」（credits），旧的 X Tokens 已下线
+      credits: 123,
       agent_thoughts: [
         {
           id: 'step-1',
