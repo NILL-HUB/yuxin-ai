@@ -32,6 +32,7 @@ _UPDATABLE_FIELDS = (
     "task_keywords",
     "timeout_seconds",
     "enabled",
+    "is_public",
 )
 
 
@@ -91,8 +92,13 @@ class CliService:
         task_keywords: list,
         timeout_seconds: int,
         enabled: bool = True,
+        is_public: bool = False,
     ) -> CliProvider:
-        """注册 CLI provider，并把能力说明书展开为 cli_tool。"""
+        """注册 CLI provider，并把能力说明书展开为 cli_tool。
+
+        `account_id` 为 None 表示平台级（admin 创建，配合 `is_public=True`
+        对全部账号可见）；账号自建的私有 provider 传自身账号 id。
+        """
         provider = CliProvider(
             account_id=account_id,
             name=name,
@@ -106,6 +112,7 @@ class CliService:
             task_keywords=list(task_keywords or []),
             timeout_seconds=int(timeout_seconds or 30),
             enabled=bool(enabled),
+            is_public=bool(is_public),
             source_type="cli",
         )
         with self.db.auto_commit():

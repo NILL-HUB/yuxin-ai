@@ -36,7 +36,9 @@ def resolve_atlascloud_model_api_base() -> str:
 def _build_headers() -> dict[str, str]:
     api_key = resolve_atlascloud_api_key()
     if not api_key:
-        raise FailException("未配置ATLASCLOUD_API_KEY环境变量")
+        raise FailException(
+            "未配置 Atlas Cloud 凭证（ATLASCLOUD_API_KEY），请在管理后台「内置工具-凭证」中配置"
+        )
 
     return {
         "Authorization": f"Bearer {api_key}",

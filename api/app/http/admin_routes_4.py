@@ -796,9 +796,13 @@ def register_routes(quart_app):
                 status=400,
             )
 
+        # admin 创建的是**平台级公共 provider**：account_id 置 None、is_public=True。
+        # 表外键 cli_provider.account_id → account（普通用户表），管理员 id 不在其中——
+        # 传 account.id 会 FK 违规（这正是 cli_provider 长期为空的根因）；
+        # 且只有 is_public=True 才能被用户端助手的工具候选池收集（见 ToolInventoryService._collect_cli_tools）。
         provider = await a._to_thread(
             a._get_service(CliService).create_provider,
-            account_id=account.id,
+            account_id=None,
             name=name,
             label=str(data.get("label") or ""),
             description=str(data.get("description") or ""),
@@ -810,6 +814,7 @@ def register_routes(quart_app):
             task_keywords=list(data.get("task_keywords") or []),
             timeout_seconds=int(data.get("timeout_seconds") or 30),
             enabled=bool(data.get("enabled", True)),
+            is_public=True,
         )
         await _record_mutation_audit(
             action="cli.create",
