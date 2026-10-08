@@ -1,11 +1,11 @@
-from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel
+from internal.entity.orchestrator_entity import ExecutionMode, RoutingRiskLevel
 
 
 class ExecutionModeSelectorService:
     def select(
         self,
         *,
-        risk_level: str = RiskLevel.SAFE.value,
+        risk_level: str = RoutingRiskLevel.SAFE.value,
         needs_deep_thinking: bool = False,
         deep_thinking_requested: bool = False,
         needs_multi_agent: bool = False,
@@ -15,7 +15,7 @@ class ExecutionModeSelectorService:
         image_count: int = 0,
         preliminary_mode: str = ExecutionMode.DIRECT_ANSWER.value,
     ) -> str:
-        if risk_level == RiskLevel.HIGH.value:
+        if risk_level == RoutingRiskLevel.HIGH.value:
             return ExecutionMode.REJECT_OR_CONFIRM.value
         if needs_deep_thinking or deep_thinking_requested:
             return ExecutionMode.DEEP_THINKING.value

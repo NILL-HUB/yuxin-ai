@@ -1,6 +1,6 @@
 from internal.entity.orchestrator_entity import (
     ExecutionMode,
-    RiskLevel,
+    RoutingRiskLevel,
     RoutingDecision,
 )
 from internal.service.task_planner_service import TaskPlannerService
@@ -11,7 +11,7 @@ def _decision(**kwargs):
         "intent": "general_qa",
         "complexity": "simple",
         "execution_mode": ExecutionMode.DIRECT_ANSWER.value,
-        "risk_level": RiskLevel.SAFE.value,
+        "risk_level": RoutingRiskLevel.SAFE.value,
         "reason": "simple",
         "cost_policy": {"max_agent_count": 3},
     }
@@ -98,7 +98,7 @@ def test_task_planner_should_block_reject_or_confirm_decisions():
         "删除全部数据",
         _decision(
             execution_mode=ExecutionMode.REJECT_OR_CONFIRM.value,
-            risk_level=RiskLevel.HIGH.value,
+            risk_level=RoutingRiskLevel.HIGH.value,
         ),
     )
 

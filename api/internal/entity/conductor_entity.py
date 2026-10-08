@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 # =========================================================
 # 枚举与常量
@@ -52,10 +56,38 @@ class ConductorRiskLevel(str, Enum):
 # 硬约束常量
 MAX_AGENTS_PER_PLAN = 5
 VALID_MODEL_TIERS = {"1", "2", "3"}
-VALID_AGENT_POOLS = {
+# 内置兜底池白名单：**仅在 Agent 池注册表不可用时使用**。
+# 运行时以 `resolve_valid_agent_pools()`（注册表，DB 优先）为唯一权威来源。
+# 历史 bug：本白名单与 DB 的 sub_pool_definition 脱节（DB 实际池为
+# tenant/general/code/translation/knowledge，本常量却列 general/coding/office/…），
+# 模型按资源区合法输出 `knowledge`/`code` 等池却被判非法 → 校验失败整链回退。
+BUILTIN_VALID_AGENT_POOLS = {
     "general", "coding", "office", "data",
     "research", "customer_service", "internal_admin",
 }
+# 兼容旧引用名（测试与既有 import 可继续使用；新代码请用 resolve_valid_agent_pools）
+VALID_AGENT_POOLS = BUILTIN_VALID_AGENT_POOLS
+
+
+def resolve_valid_agent_pools() -> set[str]:
+    """返回当前合法的 Agent 池名集合（唯一权威来源：Agent 池注册表，DB 优先）。
+
+    模型在资源区看到的池（`conductor_service._build_agent_pool_summary`）就来自
+    同一注册表，校验与模型输入保持一致，杜绝「模型合法输出被判非法」。
+    """
+    try:
+        from internal.entity.agent_pool_entity import AgentSubPoolRegistry
+
+        names = {
+            str(pool.get("name") or "")
+            for pool in AgentSubPoolRegistry().list_pools()
+            if pool.get("name")
+        }
+        if names:
+            return names
+    except Exception:
+        logger.warning("读取 Agent 池注册表失败，回退内置池白名单", exc_info=True)
+    return set(BUILTIN_VALID_AGENT_POOLS)
 
 
 # =========================================================
@@ -186,12 +218,13 @@ class ConductorPlanValidator:
         if len(task_ids) != len(plan.agents):
             return False, "duplicate task_id in agents"
 
+        valid_pools = resolve_valid_agent_pools()
         for agent in plan.agents:
             # 模型档位校验
             if agent.model_tier not in VALID_MODEL_TIERS:
                 return False, f"agent {agent.task_id} invalid model_tier: {agent.model_tier}"
-            # Agent 池校验
-            if agent.agent_pool not in VALID_AGENT_POOLS:
+            # Agent 池校验（以注册表为权威来源，与模型资源区输入同源）
+            if agent.agent_pool not in valid_pools:
                 return False, f"agent {agent.task_id} invalid agent_pool: {agent.agent_pool}"
             # 依赖校验
             for dep in agent.depends_on:

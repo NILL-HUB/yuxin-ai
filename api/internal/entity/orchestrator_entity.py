@@ -23,7 +23,7 @@ _MULTI_AGENT_MODES = {
 }
 
 
-class RiskLevel(str, Enum):
+class RoutingRiskLevel(str, Enum):
     SAFE = "safe"
     MEDIUM = "medium"
     HIGH = "high"
@@ -40,7 +40,7 @@ class RoutingDecision(SerializableMixin):
     needs_multi_agent: bool = False
     needs_deep_thinking: bool = False
     recommended_model_tier: str = "1"
-    risk_level: str = RiskLevel.SAFE.value
+    risk_level: str = RoutingRiskLevel.SAFE.value
     reason: str = ""
     agent_subset: dict | None = None
     tool_subset: dict | None = None
@@ -71,7 +71,7 @@ class RoutingDecision(SerializableMixin):
             needs_multi_agent=bool(data.get("needs_multi_agent")),
             needs_deep_thinking=bool(data.get("needs_deep_thinking")),
             recommended_model_tier=str(data.get("recommended_model_tier") or "1"),
-            risk_level=str(data.get("risk_level") or RiskLevel.SAFE.value),
+            risk_level=str(data.get("risk_level") or RoutingRiskLevel.SAFE.value),
             reason=str(data.get("reason") or ""),
             agent_subset=data.get("agent_subset"),
             tool_subset=data.get("tool_subset"),

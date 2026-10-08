@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from injector import inject
 
-from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel, RoutingDecision
+from internal.entity.orchestrator_entity import ExecutionMode, RoutingRiskLevel, RoutingDecision
 from internal.service.billing_metering_service import BillingUsageAggregator
 from internal.service.cost_policy_service import CostPolicyService
 from internal.service.tool_selector_service import ToolSelectorService
@@ -310,7 +310,7 @@ class OrchestratorService:
                 needs_agent=False,
                 needs_multi_agent=False,
                 recommended_model_tier="1",
-                risk_level=RiskLevel.UNKNOWN.value,
+                risk_level=RoutingRiskLevel.UNKNOWN.value,
                 reason=f"路由决策异常，回退到直接回答: {exc}",
                 agent_subset={
                     "matched_agent_pools": [],
@@ -338,7 +338,7 @@ class OrchestratorService:
             needs_agent=False,
             needs_multi_agent=False,
             recommended_model_tier="1",
-            risk_level=RiskLevel.SAFE.value,
+            risk_level=RoutingRiskLevel.SAFE.value,
             reason="feature_flag_disabled",
             agent_subset={
                 "matched_agent_pools": [],

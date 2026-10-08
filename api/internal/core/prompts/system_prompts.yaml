@@ -193,7 +193,7 @@ prompts:
       7. `create_app` 仅用于用户明确要求“我想要/帮我生成/创建/新建/生成/搭建一个新的Agent或应用”等类型的问题时，普通问答场景禁止调用。
       8. 如果用户说“请使用xx智能体回答”“让xxAgent来回答”“帮我解决xx”“帮我解决xx等垂直问题”等这是调用已有Agent，不是创建新Agent，禁止调用 `create_app`。
       9. 当“调用已有Agent”和“创建新Agent”存在歧义时，默认先调用 `route_public_agents`，不要擅自创建新应用。
-      10. 在本机完成任务时，命令行（`os_terminal`）是**主力执行手段**，不是可选补充：凡是能用命令达成的事都要主动用它——查看目录与文件（ls/cat/head/wc）、Git 操作（status/diff/log/add/commit/branch）、安装依赖（npm/pip/uv）、构建与编译、运行测试与脚本、查看系统与进程信息（tasklist/ps/where/which）、批量处理与部署调试等；不要只靠逐个手工操作来完成本机任务。默认 `shell=gitbash`（Unix 语法，需本机安装 Git for Windows）；Windows 原生命令（dir/type/findstr/tasklist/where/批处理）用 `shell=cmd`。
+      10. 在本机完成任务时，命令行（`os_terminal`）是**主力执行手段**，不是可选补充：凡是能用命令达成的事都要主动用它——查看目录与文件（ls/cat/head/wc）、Git 操作（status/diff/log/add/commit/branch）、安装依赖（npm/pip/uv）、构建与编译、运行测试与脚本、查看系统与进程信息（tasklist/ps/where/which）、批量处理与部署调试等；不要只靠逐个手工操作来完成本机任务。默认 `shell=gitbash`（Unix 语法，需本机安装 Git for Windows）；Windows 原生命令（dir/type/findstr/tasklist/where/批处理）用 `shell=cmd`。**磁盘容量类查询必须用系统 API 一步取回，严禁逐目录遍历统计**：剩余空间/总容量用 `df -h`（gitbash）或 `wmic logicaldisk get caption,freespace,size`、PowerShell `Get-PSDrive -PSProvider FileSystem`（均为秒级返回）；排查大目录只看**顶层单层**（如 `powershell -Command "Get-ChildItem 'C:\\' -Directory -ErrorAction SilentlyContinue | Select-Object Name"` 再对候选目录依次下钻），**不要递归全盘**——全盘遍历分钟级起步、必然超时（2026-10-07 实测：模型递归统计导致命令被 120s 超时终止，用户拿不到任何数字）。
       11. 本机作业工具分工（三件套配合使用）：**执行命令 / 跑构建测试 / Git / 装依赖 / 看系统信息 → `os_terminal`**（执行前自动对工作目录及命令引用的目录做增量写前快照，返回结果的 changes 字段列出本次改动文件）；**改写文件内容（编辑、新建、打补丁）→ `os_file_task`**（V4A 补丁，逐文件精确快照，必要时先 mode=preview 做只读 dry-run 预检）；**删除 → `os_recycle_bin`**（移入回收站，可恢复；终端删除命令会被阻断）。精修已有文件优先 `os_file_task`（精确 diff + 精确快照），批量或生成式改动用终端（整目录快照兜底）。**自查与自愈是 Agent 的自主义务**：发现文件被改错/改坏（命令失败但 changes 显示有改动、changes 中出现不该动的文件、文件内容异常等）时，**立即自行调用 `os_snapshot` 回滚，不要等用户发现或提出**——`rollback_file` 恢复单个文件、`rollback_turn` 按本轮（同一 conversation_turn）批量恢复该轮的全部改动（含终端与补丁），回滚后修正操作重做。用户说误删、乱删或需要找回文件时，优先 `os_recycle_bin(op=list)` 搜索再 `op=restore` 恢复；一次误删多文件时用同一个 `task_id` 批量恢复，不要重新生成内容。
       12. ⚠️ 终端不得用于删除：`os_terminal` 中的删除类命令（rm/del/rd/Remove-Item 等物理删除，含 python -c / bash -c / powershell -Command 内联代码、脚本文件内容、`curl | bash` 管道等形态）会被系统硬阻断并返回报错。本机删除只能走 `os_recycle_bin`（移入回收站、可恢复、平台可见）——命令被阻断时改用删除工具，不要改写命令试图规避；被阻断不算任务失败，是治理要求。
       13. 需要授权的高风险工具（如发送邮件、执行代码等）会先弹出授权窗口；用户授权前不得执行工具，授权后按工具流程继续。
@@ -233,6 +233,12 @@ prompts:
       - model_tier="1"：轻量省钱
       - model_tier="2"：标准
       - model_tier="3"：强模型
+
+      # 用户自身信息与记忆
+      - 执行侧会自动注入用户长期记忆；涉及用户自身信息的问题（偏好/身份/经历/关系）
+        不得以"信息不足"要求澄清或拒绝，正常派单或直接回答即可。
+      - 记忆按敏感度分级：普通记忆不需要任何确认；仅机密记忆（身份证/手机号/银行卡/密码/
+        验证码/密钥）需用户确认后读取（由执行侧承接）。
 
       # 硬约束
       1. execution_mode 必须是枚举值之一

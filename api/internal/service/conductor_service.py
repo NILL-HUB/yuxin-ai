@@ -312,8 +312,24 @@ class ConductorService:
             plan = self._to_plan(plan_model)
             ok, err = ConductorPlanValidator.validate(plan)
             if not ok:
-                logger.warning("指挥官计划校验失败: %s, 回退到 single_agent", err)
-                return self._fallback_plan(query, f"validation_failed: {err}")
+                # 一次纠错重试：把校验失败原因回喂模型修正。
+                # 背景：LLM 偶发幻觉（如输出不存在的 agent_pool）会让整条编排退化为
+                # 「简单问答」；错误原因对模型是强信号，通常一次即可修正。
+                # 只重试一次：持续失败说明是系统性输入问题，继续重试只会烧 token。
+                logger.warning("指挥官计划校验失败: %s，回喂错误重试一次", err)
+                plan_model = self._invoke_llm(
+                    query=query,
+                    conversation_summary=conversation_summary,
+                    budget_level=budget_level,
+                    balance_credits=balance_credits,
+                    image_url_count=image_url_count,
+                    validation_error=err,
+                )
+                plan = self._to_plan(plan_model)
+                ok, err = ConductorPlanValidator.validate(plan)
+                if not ok:
+                    logger.warning("指挥官纠错重试后仍校验失败: %s, 回退到 single_agent", err)
+                    return self._fallback_plan(query, f"validation_failed: {err}")
             return plan
         except Exception as exc:
             logger.exception("指挥官决策失败，回退到 single_agent: %s", exc)
@@ -392,8 +408,13 @@ class ConductorService:
         budget_level: str,
         balance_credits: float,
         image_url_count: int,
+        validation_error: str = "",
     ) -> ConductorPlanModel:
-        """调用指挥官 LLM，返回结构化计划。"""
+        """调用指挥官 LLM，返回结构化计划。
+
+        `validation_error` 非空时为**纠错重试**：把上次输出被硬约束校验拒绝的原因
+        附在提示词尾部，要求模型对照约束重新输出完整计划。
+        """
         llm = self.language_model_service.get_feature_model("conductor")
         from internal.lib.structured_output import with_structured_output_fallback
         structured_llm = with_structured_output_fallback(llm, ConductorPlanModel)
@@ -423,6 +444,16 @@ class ConductorService:
         plan_instruction = SystemPromptLibraryService().get_prompt_or_default(
             "conductor_plan_instruction"
         )
+        correction_section = ""
+        if validation_error:
+            correction_section = f"""
+
+---
+
+# 上次输出被系统校验拒绝（必须修正后重出）
+{validation_error}
+
+请严格对照「硬约束」重新输出**完整**计划：agent_pool 只能取上面列出的枚举值（general / coding / office / data / research / customer_service / internal_admin），model_tier 只能取 1/2/3，depends_on 只能引用本次计划内已存在的 task_id。不要解释，直接输出修正后的 JSON。"""
         prompt = f"""{system_prompt}
 
 ---
@@ -435,7 +466,7 @@ class ConductorService:
 
 ---
 
-{plan_instruction}"""
+{plan_instruction}{correction_section}"""
         # 复用 LLMActivityProbe 探针：用 stream() 替代 invoke() 获取 token 活性，
         # 后台线程每 60s 检测一次，LLM 持续产出 chunk 则不干扰（复杂需求可运行数小时），
         # 仅在 LLM 死机（60s 无 chunk）时才终止调用。

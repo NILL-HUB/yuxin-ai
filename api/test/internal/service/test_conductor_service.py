@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from internal.entity.conductor_entity import ConductorPlan, ConductorMode
+from internal.entity.conductor_entity import ConductorAgentTask, ConductorMode, ConductorPlan
 from internal.service.conductor_service import ConductorService
 
 
@@ -140,3 +140,112 @@ def test_infer_model_sub_pool_by_capability_and_type():
     assert conductor_mod._infer_model_sub_pool(["research"], "chat") == "research"
     assert conductor_mod._infer_model_sub_pool([], "image_generation") == "creative"
     assert conductor_mod._infer_model_sub_pool(["anything"], "chat") == "general"
+
+
+# ── 校验失败回喂重试（幻觉 agent_pool 不再让整任务退化为简单问答）──────
+
+
+def _plan_with_hallucinated_pool() -> ConductorPlan:
+    """结构合法但 agent_pool 为真正的幻觉值（不在注册表任何池定义中）→ 校验必失败。
+
+    注意：不能用 "knowledge" 等 DB 注册表里真实存在的池——那些是**合法**的
+    （历史 bug 正是硬编码白名单与注册表脱节把它们误判为非法）。
+    """
+    return ConductorPlan(
+        execution_mode=ConductorMode.SINGLE_AGENT.value,
+        intent="content_generation",
+        complexity="medium",
+        reason="bad",
+        agents=[
+            ConductorAgentTask(
+                task_id="t1",
+                title="做视频",
+                description="把文档做成视频",
+                agent_pool="writing_pool_not_exist",
+                model_tier="2",
+            )
+        ],
+    )
+
+
+def test_resolve_valid_agent_pools_matches_registry():
+    """合法池集合必须与 Agent 池注册表（含 DB 覆盖）严格同源——防「模型合法输出被判非法」回归。"""
+    from internal.entity.agent_pool_entity import AgentSubPoolRegistry
+    from internal.entity.conductor_entity import resolve_valid_agent_pools
+
+    registry_names = {pool["name"] for pool in AgentSubPoolRegistry().list_pools()}
+    assert resolve_valid_agent_pools() == registry_names
+
+
+def test_validator_accepts_pool_name_from_registry():
+    """注册表中真实存在的池名（含 DB 里的 knowledge 等）必须通过校验。"""
+    from internal.entity.agent_pool_entity import AgentSubPoolRegistry
+    from internal.entity.conductor_entity import ConductorPlanValidator
+
+    pool_name = AgentSubPoolRegistry().list_pools()[0]["name"]
+    plan = ConductorPlan(
+        execution_mode=ConductorMode.SINGLE_AGENT.value,
+        intent="content_generation",
+        complexity="medium",
+        reason="ok",
+        agents=[
+            ConductorAgentTask(
+                task_id="t1",
+                title="做视频",
+                description="把文档做成视频",
+                agent_pool=pool_name,
+                model_tier="2",
+            )
+        ],
+    )
+
+    ok, err = ConductorPlanValidator.validate(plan)
+
+    assert ok, err
+
+
+def test_conductor_plan_retries_once_with_validation_feedback():
+    """首次校验失败 → 把错误原因回喂模型重试一次；第二次合法则采用（不再回退）。"""
+    service = _service()
+    invalid = _plan_with_hallucinated_pool()
+    valid = ConductorPlan(
+        execution_mode=ConductorMode.DIRECT_ANSWER.value,
+        intent="general_qa",
+        complexity="simple",
+        reason="good",
+        direct_answer="好的",
+    )
+    feedback: list[str] = []
+
+    def _fake_invoke_llm(**kwargs):
+        feedback.append(kwargs.get("validation_error", ""))
+        return object()
+
+    service._invoke_llm = _fake_invoke_llm
+    service._to_plan = lambda model: invalid if len(feedback) == 1 else valid
+
+    plan = service.plan("把文档做成视频")
+
+    assert plan is valid
+    assert len(feedback) == 2
+    assert "invalid agent_pool" in feedback[1]
+
+
+def test_conductor_plan_falls_back_when_retry_also_invalid():
+    """重试后仍校验失败 → 回退 fallback 计划，且只重试一次（不无限烧 token）。"""
+    service = _service()
+    invalid = _plan_with_hallucinated_pool()
+    feedback: list[str] = []
+
+    def _fake_invoke_llm(**kwargs):
+        feedback.append(kwargs.get("validation_error", ""))
+        return object()
+
+    service._invoke_llm = _fake_invoke_llm
+    service._to_plan = lambda model: invalid
+
+    plan = service.plan("把文档做成视频")
+
+    assert plan.intent == "fallback"
+    assert plan.execution_mode == ConductorMode.DIRECT_ANSWER.value
+    assert len(feedback) == 2

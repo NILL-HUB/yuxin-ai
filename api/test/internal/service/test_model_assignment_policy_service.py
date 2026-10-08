@@ -1,13 +1,13 @@
 from internal.entity.orchestrator_entity import (
     ExecutionMode,
     RequestContext,
-    RiskLevel,
+    RoutingRiskLevel,
     RoutingDecision,
 )
 from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
 
 
-def _decision(execution_mode, complexity="simple", risk=RiskLevel.SAFE.value, tier="cheap"):
+def _decision(execution_mode, complexity="simple", risk=RoutingRiskLevel.SAFE.value, tier="cheap"):
     return RoutingDecision(
         intent="test",
         complexity=complexity,
@@ -33,7 +33,7 @@ def test_assign_should_force_strong_for_high_risk_reject_or_confirm():
     decision = _decision(
         ExecutionMode.REJECT_OR_CONFIRM.value,
         complexity="complex",
-        risk=RiskLevel.HIGH.value,
+        risk=RoutingRiskLevel.HIGH.value,
         tier="cheap",
     )
 
@@ -44,7 +44,7 @@ def test_assign_should_use_standard_for_medium_complexity_tool_task():
     decision = _decision(
         ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
         complexity="medium",
-        risk=RiskLevel.SAFE.value,
+        risk=RoutingRiskLevel.SAFE.value,
         tier="cheap",
     )
 
@@ -68,7 +68,7 @@ def test_assign_should_upgrade_unknown_risk_to_standard_at_minimum():
     decision = _decision(
         ExecutionMode.DIRECT_ANSWER.value,
         complexity="simple",
-        risk=RiskLevel.UNKNOWN.value,
+        risk=RoutingRiskLevel.UNKNOWN.value,
         tier="cheap",
     )
 

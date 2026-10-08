@@ -1,6 +1,7 @@
 import logging
 import os
 import tiktoken
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from collections.abc import Callable
@@ -72,6 +73,11 @@ def _ensure_app_context():
 # 数据库未配置模型时的兜底档位（按 tier 升序取第一个 active 模型）
 # "2" 对应标准型（原 "standard"）
 _DEFAULT_FALLBACK_TIER = "2"
+
+# opencode.ai（Zen/Go 网关）会话标识：网关要求 `x-opencode-session` 做路由与提示缓存
+# 优化，缺失时部分端点直接 400 `MissingSessionID`（2026-10-07 实测：opencode 月订阅
+# 模型因此整体不可用）。同一进程内稳定即可命中同节点缓存，无需跨进程一致。
+_OPENCODE_SESSION_ID = f"yujianwo-{uuid.uuid4().hex[:16]}"
 # 历史软超时常量，已废弃：_build_soft_timeout_model 不再压缩 timeout，
 # LLM 死机检测完全由 LLMActivityProbe 活跃探针接管（60s 无 token 产出才判定死机）
 _RUNTIME_FALLBACK_SOFT_TIMEOUT_SECONDS = 30.0
@@ -1087,6 +1093,11 @@ class LanguageModelService(BaseService):
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         )
+        # opencode 网关路由/缓存所需的稳定会话标识（缺失即 400 MissingSessionID）
+        if str(normalized_model_config.get("provider", "")).strip().lower() == "opencode":
+            attributes["default_headers"].setdefault(
+                "x-opencode-session", _OPENCODE_SESSION_ID
+            )
         instance = model_class(
             **attributes,
             **parameters,

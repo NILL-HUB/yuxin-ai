@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from injector import inject
 from pydantic import BaseModel, Field
 
-from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel, RoutingDecision
+from internal.entity.orchestrator_entity import ExecutionMode, RoutingRiskLevel, RoutingDecision
 from internal.service.language_model_service import LanguageModelService
 
 
@@ -202,7 +202,7 @@ class TaskClassifierService:
                 needs_tools=False,
                 needs_agent=False,
                 recommended_model_tier="3",
-                risk_level=RiskLevel.HIGH.value,
+                risk_level=RoutingRiskLevel.HIGH.value,
                 reason="用户请求包含高风险操作，需要拒绝或二次确认",
             )
 
@@ -334,7 +334,7 @@ class TaskClassifierService:
             needs_multi_agent=needs_multi_agent,
             needs_deep_thinking=needs_deep_thinking,
             recommended_model_tier=recommended_model_tier,
-            risk_level=RiskLevel.SAFE.value,
+            risk_level=RoutingRiskLevel.SAFE.value,
             reason=reason,
         )
 
@@ -349,7 +349,7 @@ class TaskClassifierService:
                 needs_agent=True,
                 needs_deep_thinking=True,
                 recommended_model_tier="3",
-                risk_level=RiskLevel.SAFE.value,
+                risk_level=RoutingRiskLevel.SAFE.value,
                 reason="用户请求包含深度思考信号词（深度分析/可行性分析/架构设计/方案设计/报告等）",
             )
 
@@ -362,7 +362,7 @@ class TaskClassifierService:
                 needs_tools=True,
                 needs_agent=True,
                 recommended_model_tier="2",
-                risk_level=RiskLevel.SAFE.value,
+                risk_level=RoutingRiskLevel.SAFE.value,
                 reason="用户明确要求使用垂直智能体或问题适合路由到单个专业 Agent",
             )
 
@@ -376,7 +376,7 @@ class TaskClassifierService:
                 needs_agent=True,
                 needs_multi_agent=True,
                 recommended_model_tier="3",
-                risk_level=RiskLevel.SAFE.value,
+                risk_level=RoutingRiskLevel.SAFE.value,
                 reason="用户请求需要多角度/并行/协作处理",
             )
 
@@ -389,7 +389,7 @@ class TaskClassifierService:
                 needs_tools=True,
                 needs_agent=True,
                 recommended_model_tier="2",
-                risk_level=RiskLevel.SAFE.value,
+                risk_level=RoutingRiskLevel.SAFE.value,
                 reason="用户请求需要查询、联网、文件或工具类能力",
             )
 
@@ -404,7 +404,7 @@ class TaskClassifierService:
             needs_tools=False,
             needs_agent=False,
             recommended_model_tier="1",
-            risk_level=RiskLevel.SAFE.value,
+            risk_level=RoutingRiskLevel.SAFE.value,
             reason=reason,
         )
 

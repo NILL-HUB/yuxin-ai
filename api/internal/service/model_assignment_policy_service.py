@@ -1,7 +1,7 @@
 from internal.entity.orchestrator_entity import (
     ExecutionMode,
     RequestContext,
-    RiskLevel,
+    RoutingRiskLevel,
     RoutingDecision,
 )
 
@@ -44,9 +44,9 @@ class ModelAssignmentPolicy:
 
     @staticmethod
     def _by_risk(risk_level: str, fallback: str) -> str:
-        if risk_level == RiskLevel.HIGH.value:
+        if risk_level == RoutingRiskLevel.HIGH.value:
             return "strong"
-        if risk_level == RiskLevel.UNKNOWN.value:
+        if risk_level == RoutingRiskLevel.UNKNOWN.value:
             return ModelAssignmentPolicy._upgrade(fallback, "standard")
         return fallback
 

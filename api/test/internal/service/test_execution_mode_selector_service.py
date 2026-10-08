@@ -1,4 +1,4 @@
-from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel
+from internal.entity.orchestrator_entity import ExecutionMode, RoutingRiskLevel
 from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
 
 
@@ -7,7 +7,7 @@ def _selector():
 
 
 def test_high_risk_should_always_select_reject_or_confirm():
-    mode = _selector().select(risk_level=RiskLevel.HIGH.value, needs_deep_thinking=True)
+    mode = _selector().select(risk_level=RoutingRiskLevel.HIGH.value, needs_deep_thinking=True)
     assert mode == ExecutionMode.REJECT_OR_CONFIRM.value
 
 
@@ -58,7 +58,7 @@ def test_default_should_return_preliminary_mode():
 
 def test_priority_high_risk_overrides_deep_thinking():
     mode = _selector().select(
-        risk_level=RiskLevel.HIGH.value,
+        risk_level=RoutingRiskLevel.HIGH.value,
         needs_deep_thinking=True,
         deep_thinking_requested=True,
     )

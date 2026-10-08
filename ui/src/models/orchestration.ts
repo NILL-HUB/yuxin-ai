@@ -7,7 +7,7 @@
 export type ModelTier = 'cheap' | 'standard' | 'strong'
 
 /** 风险等级 */
-export type RiskLevel = 'safe' | 'medium' | 'high' | 'unknown'
+export type RoutingRiskLevel = 'safe' | 'medium' | 'high' | 'unknown'
 
 /** 执行模式 */
 export type ExecutionMode =
@@ -48,7 +48,7 @@ export interface RoutingDecision {
   needs_multi_agent: boolean
   needs_deep_thinking: boolean
   recommended_model_tier: ModelTier
-  risk_level: RiskLevel
+  risk_level: RoutingRiskLevel
   reason: string
   agent_subset?: Record<string, unknown> | null
   tool_subset?: Record<string, unknown> | null

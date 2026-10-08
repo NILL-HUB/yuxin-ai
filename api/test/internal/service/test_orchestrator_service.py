@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from internal.entity.agent_pool_entity import BUILTIN_AGENT_SUB_POOLS, AgentSubPoolRegistry
-from internal.entity.orchestrator_entity import ExecutionMode, RoutingDecision, RiskLevel
+from internal.entity.orchestrator_entity import ExecutionMode, RoutingDecision, RoutingRiskLevel
 from internal.service.cost_policy_service import CostPolicyService
 from internal.service.orchestrator_service import OrchestratorService
 from internal.service.pool_intent_resolver_service import PoolIntentResolver
@@ -31,7 +31,7 @@ def test_simple_question_should_route_to_direct_answer():
     assert decision.needs_agent is False
     assert decision.needs_multi_agent is False
     assert decision.recommended_model_tier == "1"
-    assert decision.risk_level == RiskLevel.SAFE.value
+    assert decision.risk_level == RoutingRiskLevel.SAFE.value
 
 
 def test_vertical_agent_request_should_route_to_single_agent():
@@ -57,7 +57,7 @@ def test_high_risk_request_should_require_reject_or_confirm():
     decision = TaskClassifierService().classify("帮我删除数据库所有用户数据")
 
     assert decision.intent == "high_risk_operation"
-    assert decision.risk_level == RiskLevel.HIGH.value
+    assert decision.risk_level == RoutingRiskLevel.HIGH.value
     assert decision.execution_mode == ExecutionMode.REJECT_OR_CONFIRM.value
     assert decision.needs_agent is False
 
@@ -72,7 +72,7 @@ def test_orchestrator_should_fallback_when_classifier_fails():
     assert decision.intent == "fallback"
     assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
     assert decision.needs_agent is False
-    assert decision.risk_level == RiskLevel.UNKNOWN.value
+    assert decision.risk_level == RoutingRiskLevel.UNKNOWN.value
     assert decision.cost_policy["allowed"] is True
     assert decision.billing_events[0]["event"] == "billing_started"
     assert decision.task_plan_summary["execution_mode"] == "direct_answer"
@@ -308,7 +308,7 @@ def test_orchestrator_should_delegate_to_conductor_when_enabled():
                 "needs_multi_agent": False,
                 "needs_deep_thinking": False,
                 "recommended_model_tier": "2",
-                "risk_level": RiskLevel.SAFE.value,
+                "risk_level": RoutingRiskLevel.SAFE.value,
                 "reason": "conductor",
                 "agent_subset": {"selected_agents": []},
                 "tool_subset": {"selected_tools": []},
@@ -352,7 +352,7 @@ def test_conductor_path_tool_subset_filled_by_orchestrator_with_tier_cap():
                 "intent": "analysis",
                 "complexity": "complex",
                 "execution_mode": ExecutionMode.SINGLE_AGENT.value,
-                "risk_level": RiskLevel.SAFE.value,
+                "risk_level": RoutingRiskLevel.SAFE.value,
                 "reason": "conductor",
                 "agent_subset": {"selected_agents": []},
                 "tool_subset": None,

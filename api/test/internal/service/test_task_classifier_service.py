@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel
+from internal.entity.orchestrator_entity import ExecutionMode, RoutingRiskLevel
 from internal.service.global_control_config_service import GlobalControlConfigService
 from internal.service.memory.llm_activity_probe import LLMActivityProbe
 from internal.service.task_classifier_service import (
@@ -25,7 +25,7 @@ class TestTaskClassifierHighRiskIntercept:
         decision = service.classify("请删除数据库里的所有用户表")
         assert decision.intent == "high_risk_operation"
         assert decision.execution_mode == ExecutionMode.REJECT_OR_CONFIRM.value
-        assert decision.risk_level == RiskLevel.HIGH.value
+        assert decision.risk_level == RoutingRiskLevel.HIGH.value
         assert decision.needs_agent is False
         service.language_model_service.get_feature_model.assert_not_called()
 
@@ -33,7 +33,7 @@ class TestTaskClassifierHighRiskIntercept:
         service = _build_service()
         decision = service.classify("DROP TABLE users")
         assert decision.execution_mode == ExecutionMode.REJECT_OR_CONFIRM.value
-        assert decision.risk_level == RiskLevel.HIGH.value
+        assert decision.risk_level == RoutingRiskLevel.HIGH.value
 
     def test_high_risk_keyword_rm_rf(self):
         service = _build_service()
