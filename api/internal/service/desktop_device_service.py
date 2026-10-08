@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from injector import inject
+from sqlalchemy.exc import IntegrityError
 
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.model import DesktopDevice
@@ -83,7 +84,41 @@ class DesktopDeviceService(BaseService):
                 last_seen_at=_utcnow_naive(),
             )
             self.db.session.add(device)
-            self.db.session.commit()
+            try:
+                self.db.session.commit()
+            except IntegrityError:
+                # 并发注册竞态：客户端启动注册与 60s 心跳可能同时到达，双双查不到 existing
+                # 后双双 INSERT，(account_id, device_id) 唯一约束冲突。
+                # 历史缺陷：此处直接 500 → 客户端心跳持续失败 → 服务端 bridge token 永不刷新
+                # → 本机工具调用全部 unauthorized（2026-10-07 实测「看桌面文件」整链失败）。
+                # 处置：回滚后按更新路径收敛，保证 token 刷新这一关键副作用必然发生。
+                self.db.session.rollback()
+                existing = (
+                    self.db.session.query(DesktopDevice)
+                    .filter(
+                        DesktopDevice.account_id == account_id,
+                        DesktopDevice.device_id == device_id,
+                    )
+                    .one_or_none()
+                )
+                if existing is None:
+                    raise
+                was_online = existing.status == "online"
+                self.update(
+                    existing,
+                    name=name or existing.name,
+                    platform=platform or existing.platform,
+                    bridge_origin=bridge_origin,
+                    bridge_token_encrypted=token_encrypted,
+                    status="online",
+                    last_seen_at=_utcnow_naive(),
+                )
+                logger.info(
+                    "桌面设备注册并发冲突已收敛为更新 account=%s device=%s", account_id, device_id
+                )
+                if not was_online:
+                    self._emit_device_status(device_id, "online", name=existing.name)
+                return self._to_dict(existing)
             logger.info("桌面设备注册成功 account=%s device=%s", account_id, device_id)
             self._emit_device_status(device_id, "online", name=device.name)
         else:

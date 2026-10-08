@@ -67,34 +67,52 @@ def test_no_null_owner_type_rows(engine):
 
 
 def test_existing_rows_are_user_scoped(engine):
+    """存量行归属必须完整：user 带 owner_account_id、admin 带 owner_admin_user_id。
+
+    说明：P3a 回填时平台只有 user 主体，故当时断言「全部为 user」；ADMIN-P3c 起
+    admin 主体（管理端 Agent 记忆）是**受支持**的主体类型，此断言按两主体收敛。
+    """
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        count = conn.execute(
+        user_rows = conn.execute(
             text(
                 "SELECT count(*) FROM user_memory "
                 "WHERE owner_type = 'user' AND owner_account_id IS NOT NULL"
             )
         ).scalar()
+        admin_rows = conn.execute(
+            text(
+                "SELECT count(*) FROM user_memory "
+                "WHERE owner_type = 'admin' AND owner_admin_user_id IS NOT NULL"
+            )
+        ).scalar()
         total = conn.execute(text("SELECT count(*) FROM user_memory")).scalar()
-    assert count == total, "所有存量行都应是 user 主体且保留 owner_account_id"
+    assert user_rows + admin_rows == total, (
+        "存在归属列缺失的行：user 必须有 owner_account_id、admin 必须有 owner_admin_user_id"
+    )
 
 
-def test_only_user_scoped_memory_exists(engine):
+def test_non_user_rows_are_admin_scoped(engine):
+    """非 user 主体只能是 admin（且归属列齐备）——出现其他 owner_type 即说明写入越界。"""
     from sqlalchemy import text
 
     with engine.connect() as conn:
-        count = conn.execute(
-            text("SELECT count(*) FROM user_memory WHERE owner_type <> 'user'")
+        invalid = conn.execute(
+            text(
+                "SELECT count(*) FROM user_memory "
+                "WHERE owner_type NOT IN ('user', 'admin') "
+                "OR (owner_type = 'admin' AND owner_admin_user_id IS NULL)"
+            )
         ).scalar()
-    assert count == 0, "本计划不写入 admin 记忆，出现即说明双写逻辑越界"
+    assert invalid == 0, "出现未知主体类型或 admin 行缺 owner_admin_user_id"
 
 
 def test_embedding_shards_have_owner_columns_backfilled(engine):
     """分表（动态表名）必须同样补列，且存量行归属与主表一致。
 
     分表列由迁移的 `information_schema` 扫描补齐；漏表时因有 `DEFAULT 'user'`
-    而不会报错，故必须显式断言「表存在 → 列存在 → 无 NULL → 全为 user」。
+    而不会报错，故必须显式断言「表存在 → 列存在 → 无 NULL → 主体与归属列匹配」。
     """
     from sqlalchemy import text
 
@@ -121,10 +139,15 @@ def test_embedding_shards_have_owner_columns_backfilled(engine):
             ).scalar()
             assert null_count == 0, f"{table} 存在 owner_type 为空的行"
 
-            non_user = conn.execute(
-                text(f"SELECT count(*) FROM {table} WHERE owner_type <> 'user'")
+            invalid = conn.execute(
+                text(
+                    f"SELECT count(*) FROM {table} "
+                    "WHERE owner_type NOT IN ('user', 'admin') "
+                    "OR (owner_type = 'user' AND owner_account_id IS NULL) "
+                    "OR (owner_type = 'admin' AND owner_admin_user_id IS NULL)"
+                )
             ).scalar()
-            assert non_user == 0, f"{table} 出现非 user 主体行"
+            assert invalid == 0, f"{table} 出现未知主体类型或缺归属列的行"
 
 
 # =========================================================

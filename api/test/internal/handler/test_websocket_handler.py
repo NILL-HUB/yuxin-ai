@@ -142,4 +142,7 @@ def test_register_socketio_handlers_should_bind_expected_events():
         ("unsubscribe_agent_notification", "handle_unsubscribe_agent_notification"),
         ("subscribe_artifact_notification", "handle_subscribe_artifact_notification"),
         ("unsubscribe_artifact_notification", "handle_unsubscribe_artifact_notification"),
+        # 设备定向通知（手机端遥控）：房间 device:<device_id>，订阅前校验设备归属
+        ("subscribe_device_notification", "handle_subscribe_device_notification"),
+        ("unsubscribe_device_notification", "handle_unsubscribe_device_notification"),
     ]

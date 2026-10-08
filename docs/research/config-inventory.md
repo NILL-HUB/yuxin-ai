@@ -45,6 +45,72 @@
 - 被删能力（工具选择）的唯一权威入口为 `OrchestratorService.build_tool_subset`（由 `_build_tool_subset` 公开改名，主链路 routing 与 multi_agent 子任务自检索共用，避免第二套实现）。
 - multi_agent 子任务自检索入口：`MultiAgentExecutor.subtask_tool_resolver`（由 `assistant_agent_service._build_subtask_tool_resolver` 注入，内部 `build_tool_subset` → `_mount_runtime_tools`）。
 
+## B2b. 死代码清理（2026-10-04 一致性审计）
+
+| 文件 / 表 | 符号 | 处置与依据 |
+|---|---|---|
+| `api/internal/model/memory_models.py` | `Skill`、`SkillMaturity` | 设计期副本，**零生产调用方**（解析全仓 `from internal.model.memory_models import ...` 导入块，含测试无一处导入）；技能模型由 `internal.service.memory.skill_emergence.Skill` 实现（成熟度为 0–1 连续分），**已删除** |
+| `api/internal/model/memory_models.py` | `ViewProfile`（str Enum：full/digest/graph） | 零消费方；视图配置由 `internal.service.memory.policy_router.ViewProfile`（BaseModel）实现，同名不同物极易误引，**已删除** |
+| `api/internal/model/memory_models.py` | `SkillStatus.ARCHIVED` | 图内从不持久化 `archived`（设计文档与 `skill_emergence` 均为 candidate/emerging/active/stale/deprecated）；**取值已移除**，且 `SkillStatus` 收敛为唯一事实源（`skill_emergence` 改为从模型层导入，不再本地定义） |
+
+| `api/internal/model/memory_models.py` | `QueryIntent`（factual/procedural/episodic/preference/unknown） | 设计期残留，**全历史零消费**（`git log --all -S "QueryIntent"` 仅一个"全量同步"提交引入，从未被任何文件导入或引用；无 schema/迁移/YAML 动态引用）。意图分类的**实现词表**是 `policy_router.ConversationIntent`（7 类）——本枚举是第三套按"记忆种类"划分的平行词表；**已删除** |
+
+- 顺带的同名消歧（非删除，纯改名，消除"同名不同义"误引）：
+  `orchestrator_entity.RiskLevel` → **`RoutingRiskLevel`**（与工具风险枚举 `tool_inventory_entity.RiskLevel` 的 6 值唯一事实源区分）；
+  `policy_router.QueryIntent` → **`ConversationIntent`**（与已删除的记忆检索意图 `memory_models.QueryIntent` 区分）。
+- **`PolicyRouter` 断链已复通（2026-10-04）**：`internal/service/memory/policy_router.py` 此前只有
+  DI 注册、无运行时调用方（`classify_query` → `select_views` → `should_use_system2` 三段能力不可达；
+  全仓无调用方传 `view_names`）。现已接线并**同时覆盖用户侧与 admin 侧**：
+  - 单一入口 `MemoryRetriever.route_policy`（规则分类，`llm_available=False`）→
+    `MemoryRetriever.retrieve_for_chat`（顺序：prefer_deep 深检优先/否则摘要优先）；
+  - 消费方①用户侧对话召回 `user_memory_recall.recall_user_memory_for_chat`（助手/应用调试/WebApp 共用）；
+    ②admin 侧 `admin_memory_recall.recall_admin_agent_memory_for_chat`（管理端 Agent 对话）；
+  - 视图子集经 `RetrievalOptions.view_names` 下推到四个召回分支（TKG 标签 / pgvector memory_type /
+    Community 标签 / 图扩展节点），**无分支绕过**；`PREDEFINED_VIEWS` 标签/边名照实修正 + 新增
+    `themes`；REST `/memory/retrieve` 回填真实 `intent` 并支持显式 `view_names`。
+  - 测试：`test_retriever_view_filter.py`（35 例：视图解析/四分支过滤/选路/召回顺序）、
+    `test_user_memory_recall.py`（5 例）、`test_policy_router.py`（视图声明照实）全部通过。
+
+## B2c. 2026-10-05 记忆链路修复与敏感度分级（实机验证驱动）
+
+| # | 问题（实机证据） | 处置 |
+|---|---|---|
+| 1 | 用户刚说过的偏好、追问却答「没有记录」：写路径从不失效 Digest 缓存（TTL 24h），缓存里是写入前的旧摘要 | `memory_write_service.write_from_event` 写成功后按主体键 `DigestManager.invalidate` |
+| 2 | `communityFullText` 索引在本库缺失 → 主题召回每次抛 `There is no such fulltext schema index`（被吞）；`memoryFullText` 在 ensure 建在 Episode、在 `neo4j_init.cypher` 建在 MemoryNode（同名 + IF NOT EXISTS，谁先跑谁生效） | `neo4j_extension._ensure_constraints_and_indexes` 统一为 MemoryNode 并补齐 `entityFullText` / `communityFullText` |
+| 3 | 中文关系谓词（「喜欢」）被 `_RELATION_TYPE_RE` 拒绝 → 关系边整体丢失（relations 视图少料） | `ledger_writer.normalize_relation_type()`：别名表映射，未知兜底 `RELATED_TO` |
+| 4 | 注册返回的 token 立刻 401：`account_session.created_at` 列默认 `CURRENT_TIMESTAMP(0)`（秒级）vs `password_changed_at` 微秒，被误判「早于改密」 | `validate_access_session` 两侧统一截断到秒再比较 |
+| 5 | 机密信息（手机号等）会被无确认地注入对话 / 摘要 / 画像 | 新增敏感度分级，四条读路径全部排除机密 |
+| 6 | 自指问句被指挥官判「信息不足」→ 澄清终止，持有记忆的 Agent 从未运行 | `conductor.yaml` + `conductor_fallback` 增规则：涉及用户自身信息不得要求澄清；敏感度确认由执行侧承接 |
+| 7 | 用户记忆页召回测试 403：`/memory/retrieve` 在用户端拦截清单里，但用户页会调用它 | 从 `_USER_API_BLOCKED_PREFIXES` 放行（owner 由 JWT 主体强制） |
+| 8 | `PUT /admin/push-config` 等 3 条新 admin 路由未登记中央权限映射（未登记即 403 死端点） | 归入「系统配置域」→ `system_config:manage` |
+
+**敏感度分级（新增能力）**：`internal/service/memory/sensitivity.py` 为单一定义入口——
+机密 = 身份证 / 手机号 / 银行卡 / 邮箱 / 密码 / 验证码 / 密钥（正则表与 `MemoryGovernor.filter_pii` 共用）；
+写入落 `Episode.sensitivity` + `user_memory.metadata.sensitivity`；读侧（对话召回 / 摘要 / 画像落库同步 / 近期事件）
+一律排除机密，用户短句确认后放行。普通记忆**不需要任何确认**。
+
+> 另清理：模型层 `AuditEntry` / `PIIField` 两个设计期副本（零消费，治理侧同名类在 `memory_governor` 内自用）已删除，累计与 2026-10-04 的 `Skill` / `SkillMaturity` / `ViewProfile` / `QueryIntent` 同族。
+
+## B2d. 2026-10-05 结构化确认卡片 + SSE 截断修复（实机验证驱动）
+
+| # | 问题（实机证据） | 处置 |
+|---|---|---|
+| 1 | 长流在**恰好 60.0s** 被切断（客户端 `IncompleteRead`、服务端 "ASGI callable returned without completing response"）；旧注释误归因于显式 `Connection: keep-alive` | 根因是 Quart `RESPONSE_TIMEOUT` 默认 60s（隔离复现：默认 60.0s 掐断 vs `timeout=None` 跑满 75.0s）。三处 SSE 出口收敛到 `support._sse_stream_response`，统一 `response.timeout = None` |
+| 2 | 确认卡片永远不出现：`MemoryReadConfirmationService.__init__(redis_client)` 不符合仓库 DI 惯例（injector 不按类型注入构造参数）→ `injector.CallError` | 服务改 `@inject + @dataclass` 字段注入（同 `DigestManager`），`module.py` 绑定单例 |
+| 3 | 上述 DI 异常被召回层吞掉后**整段召回结果为空**（连普通记忆提示都丢） | `confidential_gate.resolve_confirmation_service()`：取不到确认服务只返回 None，闸门退化为「无卡片、保留文本提示」 |
+| 4 | 真机召回上限 1.2s 与深检实际耗时不符（实测中位 0.48s、最大 6.08s），记忆读回与卡片时常被丢弃 | 召回预算 1.2 → 2.5s（用户端 / admin 端同步入口一致），实测依据写入模块 docstring；助手链路另见第 7 行「早启动」 |
+| 5 | 卡片 payload 的 `items` 与用户端子任务契约 `SubtaskPlanItem[]` 同名不同形状（前端类型系统无法区分） | 线协议键改名 `memory_items`（`confirmation_payload()` 单点定义；后端实体/测试与前端归一化/夹具同步） |
+| 6 | 占位摘要的说明行「- 机密记忆：身份证/手机号/银行卡/密码/验证码/密钥」被当成实质内容 → 摘要优先的意图**不再深检**，记忆读回只剩占位文本、机密卡片永不出现 | `digest_has_substance` 三类跳过：元数据键 / 纯日期数字 / PII 标签枚举（按 `PII_TYPE_LABELS` 原子比对，不维护关键词表） |
+| 7 | 深检抖动（冷启动/并发争用，偶发 5-8s）使"第一次问没有卡片、再问才有" | 助手链路改**召回早启动 + 注入点取回**（`MemoryRecallHandle`：会话解析后启动守护线程，指挥官决策期间完成）；admin/WebApp/调试入口仍同步 2.5s |
+
+**新增能力（结构化确认卡片）**：`MemoryReadConfirmationService`（Redis 承载 pending + 授权白名单，TTL 30 分钟，**不建表**）
++ `ConfidentialAccess` 放行值对象 + `confidential_gate` 共用闸门 + `MemoryRecallOutcome` 结构化结果
++ SSE 事件 `memory_confirmation_required`（用户端 `QueueEvent` / 管理端 `AdminAgentChatEvent`）
++ 端点（用户侧 `GET/POST /memory/confirmations/<id>[/confirm|cancel]`；管理端 `/admin/agents/<agent_id>/memory/confirmations/...`，
+权限复用 `agent_pool:read|manage`，**未新增权限点**）
++ 前端 `MemoryConfirmationCard.vue` 接入首页助手与管理端 Agent 对话。**未接入**：WebApp 预览 / 我的应用 /
+应用商店预览 / 应用调试（其后端链路不发该事件，仍为文本提示）。详见 `docs/prd/memory-system/02-storage-and-retrieval.md`。
+
 ## B3. 本次新增配置 / 提示词 / 元工具登记（2026-09-30 编排修复）
 
 | 类型 | 位置 | 说明 |

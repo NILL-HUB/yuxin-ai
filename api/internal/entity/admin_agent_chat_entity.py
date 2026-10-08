@@ -20,5 +20,9 @@ class AdminAgentChatEvent(str, Enum):
     MESSAGE = "message"   # 会话/消息 id 已建立
     TOOL = "tool"         # 一次板块工具调用及其结果
     ANSWER = "answer"     # 最终答复
+    # 机密记忆读取确认（结构化确认卡片）：payload 形状与用户端
+    # `MemoryRecallOutcome.confirmation_payload()` 一致，事件名各自独立
+    # （两条链路的前端契约不同，见类 docstring）。
+    MEMORY_CONFIRMATION_REQUIRED = "memory_confirmation_required"
     ERROR = "error"       # 链路异常（已可读化）
     END = "end"           # 流结束
