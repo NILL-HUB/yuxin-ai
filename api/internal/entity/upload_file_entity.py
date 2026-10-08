@@ -1,6 +1,6 @@
 # 允许上传的文件类型
 ALLOWED_IMAGE_EXTENSION = ["jpg", "jpeg", "png", "webp", "gif", "svg"]
-ALLOWED_DOCUMENT_EXTENSION = ["markdown", "md", "doc", "docx", "txt", "pdf", "csv", "xlsx", "xls", "html", "htm"]
+ALLOWED_DOCUMENT_EXTENSION = ["markdown", "md", "doc", "docx", "ppt", "pptx", "txt", "pdf", "csv", "xlsx", "xls", "html", "htm"]
 ALLOWED_VIDEO_EXTENSION = ["mp4", "mov", "avi", "mkv", "webm"]
 ALLOWED_AUDIO_EXTENSION = ["mp3", "wav", "m4a", "aac", "flac"]
 

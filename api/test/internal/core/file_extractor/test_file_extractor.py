@@ -22,7 +22,7 @@ def _patch_all_loaders(monkeypatch):
         return _Loader
 
     monkeypatch.setattr(extractor_module, "UnstructuredExcelLoader", _loader_factory("excel"))
-    monkeypatch.setattr(extractor_module, "UnstructuredPDFLoader", _loader_factory("pdf"))
+    monkeypatch.setattr(extractor_module, "PyPDFLoader", _loader_factory("pdf"))
     monkeypatch.setattr(extractor_module, "UnstructuredMarkdownLoader", _loader_factory("markdown"))
     monkeypatch.setattr(extractor_module, "UnstructuredHTMLLoader", _loader_factory("html"))
     monkeypatch.setattr(extractor_module, "UnstructuredCSVLoader", _loader_factory("csv"))

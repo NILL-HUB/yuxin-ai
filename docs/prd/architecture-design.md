@@ -38,8 +38,8 @@
 | 1 | **设备赋能 / 电脑管家** | 操作本机、修软件故障、改系统设置 | ✅ 已实现（后台控制 cua-driver + pyautogui fallback、OS 自动化） | `api/scripts/computer_control_worker.py`、`08-os-automation.md` |
 | 2 | **安全兜底** | 回收站 + 快照，改坏回滚、删错找回，且小钰可自主执行 | ✅ 已实现 | `recycle_bin_handlers.py`、`os_snapshot` |
 | 3 | **定时任务** | 清垃圾/日总结/排日程/总结微信群消息 | ✅ 已实现（cron/间隔/单次三种触发；单次任务执行后自动归档回收站。OS 定时任务 + 微信场景待接） | `schedule_task_service.py`、`03-orchestration-infra.md` §13.3.2 |
-| 4 | **知识库** | 存所有文件含**视频素材**；做视频时讨论细节→自翻素材→出片预览→改 | ✅ 文本/图片/音视频 RAG 已实现（含视频 ASR 转写、关键帧留存 + 视觉向量、L2 按需解析）；⚠️ 视频轻量编辑、场景切分属 P4 设计稿（`02-knowledge-base.md`） | `retrieval_service.py`、`visual_embedding_service.py` |
-| 5 | **内容生成** | 做 PPT/文档/表格、改图片、自动做短视频、**小红书图文** | ✅ 前五项已实现；❌ 小红书图文未实现 | `skills/catalog/{powerpoint,docx,xlsx}`、`atlascloud_video` |
+| 4 | **知识库** | 存所有文件含**视频素材**；做视频时讨论细节→自翻素材→出片预览→改 | ✅ 文本/图片/音视频 RAG 已实现（含视频 ASR 转写、关键帧留存 + 视觉向量、L2 按需解析）；✅ 视频轻量剪辑（`video_trim/concat/subtitle/reassemble`）与对话内成片预览已落地；⚠️ 场景切分未实现（`02-knowledge-base.md`） | `retrieval_service.py`、`visual_embedding_service.py`、`video_edit_service.py` |
+| 5 | **内容生成** | 做 PPT/文档/表格、改图片、自动做短视频、**小红书图文** | ⚠️ **自动做短视频已打通**（AI 生成经百炼/通义万相 `bailian_video_generate`、脚本渲染成片 `render_video`、素材剪辑 `video_trim/concat/subtitle`，2026-10-06 端到端实测出片入库）；⚠️ PPT/文档/表格**生成**受限（沙箱未开通，仅产出文字）；改图片可用；❌ 小红书图文未实现 | `bailian_video_tools/`、`video_render_tools/`、`video_edit_tools/`；⚠️ `atlascloud_*` 为上游遗留第三方接入，本环境未配置凭证 |
 | 6 | **双交互方式** | ① 纯语音入口（像打电话，全自动，成本偏高）② 传统页面交互（半自动） | ✅ 语音(实时/ASR/TTS) 与页面交互均已实现 | `realtime_voice_service.py`、`audio_service.py` |
 | 7 | **合伙人分身** | 能力打包上架、他人按需调用、**后台上传审核**、**自定使用价**、**版本更新** | 部分：商店/上传/调用(A2A) 已实现；❌ 审核、自定价、版本分发未实现 | 见 `04-social-creator.md` 状态表 |
 | 8 | **分销体系** | 会员才有资格；注册绑上级；**一级分销**（A→B，B→C 与 A 无关）；B 消费 A 拿 20%；满 5 人升 30%（含前 5 人）；佣金可提现或消费 | ✅ 完全实现，且**确认为一级分销**（非缺口） | `distribution_service.py`、`commerce-distribution-api.md` |

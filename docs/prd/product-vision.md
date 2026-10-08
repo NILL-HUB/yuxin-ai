@@ -90,7 +90,7 @@
 | # | 功能 | 状态 | 说明（证据） |
 |---|---|---|---|
 | 1 | 注册 → 登录 → 首页助手流式对话 | ✅ 真可用（仅纯文本轮次） | 注册/登录/SSE 流式全链路；真实 LLM。⚠️ **2026-09-29 实测**：纯文本轮次 ✅；**一旦需要调用工具即失败**（默认 chat 模型未声明工具调用能力 → 工具不执行、原生标记泄漏为正文），见体检文档 §4 |
-| 2 | 知识库上传 → 解析入库 → RAG 检索 | ✅ 真可用 | pgvector 索引 + hybrid 检索；⚠️ 大文件同步索引会阻塞请求 |
+| 2 | 知识库上传 → 解析入库 → RAG 检索 | ✅ 真可用 | pgvector 索引 + hybrid 检索；⚠️ 大文件同步索引会阻塞请求。**2026-10-06 修复/补齐**：PPTX 进入上传白名单（此前被拒）、PDF 改走轻量 pypdf 抽取（此前因缺 pdfminer/pi-heif 等依赖必失败）、召回测试 API 参数契约修复（此前必然 500）；支持格式 md/doc/docx/ppt/pptx/txt/pdf/csv/xls/xlsx/html/图片/音视频 |
 | 3 | 应用商店 → fork → A2A 调用他人应用 | ✅ 真可用 | `fork_public_app` + `route_public_agents` 真实调用 |
 | 4 | 定时任务：创建 → 到点执行 | ✅ 真可用 | Celery beat 注册 `run-scheduled-tasks` 每分钟 |
 | 5 | 分销：邀请码 → 绑定 → 佣金 → 提现 | ✅ 真可用 | 全链路已实现；受 `ENABLE_DISTRIBUTION` 开关控制（当前 DB 已开启 True） |
@@ -99,7 +99,7 @@
 | 8 | 设备控制：**桌面端面板直接操作**（回收站/快照） | ✅ 真可用 | 桌面端 IPC → 本机 worker |
 | 9 | 设备控制：**对话里让小钰操作电脑** | ✅ 真可用（**前置：桌面端在线**） | §4.1 断链已修复：桌面端登录后注册设备，服务端按账号动态解析 bridge（端到端实测通过）。⚠️ **2026-09-29**：当前 `desktop_device` **无在线设备**、静态回退宿主机端点 refused → **Web-only 环境不可用**；且受 §三-1 工具调用主干影响，对话内触发亦不通 |
 | 10 | 电脑控制"不打扰本机"（后台控制） | ✅ 真可用（**前置：桌面端在线**） | §4.2 已闭环：桌面端主进程托管 cua-driver daemon + 二进制随包分发（实测背景点击不抢焦点/不动真实光标） |
-| 11 | 知识库视频素材 | ✅ 真可用 | P2A/P2B 已落地：视频抽关键帧 + 视觉描述、音频 ASR 转写、图片 OCR+摘要，产物写 Segment 并向量化（可被语义检索）；分片上传支持 GB 级素材（流式合并，不整文件入内存）。P3 已补：视频音轨 ASR 转写 + 关键帧留存（`frame_url`）、关键帧视觉向量索引（`video_visual_embedding` 表 + `VisualEmbeddingService`，支持以图搜图与文本跨模态召图）、检索工具分区/媒体类型/标签/相似度阈值过滤、L2 按需解析（视频逐帧视觉详述）。P4 已补：视频轻量剪辑三件套（`video_trim` / `video_concat` / `video_subtitle`，对话内触发、Celery 异步执行、产物存成品库）+ **对话内成片预览**（同步产物由工具返回值携带可播放地址、异步行 Celery 完成后双通道回填，前端内联播放）；`video_trim` 额外支持 `segment_index`（1-based）**按 L1 时间线段落选段**（读 `source=vision_timeline` 段落定位，实现「时间线叙述 → 直接掐段」）。⚠️ 仍未实现：说话人切分、场景切分与精细时间轴、对话框内成片编辑器（见 [knowledge-base-product-form-design.md §9.2](./knowledge-base-product-form-design.md)） |
+| 11 | 知识库视频素材 | ✅ 真可用 | P2A/P2B 已落地：视频抽关键帧 + 视觉描述、音频 ASR 转写、图片 OCR+摘要，产物写 Segment 并向量化（可被语义检索）；分片上传支持 GB 级素材（流式合并，不整文件入内存）。P3 已补：视频音轨 ASR 转写 + 关键帧留存（`frame_url`）、关键帧视觉向量索引（`video_visual_embedding` 表 + `VisualEmbeddingService`，支持以图搜图与文本跨模态召图）、检索工具分区/媒体类型/标签/相似度阈值过滤、L2 按需解析（视频逐帧视觉详述）。P4 已补：视频轻量剪辑三件套（`video_trim` / `video_concat` / `video_subtitle`，对话内触发、Celery 异步执行、产物存成品库）+ **对话内成片预览**（同步产物由工具返回值携带可播放地址、异步行 Celery 完成后双通道回填，前端内联播放）；`video_trim` 额外支持 `segment_index`（1-based）**按 L1 时间线段落选段**（读 `source=vision_timeline` 段落定位，实现「时间线叙述 → 直接掐段」）。**2026-10-06 补充**：AI 视频生成（`bailian_video_generate`）与渲染成片（`render_video`）已接入同一成品库与对话内预览范式——「文档/素材/文字 → 成片」闭环打通。⚠️ 仍未实现：说话人切分、场景切分与精细时间轴、对话框内成片编辑器（见 [knowledge-base-product-form-design.md §9.2](./knowledge-base-product-form-design.md)） |
 | 12 | 我的应用列表 | ✅ 真可用 | `my-apps/ListView.vue` 已接真实接口 `GET /my/apps`；来源为**本人从应用商店添加（fork）**，且**仅展示 `status=published`**（草稿不上架）；对话页复用现成 agent 聊天框，后端 agent = 用户长期记忆 + 应用工具/知识库/上下文。管理员分配应用功能已下线（`AppAssignment` 表与相关权限/审计已移除） |
 | 13 | 知识库「外部数据源」弹窗 | ✅ 真可用 | 弹窗已接真实接口；凭证明文落库/回传、授权不落库、级联清理缺失已修复，并新增定时自动同步 |
 | 14 | 工作流商店预览 | ✅ 真可用 | 已修复：`AdminWorkflowsView` 新增「预览」按钮跳转已注册的 `admin-store-workflows-preview` → `store/workflows/PreviewView.vue`（走真实 `/admin/workflows/*` 只读接口）；同时下线无后端支撑的用户端工作流广场页（`store/workflows/ListView.vue`）及其指向的未注册路由名 |

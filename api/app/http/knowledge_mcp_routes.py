@@ -749,12 +749,37 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
+        from internal.entity.dataset_entity import RetrievalStrategy
         from internal.service import KnowledgeBaseService
 
         payload = await request.get_json(force=True, silent=True) or {}
+        # 字段口径必须与服务的读取一致（query / retrieval_strategy / k）。
+        # 历史 bug：此处只构造了 top_k，而 hit_test 读 req.k / req.retrieval_strategy，
+        # 召回测试必然 500（AttributeError）。
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            return _json_resp(
+                code="validate_error",
+                message="查询语句不能为空",
+                data={"query": ["查询语句不能为空"]},
+                status=400,
+            )
+        retrieval_strategy = str(payload.get("retrieval_strategy") or RetrievalStrategy.SEMANTIC.value).strip().lower()
+        if retrieval_strategy not in {item.value for item in RetrievalStrategy}:
+            return _json_resp(
+                code="validate_error",
+                message="检索策略格式错误",
+                data={"retrieval_strategy": ["检索策略格式错误"]},
+                status=400,
+            )
+        try:
+            k = int(payload.get("k") or 5)
+        except (TypeError, ValueError):
+            k = 5
         req = SimpleNamespace(
-            query=_field(str(payload.get("query") or "")),
-            top_k=_field(payload.get("top_k") or 5),
+            query=_field(query),
+            retrieval_strategy=_field(retrieval_strategy),
+            k=_field(max(1, min(10, k))),
         )
         hit_result = await _to_thread(
             _get_service(KnowledgeBaseService).hit_test,

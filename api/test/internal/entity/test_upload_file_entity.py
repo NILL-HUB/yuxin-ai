@@ -1,11 +1,23 @@
 from internal.entity.upload_file_entity import (
     ALLOWED_AUDIO_EXTENSION,
+    ALLOWED_DOCUMENT_EXTENSION,
     ALLOWED_IMAGE_EXTENSION,
     ALLOWED_VIDEO_EXTENSION,
     MEDIA_TYPE_EXTENSIONS,
     allowed_extensions_for_base_type,
     media_type_for_extension,
 )
+
+
+def test_document_extension_whitelist_contains_office_formats():
+    """办公文档格式齐全（回归：ppt/pptx 曾漏出白名单，解析器支持却传不上来）。"""
+    for ext in ("doc", "docx", "ppt", "pptx", "xls", "xlsx", "pdf", "txt"):
+        assert ext in ALLOWED_DOCUMENT_EXTENSION
+
+
+def test_pptx_allowed_by_mixed_and_document_base_type():
+    assert "pptx" in allowed_extensions_for_base_type("mixed")
+    assert "pptx" in allowed_extensions_for_base_type("document")
 
 
 def test_video_extension_whitelist_contains_common_formats():

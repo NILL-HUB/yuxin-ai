@@ -8,8 +8,8 @@ from internal.model import UploadFile
 from typing import Union
 from langchain_core.documents import Document as LCDocument
 from langchain_community.document_loaders import (
+    PyPDFLoader,
     UnstructuredExcelLoader,
-    UnstructuredPDFLoader,
     UnstructuredMarkdownLoader,
     UnstructuredHTMLLoader,
     UnstructuredCSVLoader,
@@ -57,7 +57,12 @@ class FileExtractor:
         if file_extension in [".xlsx", ".xls"]:
             loader = UnstructuredExcelLoader(file_path)
         elif file_extension == ".pdf":
-            loader = UnstructuredPDFLoader(file_path)
+            # 轻量文本抽取（pypdf，依赖已内置）：知识库检索需要的是正文文本。
+            # 不用 UnstructuredPDFLoader：unstructured 0.17.2 的 partition/pdf.py
+            # **模块级**强依赖 unstructured-inference（torch/onnx/CUDA 全家桶，
+            # 实测 site-packages 膨胀至 7.4GB 且仍缺 libGL 系统库），
+            # 单机 4C4G 部署不可接受；PDF 正文抽取用 pypdf 即可满足检索与文档理解。
+            loader = PyPDFLoader(file_path)
         elif file_extension in [".md", ".markdown"]:
             loader = UnstructuredMarkdownLoader(file_path)
         elif file_extension in [".htm", ".html"]:

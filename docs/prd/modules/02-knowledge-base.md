@@ -305,13 +305,18 @@ KB-KB-KB-P1 数据基座已落地，知识库从"扁平文本库"升级为**全�
 
 | base_type | 允许的媒体类型 | 拒绝行为 | 默认 |
 | --- | --- | --- | --- |
-| `document` | 文档类（md/doc/docx/pdf/txt/csv/xlsx/html 等） | 图片/音视频 → 服务端拒绝 | |
+| `document` | 文档类（md/doc/docx/ppt/pptx/pdf/txt/csv/xls/xlsx/html 等） | 图片/音视频 → 服务端拒绝 | |
 | `image` | 图片类（jpg/jpeg/png/webp/gif/svg） | 文档/音视频 → 服务端拒绝 | |
 | `video` | 视频类（mp4/mov/avi/mkv/webm） | 文档/图片/音频 → 服务端拒绝 | |
 | `audio` | 音频类（mp3/wav/m4a/aac/flac） | 文档/图片/视频 → 服务端拒绝 | |
 | `mixed` | 不限 | 兼容存量库 | ✅ |
 
 类型到扩展名的映射与两个工具函数 `allowed_extensions_for_base_type()` / `media_type_for_extension()` 位于 `internal/entity/upload_file_entity.py`。`KnowledgeBaseService.create_user_content_base()` 对 `base_type` / `partition_mode` 做取值校验，非法值抛 `ValidateErrorException`。存量 `KnowledgeBase` 默认迁移为 `mixed`（见 §11.7.7 迁移）。
+
+> **2026-10-06 修复记录（解析链路）**：
+> - **PPT/PPTX 补入白名单**：解析器（`file_extractor.py` 的 `UnstructuredPowerPointLoader`）本就支持，但上传白名单漏列 `ppt/pptx`，导致 PPT 一律被服务端拒绝——已补齐。
+> - **PDF 改走轻量 pypdf 抽取**（`PyPDFLoader`，`file_extractor.py`）。原 `UnstructuredPDFLoader` 方案的硬伤：unstructured 0.17.2 的 `partition/pdf.py` **模块级**强依赖 `unstructured-inference`（torch/onnx/CUDA 全家桶，实测 site-packages 膨胀至 7.4GB 且仍缺 libGL 系统库），单机 4C4G 部署不可接受；知识库检索所需的正文抽取用 pypdf 即可满足（实测解析 completed）。
+> - **召回测试 API**（`POST /space/knowledge-bases/<id>/hit`）参数契约修复：路由层此前构造 `top_k`，而 `hit_test` 读 `k` / `retrieval_strategy`，调用必然 500——已对齐 `HitReq` 契约（`query` / `retrieval_strategy` / `k`）。
 
 **用户端创建入口**：`POST /space/knowledge-bases` 接受可选 `base_type` / `partition_mode`（未传分别默认 `mixed` / `none`）。用户端知识库列表页（`ui/src/views/space/datasets/ListView.vue`）的新建弹窗提供两个选择器，用户可显式选择板块类型与分区模式；编辑已有库时板块类型选择器置灰（后端语义上不允许中途变更板块类型，避免改变该库允许上传的扩展名），且更新接口不提交这两个字段。
 
