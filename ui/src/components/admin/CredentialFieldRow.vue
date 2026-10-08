@@ -60,6 +60,15 @@ const inputPlaceholder = computed(() =>
     : t('common.credential.inputPlaceholder'),
 )
 
+/**
+ * 掩码展示文案：已配置但无掩码 = 值由来源（环境变量等）提供、平台不回显，
+ * 不能写成「（无）」——否则与左侧「已配置」标签自相矛盾（看着像没值）。
+ */
+const maskText = computed(() => {
+  if (props.mask) return props.mask
+  return props.configured ? t('common.credential.maskFromSource') : t('common.credential.maskNone')
+})
+
 const sourceVariant = computed(() => {
   if (props.source === 'db') return 'success' as const
   if (props.source === 'env') return 'info' as const
@@ -95,8 +104,11 @@ const sourceVariant = computed(() => {
       <AppTag :variant="configured ? 'success' : 'neutral'">
         {{ configured ? t('common.credential.configured') : t('common.credential.empty') }}
       </AppTag>
-      <span class="w-72 truncate font-mono text-xs text-gray-500">
-        {{ mask || t('common.credential.maskNone') }}
+      <span
+        class="w-96 truncate font-mono text-xs text-gray-500"
+        :title="maskText"
+      >
+        {{ maskText }}
       </span>
       <AppButton v-if="!disabled" size="mini" @click="emit('start-edit')">
         {{ configured ? t('common.credential.replace') : t('common.credential.fill') }}

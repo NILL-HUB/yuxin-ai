@@ -2,6 +2,7 @@ export default  {
     credential: {
       configured: 'Configured',
       empty: 'Not configured',
+      maskFromSource: '(provided by source, not echoed)',
       maskNone: '(none)',
       replace: 'Replace',
       fill: 'Set',

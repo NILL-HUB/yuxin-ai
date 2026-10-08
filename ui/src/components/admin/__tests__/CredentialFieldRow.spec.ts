@@ -9,6 +9,7 @@ vi.mock('vue-i18n', () => ({
         'common.credential.configured': '已配置',
         'common.credential.empty': '未配置',
         'common.credential.maskNone': '（无）',
+        'common.credential.maskFromSource': '（由来源提供，不回显）',
         'common.credential.replace': '替换',
         'common.credential.fill': '填写',
         'common.credential.inputPlaceholder': '请输入凭证值',
@@ -84,6 +85,15 @@ describe('CredentialFieldRow', () => {
 
     await wrapper.setProps({ draft: '' })
     expect(wrapper.text()).toContain('保存后删除')
+  })
+
+  it('explains source-provided values instead of a misleading 无 marker', () => {
+    // env 兜底来源拿不到掩码：必须说明「由来源提供」，否则与「已配置」标签自相矛盾
+    const wrapper = render({ configured: true, mask: '', source: 'env', sourceLabel: '环境变量' })
+
+    expect(wrapper.text()).toContain('（由来源提供，不回显）')
+    expect(wrapper.text()).not.toContain('（无）')
+    expect(wrapper.text()).toContain('已配置')
   })
 
   it('uses the empty-state placeholder for unconfigured keys', () => {

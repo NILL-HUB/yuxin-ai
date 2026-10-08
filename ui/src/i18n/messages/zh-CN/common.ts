@@ -2,6 +2,7 @@ export default  {
     credential: {
       configured: '已配置',
       empty: '未配置',
+      maskFromSource: '（由来源提供，不回显）',
       maskNone: '（无）',
       replace: '替换',
       fill: '填写',
