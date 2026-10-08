@@ -186,7 +186,7 @@
 「安全根 ∪ 会话授权根」校验，scope 内享受同构治理（写前快照/回收站/删除守卫）。
 未授权越界**拒绝执行**（不再静默回退，避免在错误目录执行命令）；不存在的目录仍宽容回退。
 GUI 体验侧：纯观察动作免确认、轮内一次放行、管理员智能审批策略可进一步放行。
-设计与落地记录见 [archive/superpowers-specs/2026-10-04-session-workspace-scope-design.md](../archive/superpowers-specs/2026-10-04-session-workspace-scope-design.md)。
+设计与落地记录见 [archive/superpowers-specs/2026-10-04-session-workspace-scope-design.md](../../archive/superpowers-specs/2026-10-04-session-workspace-scope-design.md)。
 
 ## 环境变量
 

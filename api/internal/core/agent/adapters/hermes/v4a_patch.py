@@ -60,7 +60,10 @@ class FileTextOps:
 
     def read_text(self, path: str) -> str | None:
         try:
-            return Path(path).read_text(encoding="utf-8")
+            # 按字节读取后手动解码：文本模式的「通用换行」会把 CRLF 归一成 LF，
+            # 使 _detect_line_ending 永远判成 LF —— 补丁会把 Windows 文件的 CRLF 抹掉
+            # （os_automation_worker 编辑用户本机文件时即命中此路径）。
+            return Path(path).read_bytes().decode("utf-8")
         except FileNotFoundError:
             return None
         except (OSError, UnicodeDecodeError):
@@ -69,7 +72,10 @@ class FileTextOps:
     def write_text(self, path: str, content: str) -> None:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        # newline="" 关闭行尾转换：写出内容与 content 逐字节一致，
+        # 行尾由调用方按文件原有风格（_detect_line_ending）保留，不随宿主平台漂移。
+        with target.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
 
     def delete_file(self, path: str) -> None:
         Path(path).unlink()

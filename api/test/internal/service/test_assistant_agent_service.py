@@ -89,6 +89,21 @@ class TestAssistantAgentService:
         assert AssistantAgentService._is_os_automation_request("检查系统运行状态并汇报") is True
         assert AssistantAgentService._is_os_automation_request("你好，今天天气怎么样") is False
 
+    def test_is_os_automation_request_should_detect_local_device_intent(self):
+        """设备指代类请求必须命中（回归 2026-10-07：「看桌面文件」未命中被判 direct_answer，
+        而 direct_answer 没有工具执行循环，模型只能编「沙箱限制」拒绝——能力静默不可用）。"""
+        assert AssistantAgentService._is_os_automation_request("帮我看一下我电脑桌面上有哪些文件") is True
+        assert AssistantAgentService._is_os_automation_request("打开我桌面上的报告.docx") is True
+        assert AssistantAgentService._is_os_automation_request("看看我的下载目录里有什么") is True
+        assert AssistantAgentService._is_os_automation_request("列一下我的文档里的文件") is True
+        assert AssistantAgentService._is_os_automation_request("在我电脑上找一下上周的合同") is True
+
+    def test_is_os_automation_request_should_not_over_match(self):
+        """避免过度匹配：泛指/知识库语境不得命中（否则全部对话都走重路径、成本上升）。"""
+        assert AssistantAgentService._is_os_automation_request("桌面端应用怎么打包发布") is False
+        assert AssistantAgentService._is_os_automation_request("知识库里有哪些文件") is False
+        assert AssistantAgentService._is_os_automation_request("帮我写一段 Python 脚本") is False
+
     def _build_service(self):
         return AssistantAgentService(
             db=SimpleNamespace(

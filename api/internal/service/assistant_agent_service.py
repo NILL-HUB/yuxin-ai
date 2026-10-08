@@ -897,28 +897,42 @@ class AssistantAgentService(BaseService):
             return preset
         return f"{preset}\n\n## 系统知识库（必须遵守）\n{system_knowledge}".strip()
 
-    def _retrieve_user_memory_for_chat(
+    def _start_user_memory_recall(
         self,
         *,
         account_id,
         query: str,
         conversation_id: str,
-        max_wait_seconds: float = 1.2,
         max_tokens: int = 1500,
-    ) -> str:
-        """对话时召回用户长期记忆（记忆读回闭环）。
+    ):
+        """启动用户长期记忆召回（守护线程，立即返回句柄）。
 
-        具体策略见 ``internal.service.memory.user_memory_recall``，该方法仅为
-        兼容既有调用点/测试的薄委托。
+        返回 ``MemoryRecallHandle``；调用方在真正需要注入时用 ``.result(timeout)`` 取回
+        （早启动 + 晚 join，把召回抖动藏进下游不可省的等待里）。具体策略见
+        ``internal.service.memory.user_memory_recall``，本方法只做薄委托。
         """
-        from internal.service.memory.user_memory_recall import recall_user_memory_for_chat
+        from internal.service.memory.user_memory_recall import start_user_memory_recall
 
-        return recall_user_memory_for_chat(
+        return start_user_memory_recall(
             account_id=account_id,
             query=query,
             conversation_id=conversation_id,
-            max_wait_seconds=max_wait_seconds,
             max_tokens=max_tokens,
+        )
+
+    @staticmethod
+    def _memory_confirmation_frame(memory_recall) -> str:
+        """机密记忆确认卡片帧（用户端事件 ``QueueEvent.MEMORY_CONFIRMATION_REQUIRED``）。
+
+        payload 形状由 ``MemoryRecallOutcome.confirmation_payload()`` 单点定义，
+        前端只依赖这一处契约（禁止在此另拼一份字段）。
+        """
+        from internal.core.agent.entities.queue_entity import QueueEvent
+
+        payload = memory_recall.confirmation_payload()
+        return (
+            f"event: {QueueEvent.MEMORY_CONFIRMATION_REQUIRED.value}\n"
+            f"data:{json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
         )
 
     def _write_memory_from_conversation(self, account, query, ai_response, conversation_id):
@@ -1281,6 +1295,26 @@ class AssistantAgentService(BaseService):
                         edit_tool_name,
                         exc_info=True,
                     )
+
+        # 百炼 AI 视频生成工具：从文字描述直接出片（文生视频/图生视频）。
+        # 与渲染/剪辑同一范式：Celery 异步执行、产物存成品库、完成后回填消息。
+        # 凭证（DASHSCOPE_API_KEY）走统一入口，admin 可配；未配置时工具返回可读错误。
+        if self.app_config_service is not None:
+            try:
+                bailian_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                    "bailian_video_tools",
+                    "bailian_video_generate",
+                )
+                if bailian_tool_factory is not None:
+                    tools.append(
+                        bailian_tool_factory(
+                            account_id=str(account_id),
+                            message_id=message_id,
+                            conversation_id=conversation_id,
+                        )
+                    )
+            except Exception:
+                logger.warning("构建百炼视频生成工具失败，不影响其他工具", exc_info=True)
 
         # 外部素材获取工具：把公开视频/音频链接下载入库。默认关闭，管理员在
         # admin 全局控制配置开启 media_fetch 开关后才挂载（挂载点读取该配置，注入 enabled）。
@@ -1803,7 +1837,14 @@ class AssistantAgentService(BaseService):
 
     @staticmethod
     def _is_os_automation_request(query: str) -> bool:
-        """判断用户请求是否属于宿主机系统自动化任务。"""
+        """判断用户请求是否属于宿主机系统自动化任务。
+
+        命中即在上游强制 single_agent_with_tools（带工具执行循环）——direct_answer
+        没有工具循环，误判会让模型「只能嘴遁」：2026-10-07 实测「看桌面有哪些文件」
+        未命中本判据、被指挥官判为 direct_answer，模型全程未调用 os_file_task，
+        反而编出「受限于安全沙箱无法访问」拒绝用户。判据三类：
+        清理类（原有）、本地设备指代类、系统操作关键词。
+        """
         text = str(query or "").strip().lower()
         if not text:
             return False
@@ -1824,6 +1865,25 @@ class AssistantAgentService(BaseService):
             or "桌面" in text
         )
         if cleanup and system_terms:
+            return True
+        # 本地设备指代：「我(的)电脑/桌面/文档/下载」等带第一人称归属、明确指向用户
+        # 本机的表述——读目录、找文件、打开文件都必须走本机工具，不应被降级为直答。
+        # 仅匹配带归属的短语：泛指的「桌面端/桌面应用」不在此列（避免过度匹配）。
+        if any(
+            ref in text
+            for ref in (
+                "我的电脑",
+                "我电脑",
+                "本机",
+                "我的桌面",
+                "我桌面",
+                "我的文件",
+                "我的文档",
+                "我的下载",
+                "我下载",
+                "电脑上",
+            )
+        ):
             return True
         return any(
             keyword in text
@@ -1872,6 +1932,16 @@ class AssistantAgentService(BaseService):
         # 默认关闭：保持现有行为不变（不产生额外 Redis checkpoint 写入）。
         if not (checkpoint_thread_id or "").strip() and _is_checkpoint_by_conversation_enabled():
             checkpoint_thread_id = f"conv:{conversation.id}"
+
+        # 2.2 记忆召回早启动（不阻塞）：深检实测中位 0.48s、偶发数秒抖动，若等到
+        #     「要注入」的那一刻才发起，抖动会变成用户等待（超预算还只能空手而归）。
+        #     这里先启动，在下方注入点再 result()——中间的指挥官 LLM 决策/工具装配
+        #     （秒级）正好把抖动吸收掉。
+        memory_recall_handle = self._start_user_memory_recall(
+            account_id=account.id,
+            query=req.query.data,
+            conversation_id=str(conversation.id),
+        )
 
         # 3.在落库前解析运行时模型能力，避免带图请求被静默降级
         if self.language_model_service is not None:
@@ -1988,13 +2058,14 @@ class AssistantAgentService(BaseService):
         distant_summary = context.get("distant_summary", "")
 
         # 5.1 记忆读回闭环：对话时召回用户长期记忆（Digest/记忆检索）注入 Agent。
-        # 采用"尽力而为、绝不阻塞"策略：限时检索 + fail-open；记忆引擎关闭、
-        # Neo4j/向量库不可用、检索超时均静默降级为空，不影响主回复流。
-        user_memory_text = self._retrieve_user_memory_for_chat(
-            account_id=account.id,
-            query=req.query.data,
-            conversation_id=str(conversation.id),
-        )
+        # 采用"尽力而为、绝不阻塞"策略：召回在会话开始处已启动（见 2.2），此处只取回；
+        # 记忆引擎关闭、Neo4j/向量库不可用、检索超时均静默降级为空，不影响主回复流。
+        memory_recall = memory_recall_handle.result()
+        user_memory_text = memory_recall.text
+        # 命中机密记忆（身份证/手机号/密码等）且未获授权：先发结构化确认卡片，
+        # 用户点「允许读取」后同一批记忆在 TTL 内可直接注入（见 confidential_gate）。
+        if memory_recall.needs_confirmation:
+            yield self._memory_confirmation_frame(memory_recall)
 
         # 6.构建首页助手运行时工具
         # 平台会话维度上下文随请求绑定：session_id=conversation_id，

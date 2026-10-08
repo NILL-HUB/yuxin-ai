@@ -868,7 +868,7 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             }
         return {"ok": False, "error": "mode 必须为 preview 或 apply"}
 
-    return {"ok": False, "error": "op 必须为 read、search 或 patch"}
+    return {"ok": False, "error": "op 必须为 read、list、search 或 patch"}
 
 
 def _detect_lan_ip() -> str:
@@ -2166,7 +2166,12 @@ def _script_file_candidates(tokens: list[str], cwd: str) -> list[str]:
     out: list[str] = []
     base = cwd or os.getcwd()
     for tok in tokens[1:]:
-        if not tok or tok.startswith("-") or tok.startswith("/") or len(tok) > 512:
+        if not tok or tok.startswith("-") or len(tok) > 512:
+            continue
+        # 跳过 cmd 风格开关（/F /S /Q）：只认「斜杠 + 单字符」，
+        # 否则 POSIX 绝对路径（如 /tmp/x.sh）会被误当开关，
+        # 使 `bash /abs/path/script.sh` 里的删除命令漏扫（守卫被绕过）。
+        if tok.startswith("/") and len(tok) <= 2:
             continue
         path = tok if os.path.isabs(tok) else os.path.join(base, tok)
         try:
@@ -2474,6 +2479,10 @@ def _kill_process_tree(proc: "subprocess.Popen[bytes]") -> None:
 # 命令文本中的绝对路径（Windows 盘符形式；MSYS/GitBash 的 /d/... 在单独正则中映射）
 _WIN_ABS_PATH_RE = re.compile(r"[A-Za-z]:[\\/][^\s;|&<>\"'`]*")
 _MSYS_ABS_PATH_RE = re.compile(r"(?<![\w:])/(?![/])[A-Za-z](?:/[^\s;|&<>\"'`]*)?")
+# POSIX 绝对路径（≥2 段，如 /tmp/proj/doc.txt）：仅用于「cwd 之外的写入面」识别。
+# 单段（/F、/tmp 之类）不在此列——cmd 开关与根目录本身不构成额外快照根；
+# 命中后仍要过「真实存在 + 在允许根内」两道校验（见 _add_target）。
+_POSIX_ABS_PATH_RE = re.compile(r"(?<![\w:])/(?![/])[^\s;|&<>\"'`]+/[^\s;|&<>\"'`]*")
 _TRAILING_PUNCT_RE = re.compile(r"[.,;:)\]}>'\"]+$")
 _EXEC_SNAPSHOT_EXTRA_ROOTS_LIMIT = 8
 
@@ -2507,6 +2516,13 @@ def _collect_exec_snapshot_roots(command: str, cwd: str, allowed_roots: list[str
         # GitBash 的 /d/proj → D:\proj（仅单盘符字母；/usr 等映射不在安全根内会被拒绝）
         if len(raw) >= 3 and raw[1] == "/" and raw[0].isalpha():
             candidates.append(f"{raw[1].upper()}:{raw[2:]}")
+    # POSIX 宿主（Linux/macOS worker）：/a/b 形式的绝对路径同样纳入
+    for match in _POSIX_ABS_PATH_RE.finditer(command or ""):
+        raw = _TRAILING_PUNCT_RE.sub("", match.group(0))
+        # 排除已被 MSYS 规则处理过的 /d/proj 形态（避免重复候选）
+        if len(raw) >= 3 and raw[1] == "/" and raw[0].isalpha() and raw.count("/") == 1:
+            continue
+        candidates.append(raw)
 
     for raw in candidates:
         if not raw or len(raw) > 512:

@@ -37,6 +37,9 @@ def _clear_approvals():
 
 
 def test_file_read_returns_content(tmp_path, monkeypatch):
+    # 显式固定安全根：缺省是 $HOME，而 pytest 的 tmp_path 在 /tmp 下，
+    # 依赖环境变量会让本用例在「未设置 OS_AUTOMATION_SAFE_ROOT」的机器上误判为越权拒绝。
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
     target = tmp_path / "notes.txt"
     target.write_text("hello hermes\n", encoding="utf-8")
 

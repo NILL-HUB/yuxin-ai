@@ -477,6 +477,7 @@ def test_exec_gitbash_blocks_rm(tmp_path, monkeypatch):
     assert victim.exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows 专属：默认 shell 解析（Linux 侧回退 /bin/sh）")
 def test_exec_default_shell_is_gitbash(tmp_path, monkeypatch):
     """worker 默认 gitbash：不可用时须报 Git 缺失（而非静默回退 cmd 执行）。"""
     import scripts.os_automation_worker as worker
@@ -498,6 +499,7 @@ def test_exec_unknown_shell_rejected(tmp_path, monkeypatch):
     assert result["error"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows 专属：GitBash 解析错误文案（Linux 侧为 /bin/sh）")
 def test_exec_reports_shell_resolution_error_when_gitbash_absent(tmp_path, monkeypatch):
     """gitbash 不可用时返回可读错误而非崩溃。"""
     import scripts.os_automation_worker as worker
@@ -733,6 +735,7 @@ def test_exec_gitbash_handles_quoted_path_with_spaces(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # 快照范围跟随实际写入面（cwd 外写入覆盖）+ Agent 自愈信号
 # ---------------------------------------------------------------------------
+@pytest.mark.skipif(os.name != "nt", reason="Windows 专属：命令内 Windows 路径解析")
 def test_collect_snapshot_roots_extracts_referenced_dirs(tmp_path, monkeypatch):
     """命令引用的安全根内路径 → 其存在祖先目录纳入快照根；cwd 内路径去重。"""
     from scripts.os_automation_worker import _collect_exec_snapshot_roots
