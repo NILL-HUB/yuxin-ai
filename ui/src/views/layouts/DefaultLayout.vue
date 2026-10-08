@@ -55,8 +55,14 @@ const isMember = computed(() => membershipSummary.value?.membership?.status === 
 
 // tier：'basic' 试用/普通会员（徽章盾图标），'advanced' 付费进阶会员（宝石图标）
 const memberLevel = computed<{ label: string; tier: 'basic' | 'advanced' } | null>(() => {
-  const plan = membershipSummary.value?.membership?.plan
+  const membership = membershipSummary.value?.membership
+  const plan = membership?.plan
   if (!plan?.code) return null
+  // 会员自然到期：身份**回退为免费用户**（2026-10-07 产品要求——不是「已过期」
+  // 标识，而是直接回退到免费用户身份；分销资格由服务端联动收紧，已绑定的下级保留）。
+  if (membership && (membership.is_active === false || membership.status === 'expired')) {
+    return { label: t('layout.account.memberLevel.free'), tier: 'basic' }
+  }
   const code = plan.code.toUpperCase()
   if (/^(FREE|TRIAL|TRY|EXPERIENCE)/.test(code)) {
     return { label: t('layout.account.memberLevel.trial'), tier: 'basic' }

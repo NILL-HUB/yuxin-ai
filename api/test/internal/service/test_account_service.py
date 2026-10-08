@@ -1770,6 +1770,18 @@ class TestAccountService:
     def test_resend_login_challenge_should_reuse_pending_challenge(self, monkeypatch):
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        # 显式固定通道开关：读真实配置会让本用例随「本机是否开启邮箱通道」时红时绿
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": False,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
         email_calls = []
         account = SimpleNamespace(
             id=uuid4(),

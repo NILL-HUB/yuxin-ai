@@ -119,6 +119,11 @@ class RedeemCodeService:
         settle(account_id, plan, source_id)
 
     def get_membership_summary(self, account_id: UUID) -> dict:
+        # 会员自然到期收敛（惰性触发，2026-10-07 补）：「status→expired + 套餐额度清零」
+        # 此前只挂在退款流程（refund_service._reclaim_rights），自然到期没有任何触发者，
+        # 用户侧表现为「纯过期」——身份标识仍显示高级会员、quota_credit 滞留但计费侧
+        # 因 membership.is_active=False 判不可用（额度悬空）。此处读取摘要时按同语义收敛。
+        self._expire_membership_if_due(account_id)
         membership = self._get_current_membership(account_id)
         plan = self._get_plan_or_raise(membership.plan_id) if membership else None
         credit_account = self._get_credit_account(account_id)
@@ -482,12 +487,52 @@ class RedeemCodeService:
         return {
             "id": str(membership.id),
             "status": membership.status,
+            "is_active": bool(membership.is_active),
             "started_at": self._timestamp(membership.started_at),
             "expires_at": self._timestamp(membership.expires_at),
             "source": membership.source,
             "source_id": str(membership.source_id) if membership.source_id else None,
             "plan": self._serialize_plan(plan) if plan else None,
         }
+
+    def _expire_membership_if_due(self, account_id: UUID) -> None:
+        """把已自然到期仍处于 active 的会员收敛为 expired；无有效会员时清空套餐额度。
+
+        清理语义与退款流程（refund_service._reclaim_rights）一致：status → expired、
+        quota_credit → 0；**永久额度（permanent_credit）不在此清理范围**。
+        多会员记录时，仅当不存在任何未到期记录才清空套餐额度。
+        """
+        now = self._now()
+        memberships = (
+            self.session.query(Membership)
+            .filter(Membership.account_id == account_id)
+            .all()
+        )
+        overdue = [
+            item
+            for item in memberships
+            if item.status == "active" and item.expires_at is not None and item.expires_at < now
+        ]
+        if not overdue:
+            return
+        for item in overdue:
+            item.status = "expired"
+            item.updated_at = now
+        still_active = any(
+            item.status == "active" and item.expires_at is not None and item.expires_at >= now
+            for item in memberships
+        )
+        if not still_active:
+            credit_account = (
+                self.session.query(CreditAccount)
+                .filter(CreditAccount.account_id == account_id)
+                .with_for_update()
+                .one_or_none()
+            )
+            if credit_account is not None and int(credit_account.quota_credit or 0) != 0:
+                credit_account.quota_credit = 0
+                credit_account.updated_at = now
+        self.session.commit()
 
     def _serialize_credit_account(self, credit_account: CreditAccount) -> dict:
         return {

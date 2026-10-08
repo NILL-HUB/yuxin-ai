@@ -836,10 +836,15 @@ class AccountService(BaseService):
             account = self.get_account(account_session.account_id)
             password_changed_at = getattr(account, "password_changed_at", None)
             session_created_at = getattr(account_session, "created_at", None)
+            # 精度对齐：account_session.created_at 列默认 CURRENT_TIMESTAMP(0)（秒级），
+            # 而 password_changed_at 是应用侧微秒时间戳；直接比较会把"同一秒内新建的会话"
+            # 误判为"早于改密"→ 新注册/刚登录的用户立刻 401（2026-10-05 实机验证）。
+            # 两侧统一截断到秒后再比较，保留"改密前的旧会话失效"语义。
             if (
                 password_changed_at is not None
                 and session_created_at is not None
-                and session_created_at < password_changed_at
+                and session_created_at.replace(microsecond=0)
+                < password_changed_at.replace(microsecond=0)
             ):
                 raise UnauthorizedException("密码已变更，请重新登录")
         except SQLAlchemyError:

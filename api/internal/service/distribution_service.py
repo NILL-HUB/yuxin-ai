@@ -7,7 +7,7 @@ from uuid import UUID
 from internal.extension.database_extension import db
 from internal.exception import FailException, NotFoundException
 from internal.model.account import Account
-from internal.model.billing import Plan
+from internal.model.billing import Membership, Plan
 from internal.model.distribution import (
     BalanceAccount,
     BalanceTransaction,
@@ -121,6 +121,25 @@ class DistributionService:
         )
         return referral.code if referral else None
 
+    def _has_active_membership(self, account_id: UUID) -> bool:
+        """邀请人是否持有有效会员——分销资格前提（2026-10-07 产品要求）。
+
+        无会员身份不能分销：已绑定的下级关系保留、不受影响，但不能再**新增**下级
+        （邀请码解析失败 / 直接绑定被拒）。会员到期后由会员摘要侧收敛为
+        status=expired，此处以「存在 active 且未过期的记录」为准。
+        """
+        membership = (
+            self.session.query(Membership)
+            .filter(
+                Membership.account_id == account_id,
+                Membership.status == "active",
+                Membership.expires_at.isnot(None),
+                Membership.expires_at >= _UTCNOW,
+            )
+            .first()
+        )
+        return membership is not None
+
     def resolve_inviter_by_code(self, code: str) -> Account | None:
         normalized = self.normalize_code(code)
         if not normalized:
@@ -138,6 +157,10 @@ class DistributionService:
             .one_or_none()
         )
         if inviter is None or (inviter.status or "active") != "active":
+            return None
+        # 分销资格前提：邀请人必须持有有效会员（2026-10-07）——
+        # 无会员者邀请码解析失败，新人无法绑定其为上级；已有绑定关系不受影响。
+        if not self._has_active_membership(inviter.id):
             return None
         return inviter
 
@@ -184,6 +207,10 @@ class DistributionService:
         )
         if inviter is None or (inviter.status or "active") != "active":
             raise FailException("邀请人账户不可用")
+        # 分销资格校验（2026-10-07）：无有效会员不可作为上级**新增**下级；
+        # 已存在的下级关系保留不动（仅拦截新建/变更绑定）。
+        if not self._has_active_membership(inviter_id):
+            raise FailException("邀请人当前没有有效会员，无法新增下级")
         # 一级分销防互为上下级
         reverse = (
             self.session.query(DistributionRelation)

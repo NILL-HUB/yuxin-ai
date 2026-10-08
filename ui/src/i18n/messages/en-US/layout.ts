@@ -40,6 +40,7 @@ export default  {
         trial: 'Trial',
         pro: 'PRO',
         advanced: 'Advanced',
+        free: 'Free',
         member: 'Member',
       },
       credits: '{credit} Credits',

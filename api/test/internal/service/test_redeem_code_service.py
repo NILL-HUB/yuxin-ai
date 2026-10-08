@@ -378,6 +378,7 @@ class TestRedeemCodeService:
         )
         credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=120, total_consumed=20)
         service = RedeemCodeService(session=_SessionStub([
+            _QueryStub(all_result=[membership]),  # 到期收敛查询：未过期 → 原样返回
             _QueryStub(one_or_none_result=membership),
             _QueryStub(one_or_none_result=plan),
             _QueryStub(one_or_none_result=credit_account),
@@ -391,6 +392,46 @@ class TestRedeemCodeService:
         assert result["credit_account"]["balance"] == 100
         assert result["recent_transactions"] == []
         assert result["recent_tasks"] == []
+
+    def test_membership_summary_should_expire_overdue_membership_and_clear_quota(self):
+        """自然到期收敛（2026-10-07）：读摘要时把过期会员置 expired 并清空套餐额度。
+
+        此前只有退款流程会收敛到期会员，自然到期无触发者 → 身份仍显示高级会员、
+        quota_credit 滞留但计费侧判不可用（额度悬空）。
+        """
+        account_id = uuid4()
+        plan = _plan()
+        overdue = Membership(
+            account_id=account_id,
+            plan_id=plan.id,
+            status="active",
+            started_at=datetime(2020, 1, 1, 0, 0, 0),
+            expires_at=datetime(2020, 2, 1, 0, 0, 0),
+        )
+        credit_account = CreditAccount(
+            account_id=account_id,
+            quota_credit=100,
+            permanent_credit=30,
+            total_granted=120,
+            total_consumed=20,
+        )
+        session = _SessionStub([
+            _QueryStub(all_result=[overdue]),               # 到期扫描：命中已过期 active
+            _QueryStub(one_or_none_result=credit_account),  # 无未到期记录 → 清套餐额度
+            _QueryStub(one_or_none_result=None),            # 当前会员（已收敛为 expired）
+            _QueryStub(one_or_none_result=credit_account),  # 额度账户
+            _QueryStub(all_result=[]),                      # 最近流水
+            _QueryStub(all_result=[]),                      # 最近消费窗口
+        ])
+        service = RedeemCodeService(session=session)
+
+        result = service.get_membership_summary(account_id)
+
+        assert overdue.status == "expired"
+        assert credit_account.quota_credit == 0
+        assert credit_account.permanent_credit == 30  # 永久额度不在清理范围
+        assert session.commits == 1
+        assert result["membership"] is None
 
     def test_get_membership_summary_should_build_recent_tasks_with_message_query(self):
         account_id = uuid4()
@@ -423,6 +464,7 @@ class TestRedeemCodeService:
             is_deleted=False,
         )
         service = RedeemCodeService(session=_SessionStub([
+            _QueryStub(all_result=[membership]),  # 到期收敛查询：未过期 → 原样返回
             _QueryStub(one_or_none_result=membership),
             _QueryStub(one_or_none_result=plan),
             _QueryStub(one_or_none_result=credit_account),
@@ -468,6 +510,7 @@ class TestRedeemCodeService:
             is_deleted=False,
         )
         service = RedeemCodeService(session=_SessionStub([
+            _QueryStub(all_result=[membership]),  # 到期收敛查询：未过期 → 原样返回
             _QueryStub(one_or_none_result=membership),
             _QueryStub(one_or_none_result=plan),
             _QueryStub(one_or_none_result=credit_account),

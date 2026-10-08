@@ -40,6 +40,7 @@ export default  {
         trial: '试用',
         pro: 'PRO',
         advanced: '高级会员',
+        free: '免费用户',
         member: '会员',
       },
       credits: '算力 {credit}',

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from internal.exception import FailException
 from internal.model.account import Account
-from internal.model.billing import Plan
+from internal.model.billing import Membership, Plan
 from internal.model.distribution import (
     BalanceAccount,
     BalanceTransaction,
@@ -118,6 +118,15 @@ def _account(status="active"):
     return Account(id=uuid4(), name="Alice", status=status)
 
 
+def _membership(account_id=None, *, status="active", days=30):
+    """有效会员记录桩：`_has_active_membership` 只判断查询是否命中。"""
+    return Membership(
+        account_id=account_id or uuid4(),
+        status=status,
+        expires_at=datetime.now(UTC) + timedelta(days=days),
+    )
+
+
 def _plan(plan_type="membership", price="100.00"):
     return Plan(id=uuid4(), code="pro", name="Pro", plan_type=plan_type, price=price, duration_days=30, grant_token_credits=100, status="active")
 
@@ -158,15 +167,28 @@ class TestInviteCode:
         disabled = _account(status="disabled")
         code = "CODE1234"
 
-        def _build(inviter):
+        def _build(inviter, membership=_membership()):
             referral = ReferralCode(account_id=inviter.id, code=code)
             return DistributionService(session=_SessionStub([
                 _QueryStub(one_or_none_result=referral),
                 _QueryStub(one_or_none_result=inviter),
+                _QueryStub(first_result=membership),
             ]))
 
         assert _build(active).resolve_inviter_by_code("code1234") == active
         assert _build(disabled).resolve_inviter_by_code("CODE1234") is None
+
+    def test_resolve_inviter_by_code_should_reject_inviter_without_membership(self):
+        """分销资格前提（2026-10-07）：邀请人无有效会员时邀请码不可用。"""
+        inviter = _account()
+        referral = ReferralCode(account_id=inviter.id, code="CODE1234")
+        service = DistributionService(session=_SessionStub([
+            _QueryStub(one_or_none_result=referral),
+            _QueryStub(one_or_none_result=inviter),
+            _QueryStub(first_result=None),  # 无有效会员
+        ]))
+
+        assert service.resolve_inviter_by_code("CODE1234") is None
 
 
 class TestDistributionRelation:
@@ -181,6 +203,7 @@ class TestDistributionRelation:
         inviter = _account()
         session = _SessionStub([
             _QueryStub(one_or_none_result=inviter),   # inviter account
+            _QueryStub(first_result=_membership()),   # inviter 有效会员（分销资格前提）
             _QueryStub(one_or_none_result=None),      # reverse relation
             _QueryStub(one_or_none_result=None),      # existing relation
         ])
@@ -197,10 +220,23 @@ class TestDistributionRelation:
         reverse = _relation(inviter_id, invitee_id)
         session = _SessionStub([
             _QueryStub(one_or_none_result=inviter),
+            _QueryStub(first_result=_membership()),
             _QueryStub(one_or_none_result=reverse),
         ])
         service = DistributionService(session=session)
         with pytest.raises(FailException, match="互为上下级"):
+            service.bind_superior(invitee_id, inviter.id)
+
+    def test_bind_superior_should_reject_inviter_without_membership(self):
+        """无有效会员的邀请人不能新增下级（已有关系保留，仅拦截新建）。"""
+        invitee_id = uuid4()
+        inviter = _account()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=inviter),
+            _QueryStub(first_result=None),  # 无有效会员
+        ])
+        service = DistributionService(session=session)
+        with pytest.raises(FailException, match="有效会员"):
             service.bind_superior(invitee_id, inviter.id)
 
     def test_unbind_superior_should_delete_relation(self):

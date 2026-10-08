@@ -342,7 +342,7 @@ class AudioService(BaseService):
             raise FailException("文本内容不能为空")
 
         normalized_message_id = str(message_id or "").strip()
-        voice = "alex"
+        voice = "anna"
         conversation_id = ""
         resolved_message_id = ""
 
@@ -380,7 +380,7 @@ class AudioService(BaseService):
     def _resolve_voice(self, message: Message, conversation: Any, account: Account) -> str:
         """根据消息上下文解析语音配置并返回合法音色"""
         enable = True
-        voice = "alex"
+        voice = "anna"
 
         if message.invoke_from in [InvokeFrom.WEB_APP.value, InvokeFrom.DEBUGGER.value]:
             app = self.get(App, conversation.app_id)
@@ -398,10 +398,10 @@ class AudioService(BaseService):
             )
             text_to_speech = app_config.text_to_speech
             enable = text_to_speech.get("enable", False)
-            voice = text_to_speech.get("voice", "alex")
+            voice = text_to_speech.get("voice", "anna")
         elif message.invoke_from == InvokeFrom.ASSISTANT_AGENT.value:
             enable = True
-            voice = "alex"
+            voice = "anna"
         elif message.invoke_from == InvokeFrom.SERVICE_API.value:
             raise NotFoundException("开放API消息不支持文本转语音服务")
 
@@ -568,7 +568,7 @@ class AudioService(BaseService):
             raise FailException("文本内容不能为空")
 
         normalized_message_id = str(message_id or "").strip()
-        voice = "alex"
+        voice = "anna"
         conversation_id = ""
         resolved_message_id = ""
         if normalized_message_id != "":

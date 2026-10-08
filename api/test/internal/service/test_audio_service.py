@@ -435,7 +435,7 @@ class TestAudioService:
         events = list(service.text_to_audio(message_id=None, text="  播放这段文字  ", account=account))
 
         assert captures["input_text"] == "播放这段文字"
-        assert captures["voice"] == "alex"
+        assert captures["voice"] == "anna"
         assert events == ["resp::"]
 
     def test_text_to_audio_should_resolve_context_when_message_id_provided(self, monkeypatch):
@@ -613,7 +613,7 @@ class TestAudioService:
             account=SimpleNamespace(id=uuid4()),
         )
 
-        assert voice == "alex"
+        assert voice == "anna"
 
     def test_resolve_voice_should_fallback_to_default_when_invoke_from_unknown(self):
         service = _build_service()
@@ -624,7 +624,7 @@ class TestAudioService:
             account=SimpleNamespace(id=uuid4()),
         )
 
-        assert voice == "alex"
+        assert voice == "anna"
 
     def test_resolve_voice_should_return_valid_configured_voice(self, monkeypatch):
         service = _build_service()
