@@ -243,6 +243,13 @@
   background: "#EEF2FF"
   category: video
   created_at: 1789800000
+- name: bailian_video_tools
+  label: 百炼视频工具
+  description: 百炼（通义万相）AI 视频生成能力，支持 Agent 在对话内文生视频 / 图生视频并存入成品库。
+  icon: ""
+  background: "#FFF1E6"
+  category: video
+  created_at: 1791270000
 - name: media_fetch_tools
   label: 外部素材获取
   description: 外部媒体下载导入能力，供 Agent 把公开视频/音频链接保存进知识库。

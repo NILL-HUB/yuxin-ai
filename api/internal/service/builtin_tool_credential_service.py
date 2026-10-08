@@ -49,10 +49,21 @@ PROVIDER_CREDENTIAL_KEYS: dict[str, list[str]] = {
     "stability": ["STABILITY_API_KEY"],
     "atlascloud_image": ["ATLASCLOUD_API_KEY"],
     "atlascloud_video": ["ATLASCLOUD_API_KEY"],
+    "bailian_video_tools": ["DASHSCOPE_API_KEY"],
     "browser_automation": ["BROWSER_AUTOMATION_URL", "BROWSER_AUTOMATION_TOKEN"],
     "computer_control": ["COMPUTER_CONTROL_URL", "COMPUTER_CONTROL_TOKEN"],
     "host_os": ["OS_AUTOMATION_URL", "OS_AUTOMATION_TOKEN"],
 }
+
+
+def _is_env_configured(env_name: str) -> bool:
+    """env 兜底凭证是否可用：占位符（`.env.example` 默认值，如 `your-*-key-here`）视为未配置。
+
+    「env 是否已配置」的**唯一判定实现**：probe / dependency_status（经 `_is_configured`）
+    与列表展示（`list_providers`）共用。历史 bug：列表侧内联了一个只查非空的弱判定，
+    把占位符标成「已配置」，与 probe 结论互相矛盾、误导管理员。
+    """
+    return not is_placeholder_secret(os.getenv(env_name, ""))
 
 
 @inject
@@ -116,7 +127,7 @@ class BuiltinToolCredentialService(BaseService):
             items = []
             for key in keys:
                 db_configured = bool(stored.get(key))
-                env_configured = bool(os.getenv(key, "").strip())
+                env_configured = False if db_configured else _is_env_configured(key)
                 items.append({
                     "key": key,
                     "configured": db_configured or env_configured,
@@ -180,9 +191,9 @@ class BuiltinToolCredentialService(BaseService):
         row = self._find_provider_with_key(env_name)
         if row is not None and isinstance(row.credentials, dict) and row.credentials.get(env_name):
             return True
-        # env 兜底：占位符（`.env.example` 默认值，如 `your-tavily-key-here`）视为**未配置**，
-        # 否则会把"看起来有值实则 401"的占位符标成已配置，误导依赖判定与列表展示。
-        return not is_placeholder_secret(os.getenv(env_name, ""))
+        # env 兜底判定统一走 _is_env_configured（占位符视为未配置），
+        # 保证 probe / dependency_status / 列表展示三处结论一致。
+        return _is_env_configured(env_name)
 
     # ------------------------------------------------------------------
     # 依赖联动（P1-1）：工具 enabled=true 但依赖缺失时如实标记未配置

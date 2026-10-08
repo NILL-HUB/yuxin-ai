@@ -71,6 +71,12 @@ RUN set -eux; \
     node --version; npm --version; npx --version; \
     node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]<22){console.error("需要 Node >= 22（npx 类 MCP stdio server 依赖）"); process.exit(1)}'
 
+# ---- 百炼 CLI（`bl`）：CLI 工具域（source_type=cli）依赖的 stdio 子进程 ----
+# cli_provider.command=`bl`，由 McpStdioClient 以子进程方式执行；凭证经 provider.env
+# 加密注入（见 cli_service.build_mcp_shaped_bindings）。版本与宿主机保持同源。
+RUN npm install -g bailian-cli@2.0.1 --registry=https://registry.npmmirror.com \
+    && bl --version
+
 # 设置镜像级固定环境变量（业务配置通过 env_file/.env 注入）
 ENV NLTK_DATA=/app/api/internal/core/unstructured/nltk_data \
     TZ=Asia/Shanghai

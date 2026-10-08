@@ -1,0 +1,46 @@
+name: bailian_video_generate
+label: AI 视频生成（百炼/通义万相）
+description: 根据文字描述用百炼（通义万相）生成 AI 视频并自动存入成品库；支持文生视频与图生视频（给首帧图），生成约 1-5 分钟。
+params:
+- name: prompt
+  label: 视频描述
+  type: string
+  required: true
+- name: name
+  label: 成品名称
+  type: string
+  required: false
+- name: model
+  label: 模型
+  type: string
+  required: false
+- name: duration
+  label: 时长（秒）
+  type: number
+  default: 5
+  min: 1
+  max: 15
+  required: false
+- name: resolution
+  label: 分辨率
+  type: string
+  required: false
+- name: ratio
+  label: 画面比例
+  type: string
+  required: false
+- name: image_url
+  label: 首帧图片地址
+  type: string
+  required: false
+task_keywords:
+- 生成视频
+- 文生视频
+- 图生视频
+- AI视频
+- 做一个视频
+- 生成一段视频
+- 万相
+- 百炼
+- 通义
+- 视频创作
