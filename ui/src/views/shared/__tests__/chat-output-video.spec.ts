@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildChatOutputParts,
   extractArtifactFromToolObservation,
+  extractArtifactsFromToolObservation,
   isVideoArtifact,
   normalizeChatOutputParts,
   type ChatOutputPart,
@@ -122,5 +123,48 @@ describe('extractArtifactFromToolObservation', () => {
 
   it('returns null for malformed json', () => {
     expect(extractArtifactFromToolObservation('{ ok: true')).toBeNull()
+  })
+})
+
+describe('extractArtifactsFromToolObservation', () => {
+  it('collects every entry of the artifacts list', () => {
+    const observation = JSON.stringify({
+      ok: true,
+      exit_code: 0,
+      artifacts: [
+        { name: '报表.csv', url: 'https://cdn.example.com/artifacts/report.csv' },
+        { name: '图.png', url: 'https://cdn.example.com/artifacts/chart.png' },
+        { name: '无地址' },
+      ],
+    })
+
+    const artifacts = extractArtifactsFromToolObservation(observation)
+
+    expect(artifacts.map(artifact => artifact.url)).toEqual([
+      'https://cdn.example.com/artifacts/report.csv',
+      'https://cdn.example.com/artifacts/chart.png',
+    ])
+  })
+
+  it('keeps the single artifact field working alongside the list', () => {
+    const observation = JSON.stringify({
+      ok: true,
+      artifact: videoArtifact(),
+      artifacts: [{ name: '字幕', url: 'https://cdn.example.com/artifacts/a.srt' }],
+    })
+
+    const artifacts = extractArtifactsFromToolObservation(observation)
+
+    expect(artifacts.map(artifact => artifact.url)).toEqual([
+      'https://cdn.example.com/artifacts/out.mp4',
+      'https://cdn.example.com/artifacts/a.srt',
+    ])
+  })
+
+  it('returns nothing for failed payloads and plain text', () => {
+    expect(
+      extractArtifactsFromToolObservation(JSON.stringify({ ok: false, artifacts: [videoArtifact()] })),
+    ).toEqual([])
+    expect(extractArtifactsFromToolObservation('done https://cdn.example.com/a.mp4')).toEqual([])
   })
 })

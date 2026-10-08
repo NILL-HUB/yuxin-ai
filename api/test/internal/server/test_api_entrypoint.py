@@ -59,11 +59,19 @@ def _run_api_entrypoint(tmp_path: Path, *, extra_env: dict[str, str] | None = No
             "REDIS_HOST": "localhost",
             "REDIS_PORT": "6379",
             "JWT_SECRET_KEY": "secret",
+            # 用例必须与开发机环境解耦（本机 .env 常带这些开关）：
+            # - DEV_RELOAD=1 时 entrypoint 走 uvicorn --reload（不带 --workers），
+            #   celery 模式更会交给 watchfiles 长驻托管 → 用例既不成立又**永不退出**；
+            # - ASGI_WORKER_AMOUNT 泄漏进来会让「默认单 worker」的断言失败。
+            # 需要覆盖时由各用例经 extra_env 显式传入。
+            "DEV_RELOAD": "0",
         }
     )
+    env.pop("ASGI_WORKER_AMOUNT", None)
     if extra_env:
         env.update(extra_env)
 
+    # timeout 兜底：entrypoint 里的长驻分支若被误启动，用例应失败而不是挂死整个测试会话
     subprocess.run(
         ["bash", str(project_root / "api" / "docker" / "entrypoint.sh")],
         check=True,
@@ -71,6 +79,7 @@ def _run_api_entrypoint(tmp_path: Path, *, extra_env: dict[str, str] | None = No
         env=env,
         capture_output=True,
         text=True,
+        timeout=90,
     )
 
     return capture_file.read_text(encoding="utf-8").strip()

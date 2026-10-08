@@ -26,7 +26,6 @@ from internal.core.agent.agents.deep_thinking_utils import (
     build_local_document_section_body,
     build_local_plain_text_fallback,
     build_thinking_context,
-    extract_artifact_paths,
     extract_last_human_query,
     extract_llm_text,
     extract_query,
@@ -50,6 +49,12 @@ from internal.core.agent.entities.deep_thinking_entity import (
 from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.agent.middleware import DeepTimelineMiddleware
+from internal.core.agent.sandbox_artifact_collector import (
+    download_and_persist_artifacts,
+    prepare_artifact_markers,
+    resolve_artifact_root,
+    scan_artifacts,
+)
 from internal.core.agent.usage_utils import track_language_model_usage
 from internal.lib.runtime_context import session_scope, to_thread_in_app_context
 
@@ -1818,65 +1823,6 @@ class DeepThinkingAgent(FunctionCallAgent):
             summary=summary,
         )
 
-    def _prepare_artifact_markers(self, *, backend: Any, artifact_root: str) -> list[str]:
-        execute_method = getattr(backend, "execute", None)
-        if not callable(execute_method):
-            return []
-
-        marker_name = SandboxPolicy.build_artifact_marker_name(artifact_root)
-        fallback_roots = SandboxPolicy.build_fallback_artifact_roots(artifact_root)
-        if not fallback_roots:
-            return []
-
-        command_segments = []
-        for root in fallback_roots:
-            marker_path = f"{root}/{marker_name}"
-            command_segments.append(
-                f"if mkdir -p {shlex.quote(root)} 2>/dev/null; then "
-                f": > {shlex.quote(marker_path)} && printf '%s\\n' {shlex.quote(marker_path)}; "
-                "fi"
-            )
-
-        result = execute_method(" ; ".join(command_segments), timeout=15)
-        if getattr(result, "exit_code", 1) != 0:
-            logger.warning("准备沙箱产物标记失败，继续使用常规扫描: %s", getattr(result, "output", ""))
-            return []
-
-        return self._extract_artifact_paths(getattr(result, "output", ""))
-
-    @staticmethod
-    def _extract_artifact_paths(output: Any) -> list[str]:
-        return extract_artifact_paths(output)
-
-    def _resolve_sandbox_artifact_root(
-        self,
-        *,
-        backend: Any,
-        task_id: Any,
-    ) -> str:
-        default_root = SandboxPolicy.build_default_artifact_root(task_id)
-        execute_method = getattr(backend, "execute", None)
-        if not callable(execute_method):
-            return default_root
-
-        task_id_text = str(task_id)
-        probe_command = (
-            "for base in /workspace \"$HOME\" /home/user /tmp /mnt/data; do "
-            f"if [ -n \"$base\" ] && mkdir -p \"$base/artifacts/{task_id_text}\" 2>/dev/null; then "
-            f"printf '%s/artifacts/{task_id_text}' \"$base\"; "
-            "exit 0; "
-            "fi; "
-            "done; "
-            "exit 1"
-        )
-        result = execute_method(probe_command, timeout=15)
-        if getattr(result, "exit_code", 1) != 0:
-            logger.warning("探测沙箱产物目录失败，回退默认目录: %s", getattr(result, "output", ""))
-            return default_root
-
-        detected_root = str(getattr(result, "output", "")).strip()
-        return detected_root if detected_root.startswith("/") else default_root
-
     def _build_deep_agent(
         self,
         *,
@@ -1915,14 +1861,15 @@ class DeepThinkingAgent(FunctionCallAgent):
                     )
                 if sandbox_template_alias:
                     backend.ensure_ready()
-                artifact_root = self._resolve_sandbox_artifact_root(
-                    backend=backend,
-                    task_id=task_id,
-                )
+                artifact_root = resolve_artifact_root(backend=backend, task_id=task_id)
                 setattr(
                     backend,
                     "_yujianwo_artifact_markers",
-                    self._prepare_artifact_markers(backend=backend, artifact_root=artifact_root),
+                    prepare_artifact_markers(
+                        backend,
+                        roots=SandboxPolicy.build_fallback_artifact_roots(artifact_root),
+                        marker_name=SandboxPolicy.build_artifact_marker_name(artifact_root),
+                    ),
                 )
                 used_sandbox = True
                 timeline.publish_step(
@@ -2028,43 +1975,37 @@ class DeepThinkingAgent(FunctionCallAgent):
             status="start",
             title="检查生成产物",
             detail=f"扫描目录 {artifact_root}",
-                    technical_detail="\n".join(SandboxPolicy.build_candidate_artifact_roots(artifact_root)),
+            technical_detail="\n".join(SandboxPolicy.build_candidate_artifact_roots(artifact_root)),
             tool="artifact_scan",
         )
 
-        scan_roots = SandboxPolicy.build_candidate_artifact_roots(artifact_root)
-        find_command = SandboxPolicy.build_find_command(scan_roots)
-        result = execute_method(find_command, timeout=15)
-        if getattr(result, "exit_code", 1) != 0:
+        scan_result = scan_artifacts(
+            backend,
+            roots=SandboxPolicy.build_candidate_artifact_roots(artifact_root),
+        )
+        if scan_result.failed:
             timeline.publish_step(
                 step_id=artifact_paths_step_id,
                 step_type="artifact",
                 status="error",
                 title="检查生成产物",
                 detail="扫描产物目录失败",
-                technical_detail=str(getattr(result, "output", "")),
+                technical_detail=scan_result.error,
                 tool="artifact_scan",
                 latency=0,
             )
             return []
 
-        artifact_paths = self._extract_artifact_paths(getattr(result, "output", ""))
+        artifact_paths = scan_result.paths
         if not artifact_paths:
-            fallback_roots = SandboxPolicy.build_fallback_artifact_roots(artifact_root)
-            marker_paths_by_root = {
-                os.path.dirname(path): path
-                for path in (getattr(backend, "_yujianwo_artifact_markers", None) or [])
-                if path
-            }
-            if fallback_roots and marker_paths_by_root:
-                fallback_find_command = SandboxPolicy.build_find_command(
-                    [root for root in fallback_roots if root in marker_paths_by_root],
-                    max_depth=1,
-                    marker_paths_by_root=marker_paths_by_root,
-                )
-                fallback_result = execute_method(fallback_find_command, timeout=15)
-                if getattr(fallback_result, "exit_code", 1) == 0:
-                    artifact_paths = self._extract_artifact_paths(getattr(fallback_result, "output", ""))
+            # 兜底：模型可能把文件写到产物目录之外，用执行前打的标记过滤出本次新增文件
+            fallback_result = scan_artifacts(
+                backend,
+                roots=SandboxPolicy.build_fallback_artifact_roots(artifact_root),
+                marker_paths_by_root=getattr(backend, "_yujianwo_artifact_markers", None) or {},
+                max_depth=1,
+            )
+            artifact_paths = fallback_result.paths
         if not artifact_paths:
             timeline.publish_step(
                 step_id=artifact_paths_step_id,
@@ -2088,67 +2029,32 @@ class DeepThinkingAgent(FunctionCallAgent):
             latency=0,
         )
 
-        responses = download_method(artifact_paths)
-        artifacts: list[dict[str, Any]] = []
-
         flask_app = self.agent_config.runtime_flask_app
         app_context = nullcontext()
         if flask_app is not None and not is_active_app(flask_app):
             app_context = flask_app.app_context()
 
+        artifacts: list[dict[str, Any]] = []
         with app_context, session_scope():
-            from app.http.module import injector  # noqa: PLC0415
-
-            for response in responses:
-                if getattr(response, "error", None) or getattr(response, "content", None) is None:
-                    timeline.publish_step(
-                        step_id=uuid.uuid4(),
-                        step_type="artifact",
-                        status="error",
-                        title="持久化产物失败",
-                        detail=f"无法下载沙箱产物：{getattr(response, 'path', '')}",
-                        technical_detail=str(getattr(response, "error", "")),
-                        tool="artifact_download",
-                    )
-                    continue
-
-                artifact_path = str(response.path)
-                artifact_name = os.path.basename(artifact_path)
-                mime_type = mimetypes.guess_type(artifact_name)[0] or "application/octet-stream"
-                try:
-                    from internal.service.file_center_service import (  # noqa: PLC0415
-                        FileCenterService,
-                    )
-
-                    saved = injector.get(FileCenterService).save_generated_asset(
-                        self.agent_config.user_id,
-                        filename=artifact_name,
-                        content=response.content,
-                        mime_type=mime_type,
-                        folder="artifacts",
-                    )
-                    upload_file = saved["upload_file"]
-                    artifact = {
-                        "id": str(upload_file.id),
-                        "name": upload_file.name,
-                        "path": artifact_path,
-                        "size": upload_file.size,
-                        "extension": upload_file.extension,
-                        "mime_type": upload_file.mime_type,
-                        "url": saved["url"],
-                    }
-                    artifacts.append(artifact)
-                    timeline.publish_artifact(artifact_id=uuid.uuid4(), artifact=artifact)
-                except Exception as e:
-                    timeline.publish_step(
-                        step_id=uuid.uuid4(),
-                        step_type="artifact",
-                        status="error",
-                        title="持久化产物失败",
-                        detail=f"上传产物失败：{artifact_name}",
-                        technical_detail=f"{type(e).__name__}: {e}",
-                        tool="artifact_upload",
-                    )
+            persisted = download_and_persist_artifacts(
+                backend,
+                account_id=self.agent_config.user_id,
+                paths=artifact_paths,
+                folder="artifacts",
+            )
+            for failed_path, error in persisted.failures:
+                timeline.publish_step(
+                    step_id=uuid.uuid4(),
+                    step_type="artifact",
+                    status="error",
+                    title="持久化产物失败",
+                    detail=f"无法入库沙箱产物：{failed_path}",
+                    technical_detail=error,
+                    tool="artifact_download",
+                )
+            for artifact in persisted.artifacts:
+                artifacts.append(artifact)
+                timeline.publish_artifact(artifact_id=uuid.uuid4(), artifact=artifact)
         return artifacts
 
     @staticmethod

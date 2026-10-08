@@ -1,6 +1,6 @@
 name: execute_code
 label: 沙箱代码执行
-description: 在隔离沙箱内执行 Shell/Python 命令，默认未启用，需管理员开启。
+description: 在隔离沙箱内执行 Shell/Python 命令，生成的文件自动收进文件中心，默认未启用，需管理员开启。
 params: []
 task_keywords:
   - 执行代码

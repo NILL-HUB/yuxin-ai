@@ -35,6 +35,9 @@ from internal.core.agent.usage_utils import (
     charge_for_feature,
     extract_token_usage_from_stream,
 )
+from internal.core.tools.builtin_tools.providers.builtin_provider_manager import (
+    build_builtin_tool,
+)
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
 from internal.entity.cancel_token_entity import CancelToken
 from internal.core.language_model.entities.model_entity import ModelFeature
@@ -1177,7 +1180,9 @@ class AssistantAgentService(BaseService):
                                 tool_registry={
                                     getattr(tool, "name", str(tool)): tool
                                     for tool in tools
-                                }
+                                },
+                                # 账号用于把沙箱内生成的产物存入该账号的文件中心
+                                account_id=str(account_id),
                             )
                         )
             except Exception:
@@ -1646,21 +1651,8 @@ class AssistantAgentService(BaseService):
                 if builtin_tool_cls is None:
                     logger.warning("builtin 工具未找到: provider=%s tool=%s", provider_name, tool_name)
                     return None
-                # 内置工具实例化：工厂支持 account_id（或 **kwargs）时注入账号，
-                # 供产物类工具（图片/视频）把生成结果落进该账号的文件中心。
-                import inspect  # noqa: PLC0415
-
-                try:
-                    parameters = inspect.signature(builtin_tool_cls).parameters
-                except (TypeError, ValueError):
-                    return builtin_tool_cls()
-                accepts_account = "account_id" in parameters or any(
-                    p.kind is inspect.Parameter.VAR_KEYWORD
-                    for p in parameters.values()
-                )
-                if account_id and accepts_account:
-                    return builtin_tool_cls(account_id=account_id)
-                return builtin_tool_cls()
+                # 产物类工具（图片/视频/沙箱产物）靠 account_id 把结果落进文件中心
+                return build_builtin_tool(builtin_tool_cls, account_id=account_id)
 
             if source_type in ("api", "api_tool"):
                 # api 工具 ID 格式: "api_tool:{api_tool_uuid}"

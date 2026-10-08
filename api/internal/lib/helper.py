@@ -298,28 +298,34 @@ def _build_image_group_metadata(agent_thought):
     return {"group_id": group_id, "group_name": _DEFAULT_IMAGE_GROUP_NAME}
 
 
-def _extract_artifact_from_observation(observation) -> dict | None:
-    """从工具返回体（observation）里提取 artifact。
+def _extract_artifacts_from_observation(observation) -> list:
+    """从工具返回体（observation）里提取产物条目（`artifact` 单条 / `artifacts` 多条）。
 
-    为什么需要：视频渲染/剪辑工具的产物是**同步就绪**的（本机渲染），
-    此时 artifact 在**工具返回值**里，而非 tool_input。
+    为什么需要：视频渲染、沙箱代码执行等工具的产物是**同步就绪**的（本机渲染、
+    沙箱执行完即出），产物地址在**工具返回值**里，而非 tool_input。
     既有链路只认 tool_input.artifact，故在此补一条从工具返回值提取的路径。
 
-    只解析 JSON 且明确带 artifact 字段的情形——不做模糊文本匹配，
-    避免把普通回答里的 url 误判成产物。
+    只解析 JSON 且 `ok` 为真、明带 artifact/artifacts 字段的情形——不做模糊文本
+    匹配，避免把普通回答里的 url 误判成产物。顺序上 `artifact` 在前（既有字段优先）。
     """
     text = str(observation or "").strip()
     if not text or not text.startswith("{"):
-        return None
+        return []
     try:
         payload = json.loads(text)
     except (TypeError, ValueError):
-        return None
+        return []
     if not isinstance(payload, dict):
-        return None
+        return []
     if not payload.get("ok"):
-        return None
-    return payload.get("artifact")
+        return []
+
+    candidates = []
+    if payload.get("artifact") is not None:
+        candidates.append(payload.get("artifact"))
+    if isinstance(payload.get("artifacts"), list):
+        candidates.extend(payload.get("artifacts"))
+    return candidates
 
 
 def _read_object_field(value, field, default):
@@ -344,26 +350,30 @@ def extract_output_artifacts(agent_thoughts):
             tool_input = {}
 
         artifact = _normalize_output_artifact(tool_input.get("artifact"))
-        if artifact is None:
-            # 视频渲染/剪辑等工具的产物在**工具返回值**里（同步就绪场景），
-            # 既有链路只认 tool_input.artifact，故补这条提取路径。
-            artifact = _normalize_output_artifact(
-                _extract_artifact_from_observation(
-                    _read_object_field(agent_thought, "observation", "")
-                )
-            )
-        if artifact is None:
+        artifacts_from_thought = [artifact] if artifact is not None else []
+        if not artifacts_from_thought:
+            # 视频渲染/剪辑、沙箱代码执行等工具的产物在**工具返回值**里（同步就绪场景），
+            # 既有链路只认 tool_input.artifact，故补这条提取路径（支持 artifact/artifacts）。
+            for candidate in _extract_artifacts_from_observation(
+                _read_object_field(agent_thought, "observation", "")
+            ):
+                normalized = _normalize_output_artifact(candidate)
+                if normalized is not None:
+                    artifacts_from_thought.append(normalized)
+        if not artifacts_from_thought:
             event = _read_object_field(agent_thought, "event", "")
             normalized_event = str(getattr(event, "value", event) or "").strip().lower()
             if normalized_event == "deep_artifact_created":
-                artifact = _normalize_output_artifact(
+                deep_artifact = _normalize_output_artifact(
                     {
                         "name": _read_object_field(agent_thought, "thought", ""),
                         "url": _read_object_field(agent_thought, "observation", ""),
                     }
                 )
+                if deep_artifact is not None:
+                    artifacts_from_thought.append(deep_artifact)
 
-        if artifact is None:
+        if not artifacts_from_thought:
             combined_text = "\n".join(
                 [
                     str(_read_object_field(agent_thought, "thought", "") or "").strip(),
@@ -396,17 +406,20 @@ def extract_output_artifacts(agent_thoughts):
                     artifacts_by_url[inline_url] = inline_artifact
             continue
 
-        if _is_image_artifact(artifact):
-            group_metadata = _build_image_group_metadata(agent_thought)
-            for key, value in group_metadata.items():
-                if not str(artifact.get(key, "") or "").strip():
-                    artifact[key] = value
+        for artifact in artifacts_from_thought:
+            if _is_image_artifact(artifact):
+                group_metadata = _build_image_group_metadata(agent_thought)
+                for key, value in group_metadata.items():
+                    if not str(artifact.get(key, "") or "").strip():
+                        artifact[key] = value
 
-        artifact_url = artifact["url"]
-        if artifact_url in artifacts_by_url:
-            artifacts_by_url[artifact_url] = _merge_artifact(artifacts_by_url[artifact_url], artifact)
-        else:
-            artifacts_by_url[artifact_url] = artifact
+            artifact_url = artifact["url"]
+            if artifact_url in artifacts_by_url:
+                artifacts_by_url[artifact_url] = _merge_artifact(
+                    artifacts_by_url[artifact_url], artifact
+                )
+            else:
+                artifacts_by_url[artifact_url] = artifact
 
     return list(artifacts_by_url.values())
 

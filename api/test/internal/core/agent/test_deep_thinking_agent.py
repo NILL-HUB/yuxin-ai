@@ -2799,9 +2799,9 @@ IPO招股说明书草案
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda tid, thought: published.append(thought))
 
         backend = MagicMock()
-        backend._yujianwo_artifact_markers = [
-            "/home/user/artifacts/.yujianwo_artifact_marker_task-1",
-        ]
+        backend._yujianwo_artifact_markers = {
+            "/home/user/artifacts": "/home/user/artifacts/.yujianwo_artifact_marker_task-1",
+        }
         backend.execute.side_effect = [
             SimpleNamespace(exit_code=0, output=""),
             SimpleNamespace(exit_code=0, output="/home/user/artifacts/shanghai_travel_outfits.svg\n"),
@@ -2854,9 +2854,9 @@ IPO招股说明书草案
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda tid, thought: published.append(thought))
 
         backend = MagicMock()
-        backend._yujianwo_artifact_markers = [
-            "/mnt/data/.yujianwo_artifact_marker_task-1",
-        ]
+        backend._yujianwo_artifact_markers = {
+            "/mnt/data": "/mnt/data/.yujianwo_artifact_marker_task-1",
+        }
         backend.execute.side_effect = [
             SimpleNamespace(exit_code=0, output=""),
             SimpleNamespace(exit_code=0, output="/mnt/data/SpaceX_IPO_Prospectus_Draft.md\n"),

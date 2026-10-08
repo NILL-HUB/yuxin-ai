@@ -746,7 +746,7 @@ class TestAppService:
         app_id = uuid4()
         agent_binding_calls = []
         service.app_config_service = SimpleNamespace(
-            get_langchain_tools_by_tools_config=lambda tools: ["tool-a"] if tools == [{"type": "builtin_tool"}] else [],
+            get_langchain_tools_by_tools_config=lambda tools, *_args, **_kwargs: ["tool-a"] if tools == [{"type": "builtin_tool"}] else [],
             get_langchain_tools_by_mcp_bindings=lambda mcp_bindings, mcp_tool_snapshots=None: (
                 ["mcp-a"] if mcp_bindings == [{"name": "mcp"}] and mcp_tool_snapshots == [] else []
             ),
@@ -1868,7 +1868,7 @@ class TestAppService:
         monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: message)
         debug_service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
         debug_service.app_runtime_service.app_config_service = SimpleNamespace(
-            get_langchain_tools_by_tools_config=lambda _tools: [],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: [],
             get_langchain_tools_by_workflow_ids=lambda _workflow_ids: [],
         )
         monkeypatch.setattr(
@@ -1986,7 +1986,7 @@ class TestAppService:
         )
         workflow_capture = {}
         debug_service.app_runtime_service.app_config_service = SimpleNamespace(
-            get_langchain_tools_by_tools_config=lambda _tools: ["builtin-tool"],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: ["builtin-tool"],
             get_langchain_tools_by_workflow_ids=lambda workflow_ids: workflow_capture.update({"ids": workflow_ids})
             or ["workflow-tool"],
         )
@@ -2094,7 +2094,7 @@ class TestAppService:
         monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: message)
         debug_service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
         debug_service.app_runtime_service.app_config_service = SimpleNamespace(
-            get_langchain_tools_by_tools_config=lambda _tools: [],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: [],
             get_langchain_tools_by_workflow_ids=lambda _workflow_ids: [],
         )
         monkeypatch.setattr(

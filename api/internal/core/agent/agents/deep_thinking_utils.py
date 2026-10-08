@@ -120,14 +120,6 @@ def extract_last_human_query(messages: list[Any]) -> str:
     return ""
 
 
-def extract_artifact_paths(output: Any) -> list[str]:
-    return [
-        line.strip()
-        for line in str(output or "").splitlines()
-        if line.strip() and not line.startswith("[stderr]") and line.startswith("/")
-    ]
-
-
 def normalize_outline_title(title: str) -> str:
     return re.sub(r"[\s\W_]+", "", str(title or ""), flags=re.UNICODE).casefold()
 

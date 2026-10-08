@@ -235,33 +235,45 @@ export function extractInlineImageUrls(answer: string, existingUrls: string[] = 
 }
 
 /**
- * 从工具的返回体（observation）里提取 artifact。
+ * 从工具的返回体（observation）里提取 artifact / artifacts。
  *
- * 为什么需要：部分工具的产物是**同步就绪**的（如本机渲染），
- * 此时工具返回值里就带了可播放地址，无需等异步回填。
+ * 为什么需要：部分工具的产物是**同步就绪**的（如本机渲染、沙箱代码执行），
+ * 此时工具返回值里就带了可播放/可下载地址，无需等异步回填。
  *
- * 只解析「合法 JSON 且 ok 为真且带 artifact」的情形——不做模糊匹配，
+ * 只解析「合法 JSON 且 ok 为真且带产物字段」的情形——不做模糊匹配，
  * 避免把普通回答文本里的链接误判成产物。
  */
-export function extractArtifactFromToolObservation(observation: unknown): ChatArtifact | null {
+export function extractArtifactsFromToolObservation(observation: unknown): ChatArtifact[] {
   const text = String(observation ?? '').trim()
   if (!text.startsWith('{'))
-    return null
+    return []
 
   let payload: unknown
   try {
     payload = JSON.parse(text)
   } catch {
-    return null
+    return []
   }
 
   if (!payload || typeof payload !== 'object')
-    return null
+    return []
   const record = payload as Record<string, unknown>
   if (!record.ok)
-    return null
+    return []
 
-  return normalizeChatArtifact(record.artifact)
+  const candidates: unknown[] = []
+  if (record.artifact)
+    candidates.push(record.artifact)
+  if (Array.isArray(record.artifacts))
+    candidates.push(...record.artifacts)
+
+  return candidates
+    .map(item => normalizeChatArtifact(item))
+    .filter(Boolean) as ChatArtifact[]
+}
+
+export function extractArtifactFromToolObservation(observation: unknown): ChatArtifact | null {
+  return extractArtifactsFromToolObservation(observation)[0] ?? null
 }
 
 const collectInlineImageParts = (answer: string, existingUrls: Set<string>) => {

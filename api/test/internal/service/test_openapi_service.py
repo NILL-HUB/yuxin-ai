@@ -109,7 +109,7 @@ class TestOpenAPIService:
         service.app_config_service = SimpleNamespace(
             get_app_config=lambda _app, persist_changes=True: capture.update({"persist_changes": persist_changes})
             or app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: [],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: [],
         )
 
         created_records = []
@@ -220,7 +220,7 @@ class TestOpenAPIService:
         }
         service.app_config_service = SimpleNamespace(
             get_app_config=lambda _app: app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: [],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: [],
         )
 
         created_records = []
@@ -400,7 +400,7 @@ class TestOpenAPIService:
         }
         service.app_config_service = SimpleNamespace(
             get_app_config=lambda _app: app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: ["builtin-tool"],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: ["builtin-tool"],
             get_langchain_tools_by_workflow_ids=lambda _ids: ["workflow-tool"],
         )
 

@@ -405,6 +405,10 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 
 用户可见的文件管理面：每账号一棵目录树，聚合「用户上传 / Agent 产物 / 渲染成品 / 平台云端存储」四类来源。
 
+> 沙箱产物（深度思考、`execute_code` 生成的报告/表格/图片等）经
+> `sandbox_artifact_collector` 统一回收，以 `source="artifact"` 落入「产物」文件夹——
+> 链路与边界见 [10-sandbox-runtime.md §10](10-sandbox-runtime.md#10-沙箱产物回收深思考--execute_code-共用同一实现)。
+
 **定位（组织层，非存储层）**：
 - 物理对象仍归 `RuntimeStorageProxy`（local/cos/oss 切换与配额不变）；
 - 删除/恢复仍归 `RecycleBinService`（`resource_type="upload_file"`）；

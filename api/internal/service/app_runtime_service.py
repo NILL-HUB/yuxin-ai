@@ -233,7 +233,10 @@ class AppRuntimeService(BaseService):
         governance_context: dict[str, Any] | None = None,
     ) -> list[Any]:
         """根据应用配置构建运行时工具列表，供多入口复用。"""
-        tools = app_config_service.get_langchain_tools_by_tools_config(draft_app_config.get("tools", []))
+        tools = app_config_service.get_langchain_tools_by_tools_config(
+            draft_app_config.get("tools", []),
+            account_id=str(account.id),
+        )
         get_mcp_tools = getattr(app_config_service, "get_langchain_tools_by_mcp_bindings", None)
         if callable(get_mcp_tools):
             tools.extend(

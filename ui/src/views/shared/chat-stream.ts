@@ -5,7 +5,7 @@ import type { ToolConfirmationPrompt } from '@/models/tool-confirmation'
 export type { ToolConfirmationPrompt }
 import {
   buildChatOutputParts,
-  extractArtifactFromToolObservation,
+  extractArtifactsFromToolObservation,
   extractInlineImageUrls,
   mergeChatArtifacts,
 } from './chat-output'
@@ -354,11 +354,11 @@ export const applyChatStreamEvent = (
       message.artifacts = mergeChatArtifacts(message.artifacts, extractedArtifacts)
       shouldRefreshOutputParts = true
     }
-    // 同步就绪的成片（本机渲染）：产物地址在工具返回体里，
-    // 直接抽出来挂到消息上，用户无需等待回填即可看到播放器。
-    const toolArtifact = extractArtifactFromToolObservation(observation)
-    if (toolArtifact) {
-      message.artifacts = mergeChatArtifacts(message.artifacts, [toolArtifact])
+    // 同步就绪的产物：产物地址在工具返回体里（本机渲染的成片、沙箱代码执行
+    // 生成的文件等），直接抽出来挂到消息上，用户无需等待回填即可看到。
+    const toolArtifacts = extractArtifactsFromToolObservation(observation)
+    if (toolArtifacts.length > 0) {
+      message.artifacts = mergeChatArtifacts(message.artifacts, toolArtifacts)
       shouldRefreshOutputParts = true
     }
   } else if (event === QueueEvent.deepThinking) {

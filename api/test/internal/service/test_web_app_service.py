@@ -329,7 +329,7 @@ class TestWebAppService:
         }
         service.app_config_service = SimpleNamespace(
             get_app_config=lambda _app: app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: ["builtin-tool"],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: ["builtin-tool"],
             get_langchain_tools_by_workflow_ids=lambda _workflow_ids: ["workflow-tool"],
         )
         retrieval_capture = {}
@@ -463,7 +463,7 @@ class TestWebAppService:
         }
         service.app_config_service = SimpleNamespace(
             get_app_config=lambda _app: app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: [],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: [],
         )
         llm = SimpleNamespace(
             features=[],
@@ -567,7 +567,7 @@ class TestWebAppService:
         resolution_capture = {}
         service.app_config_service = SimpleNamespace(
             get_app_config=lambda _app: app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: [],
+            get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: [],
         )
         service.language_model_service = SimpleNamespace(
             resolve_runtime_language_model=lambda model_config, image_urls, entrypoint: resolution_capture.update(

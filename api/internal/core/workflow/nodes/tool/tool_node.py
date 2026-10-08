@@ -32,6 +32,7 @@ class ToolNode(BaseNode):
     """
     node_data: ToolNodeData
     _tool: BaseTool = PrivateAttr(None)
+    _account_binding_done: bool = PrivateAttr(False)
 
     def __init__(self, *args: Any, **kwargs: Any):
         """构造函数，完成对内置工具/API工具的初始化
@@ -142,6 +143,7 @@ class ToolNode(BaseNode):
 
         # builtin_tool / api_tool: 走构造期初始化的 _tool（原逻辑）
         if tool_type in ("", "builtin_tool", "api_tool"):
+            self._bind_account_for_builtin_tool(config)
             return self._tool.invoke(inputs_dict)
 
         # mcp: 延迟加载 McpToolFactory
@@ -166,6 +168,44 @@ class ToolNode(BaseNode):
 
         # 未知 tool_type 兜底（不应到达，Literal 已约束）
         raise FailException(f"不支持的工具类型: {tool_type}")
+
+    def _bind_account_for_builtin_tool(self, config: Optional[RunnableConfig]) -> None:
+        """为产物类内置工具补 account_id（构造期拿不到运行时账号）。
+
+        与 mcp / knowledge / skill 的延迟加载同源：账号只在 invoke 的 config 里，
+        而内置工具在 ``__init__`` 就已实例化。工具支持 account_id 且尚未绑定账号时，
+        用 config 里的账号重建实例（产物类工具据此把生成结果落进文件中心）；
+        其余情况保持原实例，只尝试一次。
+        """
+        if self._account_binding_done or self.node_data.tool_type != "builtin_tool":
+            return
+        if str(getattr(self._tool, "account_id", "") or ""):
+            self._account_binding_done = True
+            return
+        account_id = self._extract_account_id_from_config(config)
+        if account_id is None:
+            return
+
+        from app.http.module import injector  # noqa: PLC0415
+        from internal.core.tools.builtin_tools.providers import (  # noqa: PLC0415
+            BuiltinProviderManager,
+        )
+        from internal.core.tools.builtin_tools.providers.builtin_provider_manager import (  # noqa: PLC0415
+            accepts_keyword,
+            build_builtin_tool,
+        )
+
+        tool_cls = injector.get(BuiltinProviderManager).get_tool(
+            self.node_data.provider_id, self.node_data.tool_id
+        )
+        self._account_binding_done = True
+        if tool_cls is None or not accepts_keyword(tool_cls, "account_id"):
+            return
+        self._tool = build_builtin_tool(
+            tool_cls,
+            account_id=str(account_id),
+            params=self.node_data.params,
+        )
 
     # ------------------------------------------------------------------ #
     #  mcp / knowledge / skill / workflow / agent_binding 延迟加载实现     #

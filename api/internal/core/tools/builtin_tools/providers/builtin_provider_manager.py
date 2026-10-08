@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os.path
 from typing import Any
@@ -7,6 +8,40 @@ from pydantic import BaseModel, Field
 from internal.core.tools.builtin_tools.entities import ProviderEntity, Provider
 
 logger = logging.getLogger(__name__)
+
+
+def accepts_keyword(tool_cls: Any, name: str) -> bool:
+    """判断内置工具工厂是否接受某个关键字参数（显式形参或 `**kwargs`）。"""
+    try:
+        parameters = inspect.signature(tool_cls).parameters
+    except (TypeError, ValueError):
+        return False
+    if name in parameters:
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+
+
+def build_builtin_tool(
+    tool_cls: Any,
+    *,
+    account_id: str = "",
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """内置工具实例化的唯一入口：按工厂签名注入账号 + 自定义参数。
+
+    为什么收敛到一处：产物类工具（图片/视频/沙箱产物）需要 account_id 才能把结果
+    落进该账号的文件中心，而实例化点有多个（助手固有工具、运行时挂载、App 配置装配）。
+    若各点各写一套签名判断，新增产物工具时必漏一处（断链高发区）。
+
+    不支持 account_id 的旧工厂按原样实例化；`params` 中显式给出的 account_id 优先。
+    """
+    call_params = dict(params or {})
+    if account_id and "account_id" not in call_params and accepts_keyword(tool_cls, "account_id"):
+        call_params["account_id"] = account_id
+    return tool_cls(**call_params)
 
 
 @inject

@@ -56,7 +56,7 @@ def _account():
 def _app_config_service(tools_by_config=None, mcp_tools=None, workflow_tools=None):
     """构造 AppConfigService 桩。"""
     return SimpleNamespace(
-        get_langchain_tools_by_tools_config=lambda _tools: tools_by_config or [],
+        get_langchain_tools_by_tools_config=lambda _tools, *_args, **_kwargs: tools_by_config or [],
         get_langchain_tools_by_mcp_bindings=lambda _mcp, _snapshots=None: mcp_tools or [],
         get_langchain_tools_by_workflow_ids=lambda _ids: workflow_tools or [],
     )

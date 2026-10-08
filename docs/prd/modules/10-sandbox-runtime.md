@@ -1,6 +1,6 @@
 # 沙箱运行时：admin 统一配置与多后端热切换
 
-> 状态：**已落地（2026-09-29）**。本文档为沙箱配置与执行的权威说明。
+> 状态：**已落地（2026-09-29）**；产物回收链路见 §10（2026-10-08 落地，深思考与 `execute_code` 共用）。本文档为沙箱配置与执行的权威说明。
 > 设计来源：[沙箱配置治理与多后端热切换设计](../../archive/superpowers-specs/2026-09-29-sandbox-config-multi-backend-design.md)（已落地归档）。
 
 ## 1. 定位与目标
@@ -172,7 +172,7 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
 | 消费方 | 位置 | 接线方式 |
 | --- | --- | --- |
 | 深度思考 | `api/internal/core/agent/agents/deep_thinking_agent.py` `_build_deep_agent` | `get_sandbox_runtime("code_interpreter")` → `build_sandbox_backend(runtime)` |
-| 代码执行工具 | `api/internal/core/tools/builtin_tools/providers/code_execution_tool/execute_code.py` | 同上；启用位 = 工具开关 `ENABLE_CODE_EXECUTION_TOOL` **且** `runtime.enabled` |
+| 代码执行工具 | `api/internal/core/tools/builtin_tools/providers/code_execution_tool/execute_code.py` | 同上；启用位 = 工具开关 `ENABLE_CODE_EXECUTION_TOOL` **且** `runtime.enabled`。每次调用独立沙箱，执行完 `close()` 销毁；产物经 §10 回收。账号注入点：助手挂载（`assistant_agent_service`）、运行时挂载（`_load_non_mcp_tool`）、App 装配（`AppConfigService.get_langchain_tools_by_tools_config` ← `AppRuntimeService.build_runtime_tools_for_config`）、工作流工具节点（`ToolNode._bind_account_for_builtin_tool`）——四处统一走 `build_builtin_tool` |
 | 工作流代码节点 | `api/internal/core/workflow/nodes/code/code_node.py` | `get_sandbox_runtime("workflow_code")` → `build_sandbox_backend(runtime)` → `RemoteExecHandle.execute(payload)` |
 | 技能执行（单一入口） | `api/internal/core/skills/skill_executor.py` `SkillExecutor` | 按 `skill_exec` active 后端分发：`http_sandbox` / `tencent_scf` → `SkillScfClient`；`baidu_cfc`/`disabled` → `SkillSandboxExecutor`。`SkillToolFactory`（工具展开）只委托它执行，不再自带 try/fallback |
 | 技能 SCF 客户端 | `api/internal/core/skills/skill_executor.py` `SkillScfClient` | `build_sandbox_backend(get_sandbox_runtime("skill_exec"))` → `RemoteExecHandle.execute(payload)`（HTTP 或 SDK 直调，传输差异透明；显式 `endpoint` 可覆盖，供测试）；另承担 `sync_package`（技能包同步，与执行协议无关） |
@@ -221,3 +221,63 @@ Admin 端与全部消费方自动识别新后端（前端按 `overview.backends`
 - 迁移**只建表**；`ensure_default_config()` 在启动时（`app.py` 的 `ensure_*` 序列，`MODE != celery`）幂等补齐各 (capability, backend) 行，并依**当前 env** 推断 active（`E2B_*` 齐 → `baidu_cfc`；`SKILL_SCF_URL`/`SANDBOX_URL` 非占位 → `http_sandbox`；否则 `disabled`），使库内状态与升级前运行时一致。注意：**运行时加载器注册不是 seed**——它是进程级注册，Celery 侧在 `celery_app._ensure_runtime()` 单独执行，勿随 seed 一起限定进程。
 - `resolve_runtime` 在**无 DB 记录**时回退 env 判定 → 升级瞬间行为不变。
 - 注册表未注册加载器时（脚本 / 单测）`get_sandbox_runtime` 返回 `disabled`，调用方走「未开通」分支（不崩溃、不静默）；**执行进程漏注册会打一次 WARNING**（见 §5「进程注册」），便于第一时间定位断链。
+
+## 10. 沙箱产物回收（深思考 / execute_code 共用同一实现）
+
+沙箱里生成的文件必须回到平台文件中心才算「交付给用户」——否则文件随沙箱销毁而丢失
+（历史缺陷：`execute_code` 生成的文件**完全没有回传通道**，且沙箱从不关闭，一直挂到
+`sandbox_timeout_seconds`=24h 才被回收）。
+
+**唯一实现**：`api/internal/core/agent/sandbox_artifact_collector.py`。深思考与
+`execute_code` 只做编排（发时间线事件 / 组装工具返回值），扫描、下载、入库的**机制**
+全部收敛在此——两处各写一套必然漏改一处（呼应「单一权威入口」）。
+
+链路：
+
+```
+执行前  prepare_artifact_markers(backend, roots=候选目录, marker_name)
+          └─ 在 {base}/artifacts、/mnt/data 逐个 mkdir + 建 .yujianwo_artifact_marker_* 标记
+执行    backend.execute(command)                      ← 命令跑完，文件已落盘
+扫描    scan_artifacts(backend, roots, marker_paths_by_root=..., max_depth=...)
+          ├─ 主扫描：任务专属目录 /workspace|/home/user|/tmp|/mnt/data/artifacts[/{task_id}] 全量
+          └─ 兜底：模型写到产物目录之外时，用 `find -newer <marker>` 只取本次新增文件
+                 （未成功打标记的目录不扫，避免把模板自带的旧文件误收成产物）
+下载+入库  download_and_persist_artifacts(backend, account_id=..., paths=...)
+          └─ 逐文件 download_files([path]) → FileCenterService.save_generated_asset(
+                 folder="artifacts"）→ 文件中心「产物/」目录、source="artifact"、计配额
+```
+
+| 函数 | 职责 |
+| --- | --- |
+| `resolve_artifact_root(backend, task_id)` | 探测第一个可写的产物根 `{base}/artifacts/{task_id}`，全不可写回退默认 |
+| `prepare_artifact_markers(...)` | 执行前打标记；返回 `{root: marker_path}`（只含创建成功的） |
+| `scan_artifacts(...)` | 返回 `ArtifactScanResult(paths, failed, error)`——**区分「扫描失败」与「确实没有新文件」**，消费方据此如实报错 |
+| `download_and_persist_artifacts(...)` | 逐个下载 + 入库；返回 `ArtifactPersistResult(artifacts, failures)`，单文件失败不中断整批 |
+| `persist_sandbox_file(...)` | 单个文件入库（文件名取沙箱内 basename，MIME 按扩展名推断） |
+
+**上限**（`MAX_ARTIFACT_COUNT`=20 个 / `MAX_ARTIFACT_BYTES`=50MB）：超限只跳过并记入
+`failures`，避免数据集、依赖包之类的大文件把 API 进程内存打爆。逐文件下载而非整批，
+同样为了控制单次内存峰值。
+
+**消费方接线**：
+
+| 消费方 | 产物去向 | 失败如何呈现 |
+| --- | --- | --- |
+| 深思考（`DeepThinkingAgent._collect_artifacts`） | 时间线 `DEEP_ARTIFACT_CREATED` 事件 + 消息附件 | 逐个失败出 `deep_step` 错误事件（扫描失败、下载失败、入库失败分别措辞） |
+| `execute_code` | 工具返回值 `artifacts` 数组 → 助手/App 装配的 `extract_output_artifacts` 提取为消息附件；前端 `extractArtifactsFromToolObservation` 同步上屏 | 工具返回值 `artifact_failures`（`[{path, error}]`）；**命令本身的执行结果不受影响** |
+
+**已知边界（务必明确）**：
+
+- **无账号上下文不回收**：`RemoteExecHandle` 系列后端（`http_sandbox` / `tencent_scf`）
+  没有文件系统语义，不可能回收；工具未拿到 `account_id` 时同样跳过（不静默假装成功，
+  深思考记 `缺少账号上下文`，`execute_code` 则不打标记、不扫描）。
+- **跨调用不保留文件**：`execute_code` 每次调用新建沙箱、执行完即销毁，多步操作必须在
+  同一条命令内完成。工具描述已把「产物请写入 `~/artifacts`」与「写入与运行要在同一条
+  命令里完成」告知模型。
+- 产物收集是**增值能力而非主链路**：任何一步失败都不得让命令结果丢失。
+
+> 前端与消息装配侧：`extract_output_artifacts`（`api/internal/lib/helper.py`）同时认
+> `artifact`（单条，兼容既有工具）与 `artifacts`（多条，本项目的新工具约定）；
+> 前端 `extractArtifactsFromToolObservation`（`ui/src/views/shared/chat-output.ts`）
+> 与之同语义，保证「工具同步就绪的产物」在对话里立刻可见、无需等异步回填。
+

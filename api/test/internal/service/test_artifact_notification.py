@@ -71,6 +71,38 @@ def test_tool_input_artifact_still_takes_precedence():
     assert artifacts[0]["url"] == "https://cdn.example.com/old.png"
 
 
+def test_extracts_multiple_artifacts_from_tool_observation():
+    """沙箱代码执行等工具一次生成多个文件：artifacts 数组须整批收下。"""
+    observation = (
+        '{"ok": true, "exit_code": 0, "output": "done", "artifacts": ['
+        '{"name": "报表.csv", "url": "https://cdn.example.com/report.csv", "extension": "csv"},'
+        '{"name": "图.png", "url": "https://cdn.example.com/chart.png", "extension": "png"},'
+        '{"name": "无地址", "extension": "txt"}]}'
+    )
+
+    artifacts = extract_output_artifacts([_thought(observation=observation)])
+
+    assert [artifact["url"] for artifact in artifacts] == [
+        "https://cdn.example.com/report.csv",
+        "https://cdn.example.com/chart.png",
+    ]
+    assert artifacts[0]["name"] == "报表.csv"
+
+
+def test_merges_single_and_list_artifacts_from_one_observation():
+    observation = (
+        '{"ok": true, "artifact": {"name": "成片", "url": "https://cdn.example.com/a.mp4"},'
+        ' "artifacts": [{"name": "字幕", "url": "https://cdn.example.com/a.srt"}]}'
+    )
+
+    artifacts = extract_output_artifacts([_thought(observation=observation)])
+
+    assert [artifact["url"] for artifact in artifacts] == [
+        "https://cdn.example.com/a.mp4",
+        "https://cdn.example.com/a.srt",
+    ]
+
+
 # ── 通道 2：notify_artifact_ready 的两条腿 ─────────────────────────────────
 
 

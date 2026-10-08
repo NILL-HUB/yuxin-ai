@@ -12,6 +12,9 @@ from internal.core.language_model import LanguageModelManager
 from internal.core.tools.api_tools.entities import ToolEntity
 from internal.core.tools.api_tools.providers import ApiProviderManager
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
+from internal.core.tools.builtin_tools.providers.builtin_provider_manager import (
+    build_builtin_tool,
+)
 from internal.core.tools.mcp_tools.providers import McpToolFactory
 from .skill_service import SkillService
 from internal.lib.helper import datetime_to_timestamp, get_value_type
@@ -572,8 +575,16 @@ class AppConfigService(BaseService):
         """根据 MCP 绑定刷新远端快照。"""
         return McpToolFactory().refresh_binding_snapshots(mcp_bindings, existing_snapshots)
 
-    def get_langchain_tools_by_tools_config(self, tools_config: list[dict]) -> list[BaseTool]:
-        """根据传递的工具配置列表获取langchain工具列表"""
+    def get_langchain_tools_by_tools_config(
+        self,
+        tools_config: list[dict],
+        *,
+        account_id: str = "",
+    ) -> list[BaseTool]:
+        """根据传递的工具配置列表获取langchain工具列表
+
+        account_id 供产物类内置工具（图片/视频/沙箱产物）把生成结果落进文件中心。
+        """
         # 1.循环遍历所有工具配置列表信息
         tools = []
         for tool in tools_config:
@@ -587,7 +598,13 @@ class AppConfigService(BaseService):
                 if not builtin_tool:
                     continue
                 try:
-                    tools.append(builtin_tool(**tool["tool"]["params"]))
+                    tools.append(
+                        build_builtin_tool(
+                            builtin_tool,
+                            account_id=account_id,
+                            params=tool["tool"]["params"],
+                        )
+                    )
                 except Exception as exc:
                     # 工具实例化失败（如依赖缺失、凭证无效）时跳过，避免单个工具阻断整个流程
                     logger.warning(
