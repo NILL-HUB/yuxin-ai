@@ -5,6 +5,7 @@ from internal.exception import FailException, NotFoundException
 from internal.extension.database_extension import db
 from internal.model.billing import CreditAccount, Membership, Plan
 from internal.model.distribution import AutoRenewal
+from internal.service.membership_resolver import resolve_current_membership
 
 MAX_FAIL_COUNT = 3
 CREDITS_RENEW_COOLDOWN_HOURS = 24
@@ -231,12 +232,8 @@ class AutoRenewalService:
         return self._now() + timedelta(days=30)
 
     def _current_membership(self, account_id: UUID) -> Membership | None:
-        return (
-            self.session.query(Membership)
-            .filter(Membership.account_id == account_id)
-            .order_by(Membership.expires_at.desc())
-            .first()
-        )
+        """当前会员：解析规则见 membership_resolver（决定自动续费的下次触发时间）。"""
+        return resolve_current_membership(self.session, account_id)
 
     def _serialize(self, renewal: AutoRenewal, plan: Plan | None) -> dict:
         trigger = "到期" if renewal.plan_type == "membership" else "余量"

@@ -31,6 +31,9 @@ class _QueryStub:
     def join(self, *args, **kwargs):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def one_or_none(self):
         return self._one_or_none_result
 

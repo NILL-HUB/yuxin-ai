@@ -7,6 +7,7 @@ from internal.exception import FailException
 from internal.extension.database_extension import db
 from internal.model.billing import BillingConfig, CreditAccount, CreditTransaction, Membership
 from internal.model.public_ai_feature_config import PublicAIFeatureConfig
+from internal.service.membership_resolver import resolve_current_membership
 
 
 class CreditService:
@@ -363,12 +364,12 @@ class CreditService:
         )
 
     def _get_current_membership(self, account_id: UUID) -> Membership | None:
-        return (
-            self.session.query(Membership)
-            .filter(Membership.account_id == account_id)
-            .order_by(Membership.expires_at.desc())
-            .first()
-        )
+        """当前会员：解析规则见 membership_resolver（生效优先 + 档位优先 + 确定性）。
+
+        为什么不能自行排序：额度可用性与周期口径都挂在这条记录上，
+        解析错档位会让「免费体验卡」的周期/生效判定顶掉付费卡（2026-10-08 排查）。
+        """
+        return resolve_current_membership(self.session, account_id)
 
     @staticmethod
     def _build_consume_description(token_count: int, compute_units: int, result: dict, credits_per_1k: int = 1) -> str:

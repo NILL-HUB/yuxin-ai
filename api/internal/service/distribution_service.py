@@ -7,7 +7,7 @@ from uuid import UUID
 from internal.extension.database_extension import db
 from internal.exception import FailException, NotFoundException
 from internal.model.account import Account
-from internal.model.billing import Membership, Plan
+from internal.model.billing import Plan
 from internal.model.distribution import (
     BalanceAccount,
     BalanceTransaction,
@@ -15,6 +15,7 @@ from internal.model.distribution import (
     PurchaseOrder,
     ReferralCode,
 )
+from internal.service.membership_resolver import has_active_membership
 
 INVITE_CODE_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9_-]{2,31}$")
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -125,20 +126,10 @@ class DistributionService:
         """邀请人是否持有有效会员——分销资格前提（2026-10-07 产品要求）。
 
         无会员身份不能分销：已绑定的下级关系保留、不受影响，但不能再**新增**下级
-        （邀请码解析失败 / 直接绑定被拒）。会员到期后由会员摘要侧收敛为
-        status=expired，此处以「存在 active 且未过期的记录」为准。
+        （邀请码解析失败 / 直接绑定被拒）。生效判定统一走 membership_resolver——
+        本处自行排序会在「体验卡 + 付费卡并存」时解析到体验卡，判出错误的分销资格。
         """
-        membership = (
-            self.session.query(Membership)
-            .filter(
-                Membership.account_id == account_id,
-                Membership.status == "active",
-                Membership.expires_at.isnot(None),
-                Membership.expires_at >= _UTCNOW,
-            )
-            .first()
-        )
-        return membership is not None
+        return has_active_membership(self.session, account_id)
 
     def resolve_inviter_by_code(self, code: str) -> Account | None:
         normalized = self.normalize_code(code)

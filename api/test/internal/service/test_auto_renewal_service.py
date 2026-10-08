@@ -18,6 +18,9 @@ class _QueryStub:
     def filter(self, *args, **kwargs):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def order_by(self, *args, **kwargs):
         return self
 

@@ -24,6 +24,9 @@ class _QueryStub:
         self.filters.append((args, kwargs))
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def order_by(self, *args):
         self.order_by_args.append(args)
         return self
@@ -417,9 +420,10 @@ class TestRedeemCodeService:
         )
         session = _SessionStub([
             _QueryStub(all_result=[overdue]),               # 到期扫描：命中已过期 active
-            _QueryStub(one_or_none_result=credit_account),  # 无未到期记录 → 清套餐额度
+            _QueryStub(one_or_none_result=None),            # 生效会员解析：无 → 清套餐额度
+            _QueryStub(one_or_none_result=credit_account),  # 额度账户（加锁清套餐额度）
             _QueryStub(one_or_none_result=None),            # 当前会员（已收敛为 expired）
-            _QueryStub(one_or_none_result=credit_account),  # 额度账户
+            _QueryStub(one_or_none_result=credit_account),  # 额度账户（摘要展示）
             _QueryStub(all_result=[]),                      # 最近流水
             _QueryStub(all_result=[]),                      # 最近消费窗口
         ])

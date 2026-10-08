@@ -10,7 +10,6 @@
 """
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from uuid import UUID
 
 from injector import inject
@@ -25,7 +24,8 @@ from internal.entity.storage_quota_entity import (
     StorageAddonPlanType,
 )
 from internal.exception import ForbiddenException
-from internal.model import AccountStorageUsage, Membership, PlanEntitlement, PurchaseOrder
+from internal.model import AccountStorageUsage, PlanEntitlement, PurchaseOrder
+from internal.service.membership_resolver import resolve_effective_membership
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 
@@ -65,19 +65,10 @@ class StorageQuotaService(BaseService):
     def _resolve_entitlement_gb(self, account_id: UUID, feature_key: str) -> int:
         """取当前生效会员套餐指定权益的整数值（GB）；无生效套餐返回 0。
 
-        与 Membership.is_active 保持一致的生效判定：status=active 且未过期。
+        生效判定与解析口径统一走 membership_resolver：多会员并存时取价值最高档，
+        避免「免费体验卡」的权益顶掉付费卡（2026-10-08 排查）。
         """
-        now = datetime.now(UTC).replace(tzinfo=None)
-        membership = (
-            self.db.session.query(Membership)
-            .filter(
-                Membership.account_id == account_id,
-                Membership.status == "active",
-                Membership.expires_at >= now,
-            )
-            .order_by(Membership.expires_at.desc())
-            .first()
-        )
+        membership = resolve_effective_membership(self.db.session, account_id)
         if membership is None:
             return 0
         entitlements = (

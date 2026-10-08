@@ -22,6 +22,9 @@ class _QueryStub:
     def join(self, *_a, **_kw):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def order_by(self, *_a, **_kw):
         return self
 

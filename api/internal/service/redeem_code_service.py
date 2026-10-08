@@ -1,5 +1,5 @@
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func
@@ -10,6 +10,12 @@ from internal.extension.database_extension import db
 from internal.model.billing import CreditAccount, CreditTransaction, Membership, Plan, RedeemCode, RedeemCodeBatch
 from internal.model.conversation import Message
 from internal.service.admin_redeem_code_service import AdminRedeemCodeService
+from internal.service.membership_resolver import (
+    activate_or_extend_membership,
+    expire_due_memberships,
+    resolve_current_membership,
+    resolve_effective_membership,
+)
 
 
 class RedeemCodeService:
@@ -246,35 +252,18 @@ class RedeemCodeService:
         return "credit_transaction_source_type_unique_idx" in message or "uq_balance_transaction_account_source_type" in message
 
     def _get_current_membership(self, account_id: UUID) -> Membership | None:
-        return (
-            self.session.query(Membership)
-            .filter(Membership.account_id == account_id)
-            .order_by(Membership.expires_at.desc())
-            .first()
-        )
+        """当前会员：解析规则（生效优先 + 档位优先 + 确定性）见 membership_resolver。"""
+        return resolve_current_membership(self.session, account_id)
 
     def _upsert_membership(self, account_id: UUID, plan: Plan, source_id: UUID) -> Membership:
-        now = self._now()
-        membership = self._get_current_membership(account_id)
-        if membership and membership.plan_id == plan.id and membership.expires_at and membership.expires_at > now:
-            base_time = membership.expires_at
-            membership.expires_at = base_time + timedelta(days=int(plan.duration_days or 0))
-            membership.status = "active"
-            membership.source = "redeem_code"
-            membership.source_id = source_id
-            membership.updated_at = now
-            return membership
-        membership = Membership(
-            account_id=account_id,
-            plan_id=plan.id,
-            status="active",
-            started_at=now,
-            expires_at=now + timedelta(days=int(plan.duration_days or 0)),
+        """开通/续期会员：唯一实现见 membership_resolver.activate_or_extend_membership。"""
+        return activate_or_extend_membership(
+            self.session,
+            account_id,
+            plan,
             source="redeem_code",
             source_id=source_id,
         )
-        self.session.add(membership)
-        return membership
 
     def _get_credit_account(self, account_id: UUID) -> CreditAccount | None:
         return self.session.query(CreditAccount).filter(CreditAccount.account_id == account_id).one_or_none()
@@ -500,38 +489,25 @@ class RedeemCodeService:
 
         清理语义与退款流程（refund_service._reclaim_rights）一致：status → expired、
         quota_credit → 0；**永久额度（permanent_credit）不在此清理范围**。
-        多会员记录时，仅当不存在任何未到期记录才清空套餐额度。
+        多会员并存时，仅当**没有任何生效会员**（按 membership_resolver 的口径）才清空。
         """
         now = self._now()
-        memberships = (
-            self.session.query(Membership)
-            .filter(Membership.account_id == account_id)
-            .all()
-        )
-        overdue = [
-            item
-            for item in memberships
-            if item.status == "active" and item.expires_at is not None and item.expires_at < now
-        ]
-        if not overdue:
+        if not expire_due_memberships(self.session, account_id, now=now):
             return
-        for item in overdue:
-            item.status = "expired"
-            item.updated_at = now
-        still_active = any(
-            item.status == "active" and item.expires_at is not None and item.expires_at >= now
-            for item in memberships
+        # 是否仍有生效会员一律问解析器：本地再判一遍 status/expires_at 就会分叉出
+        # 「有权益但身份是免费」这类矛盾态（2026-10-08 排查）。
+        if resolve_effective_membership(self.session, account_id, now=now) is not None:
+            self.session.commit()
+            return
+        credit_account = (
+            self.session.query(CreditAccount)
+            .filter(CreditAccount.account_id == account_id)
+            .with_for_update()
+            .one_or_none()
         )
-        if not still_active:
-            credit_account = (
-                self.session.query(CreditAccount)
-                .filter(CreditAccount.account_id == account_id)
-                .with_for_update()
-                .one_or_none()
-            )
-            if credit_account is not None and int(credit_account.quota_credit or 0) != 0:
-                credit_account.quota_credit = 0
-                credit_account.updated_at = now
+        if credit_account is not None and int(credit_account.quota_credit or 0) != 0:
+            credit_account.quota_credit = 0
+            credit_account.updated_at = now
         self.session.commit()
 
     def _serialize_credit_account(self, credit_account: CreditAccount) -> dict:

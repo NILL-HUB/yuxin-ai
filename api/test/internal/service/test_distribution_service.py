@@ -42,6 +42,9 @@ class _QueryStub:
     def join(self, *args, **kwargs):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def offset(self, value):
         return self
 
@@ -119,11 +122,11 @@ def _account(status="active"):
 
 
 def _membership(account_id=None, *, status="active", days=30):
-    """有效会员记录桩：`_has_active_membership` 只判断查询是否命中。"""
+    """有效会员记录桩：生效判定（membership_is_effective）按库内约定用**naive UTC**。"""
     return Membership(
         account_id=account_id or uuid4(),
         status=status,
-        expires_at=datetime.now(UTC) + timedelta(days=days),
+        expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=days),
     )
 
 

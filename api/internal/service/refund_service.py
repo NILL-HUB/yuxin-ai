@@ -5,8 +5,9 @@ from uuid import UUID
 from internal.exception import FailException, NotFoundException
 from internal.extension.database_extension import db
 from internal.model.account import Account
-from internal.model.billing import CreditAccount, CreditTransaction, Membership
+from internal.model.billing import CreditAccount, CreditTransaction
 from internal.model.distribution import BalanceTransaction, PurchaseOrder, ReturnRequest
+from internal.service.membership_resolver import find_membership_by_source
 
 
 class RefundService:
@@ -151,13 +152,15 @@ class RefundService:
 
     def _reclaim_rights(self, order: PurchaseOrder) -> None:
         if order.plan_type == "membership":
-            membership = (
-                self.session.query(Membership)
-                .filter(Membership.account_id == order.account_id)
-                .order_by(Membership.expires_at.desc())
-                .first()
+            # 按来源精确定位本订单开通的那条会员：多会员并存时「取到期时间最大的一条」
+            # 可能命中另一张卡（该退的没退、不该退的被退），2026-10-08 收敛到解析器。
+            membership = find_membership_by_source(
+                self.session,
+                order.account_id,
+                source="order",
+                source_id=order.id,
             )
-            if membership is not None and membership.source_id == order.id:
+            if membership is not None and membership.status == "active":
                 membership.status = "expired"
                 membership.updated_at = self._now()
             self._adjust_credit(order, quota=True)

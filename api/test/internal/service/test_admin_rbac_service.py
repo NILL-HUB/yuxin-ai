@@ -27,6 +27,9 @@ class _QueryStub:
     def join(self, *args, **kwargs):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def all(self):
         return self._all_result
 

@@ -10,6 +10,10 @@ from internal.exception import FailException, NotFoundException
 from internal.extension.database_extension import db
 from internal.model.billing import CreditAccount, CreditTransaction, Membership, Plan
 from internal.model.distribution import AutoRenewal, PurchaseOrder
+from internal.service.membership_resolver import (
+    activate_or_extend_membership,
+    resolve_current_membership,
+)
 from internal.service.payment.gateway_base import (
     PaymentChannelNotConfigured,
     get_payment_adapter,
@@ -311,44 +315,21 @@ class OrderService:
         ))
 
     def _membership_next_renew(self, account_id: UUID, plan: Plan | None = None) -> datetime:
-        membership = (
-            self.session.query(Membership)
-            .filter(Membership.account_id == account_id)
-            .order_by(Membership.expires_at.desc())
-            .first()
-        )
+        membership = resolve_current_membership(self.session, account_id)
         lead_days = max(int(plan.auto_renew_threshold_days or 1), 1) if plan is not None else 1
         if membership is not None and membership.expires_at:
             return membership.expires_at - timedelta(days=lead_days)
         return self._now() + timedelta(days=30)
 
     def _upsert_membership(self, account_id: UUID, plan: Plan, source_id: UUID) -> Membership:
-        now = self._now()
-        membership = (
-            self.session.query(Membership)
-            .filter(Membership.account_id == account_id)
-            .order_by(Membership.expires_at.desc())
-            .first()
-        )
-        if membership and membership.plan_id == plan.id and membership.expires_at and membership.expires_at > now:
-            base = membership.expires_at
-            membership.expires_at = base + timedelta(days=int(plan.duration_days or 0))
-            membership.status = "active"
-            membership.source = "order"
-            membership.source_id = source_id
-            membership.updated_at = now
-            return membership
-        membership = Membership(
-            account_id=account_id,
-            plan_id=plan.id,
-            status="active",
-            started_at=now,
-            expires_at=now + timedelta(days=int(plan.duration_days or 0)),
+        """开通/续期会员：唯一实现见 membership_resolver.activate_or_extend_membership。"""
+        return activate_or_extend_membership(
+            self.session,
+            account_id,
+            plan,
             source="order",
             source_id=source_id,
         )
-        self.session.add(membership)
-        return membership
 
     def _grant_credits(self, account_id: UUID, amount: int, source_id: UUID, *, pool: str, plan: Plan | None = None) -> None:
         credit_account = (

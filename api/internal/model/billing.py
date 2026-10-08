@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 import json
+from typing import Any
 
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, Index, Integer, Numeric, PrimaryKeyConstraint, String, Text, UUID, text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -94,6 +95,19 @@ class PlanEntitlement(Base):
         return self.feature_value
 
 
+def membership_is_effective(membership: Any, now: datetime) -> bool:
+    """会员行生效判定：`status='active'` 且未过期。
+
+    **唯一定义**：模型的 `Membership.is_active` 与会员解析器
+    （`internal/service/membership_resolver.py`）都调用本函数——判定口径一旦分叉，
+    就会出现「权益可用但身份是免费」这类矛盾态（2026-10-08 排查）。
+    用 getattr 访问，便于对行状替身（测试桩）复用同一判定。
+    """
+    status = getattr(membership, "status", "") or ""
+    expires_at = getattr(membership, "expires_at", None)
+    return status == "active" and expires_at is not None and expires_at >= now
+
+
 class Membership(Base):
     __tablename__ = "membership"
     __table_args__ = (
@@ -116,7 +130,7 @@ class Membership(Base):
 
     @property
     def is_active(self) -> bool:
-        return self.status == "active" and self.expires_at is not None and self.expires_at >= _utcnow_naive()
+        return membership_is_effective(self, _utcnow_naive())
 
 
 class CreditAccount(Base):

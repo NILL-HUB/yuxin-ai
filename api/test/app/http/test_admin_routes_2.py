@@ -35,6 +35,9 @@ class _FakeQuery:
     def join(self, *args, **kwargs):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def filter(self, *args, **kwargs):
         return self
 

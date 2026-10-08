@@ -30,6 +30,9 @@ class _QueryStub:
     def join(self, *args, **kwargs):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def offset(self, _value):
         return self
 

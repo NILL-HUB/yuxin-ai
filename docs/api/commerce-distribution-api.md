@@ -51,6 +51,17 @@
 
 ### 3.1 会员中心（算力账户概览 + 流水）
 
+**会员生效解析（单一权威：`api/internal/service/membership_resolver.py`）**：一个账号可以同时存在多条会员记录（免费体验卡 + 付费卡、不同来源），「当前会员」按固定规则解析，任何消费方不得自行排序：
+
+1. **生效优先**：`status='active'` 且 `expires_at >= now`；
+2. **档位优先**：生效行取套餐价值最高（`plan.price` → `plan.grant_token_credits`），免费/体验卡不可能顶掉付费卡；
+3. **确定性**：同价值按 `expires_at` → `created_at` → `id` 倒序，同一份数据恒解析出同一条；
+4. 无生效行时返回最近一条（供 UI 展示已过期 → 身份回落「免费用户」）；需要「确实有效」的语义用 `resolve_effective_membership` / `has_active_membership`。
+
+写入侧同样唯一：`activate_or_extend_membership`（兑换卡密与购买订单共用）——同套餐且生效中则顺延到期时间，否则新建一条；**只动本套餐那一条，绝不改写其它套餐的会员行**。
+
+> 背景（2026-10-08 修复）：此前 8 处各写 `order_by(expires_at.desc()).first()`，无档位优先级也无 tie-break；两条 active 行到期时间相同时由 PostgreSQL 任意返回，实测出现「高级会员被免费体验卡顶掉 → 身份显示试用/免费，但到期时间仍是付费卡的 2027、套餐额度也还在」的矛盾态。收敛点：会员摘要/身份、算力额度口径（`credit_service`）、存储与单文件权益（`storage_quota_service`）、分销资格（`distribution_service`）、自动续费（`auto_renewal_service`）、订单续费（`order_service`）、退款回收权益（`refund_service`，改为按 `source/source_id` 精确定位）。
+
 | 方法/路径 | 说明 |
 |---|---|
 | `GET /membership/summary` | 会员中心聚合概览：`{membership, credit_account{account_id,balance,total_granted,total_consumed}, recent_transactions[10], recent_tasks[6]}`；`recent_tasks` 按任务聚合返回最近 6 条用户提问任务（每任务=用户消息+扣费合计） |

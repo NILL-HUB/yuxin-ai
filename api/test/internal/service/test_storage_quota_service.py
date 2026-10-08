@@ -22,6 +22,9 @@ class _QueryStub:
     def join(self, *_a, **_kw):
         return self
 
+    def outerjoin(self, *args, **kwargs):
+        return self
+
     def order_by(self, *_a, **_kw):
         return self
 
@@ -56,6 +59,17 @@ def _fake_entitlement(gb: int):
     return SimpleNamespace(feature_value=str(gb), value_type="number", parsed_value=gb)
 
 
+def _active_membership(plan_id):
+    """生效中的会员行桩：生效判定要求 status=active 且未过期（naive UTC，与库内一致）。"""
+    from datetime import UTC, datetime, timedelta
+
+    return SimpleNamespace(
+        plan_id=plan_id,
+        status="active",
+        expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
+    )
+
+
 def test_default_quota_when_no_membership():
     service = _new_service(_SessionStub([_QueryStub(first_result=None), _QueryStub(all_result=[])]))
     assert service.resolve_total_quota_bytes(uuid4()) == 5 * (1024 ** 3)
@@ -63,7 +77,7 @@ def test_default_quota_when_no_membership():
 
 def test_membership_entitlement_overrides_default():
     plan_id = uuid4()
-    membership = SimpleNamespace(plan_id=plan_id)
+    membership = _active_membership(plan_id)
     entitlement = _fake_entitlement(100)
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
@@ -75,7 +89,7 @@ def test_membership_entitlement_overrides_default():
 
 def test_addon_packages_are_additive():
     plan_id = uuid4()
-    membership = SimpleNamespace(plan_id=plan_id)
+    membership = _active_membership(plan_id)
     entitlement = _fake_entitlement(100)
     addon_one = _fake_entitlement(50)
     addon_two = _fake_entitlement(200)
@@ -102,7 +116,7 @@ def test_decimal_entitlement_is_parsed():
     from decimal import Decimal
 
     plan_id = uuid4()
-    membership = SimpleNamespace(plan_id=plan_id)
+    membership = _active_membership(plan_id)
     entitlement = SimpleNamespace(feature_value="100.0", value_type="decimal", parsed_value=Decimal("100.0"))
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
@@ -114,7 +128,7 @@ def test_decimal_entitlement_is_parsed():
 
 def test_invalid_entitlement_value_falls_back_to_zero():
     plan_id = uuid4()
-    membership = SimpleNamespace(plan_id=plan_id)
+    membership = _active_membership(plan_id)
     entitlement = SimpleNamespace(feature_value="abc", value_type="number", parsed_value="abc")
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
@@ -196,7 +210,7 @@ def test_max_file_size_falls_back_to_default_when_no_entitlement():
 
 def test_max_file_size_uses_plan_entitlement():
     plan_id = uuid4()
-    membership = SimpleNamespace(plan_id=plan_id)
+    membership = _active_membership(plan_id)
     entitlement = _fake_entitlement(1024)
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
@@ -208,7 +222,7 @@ def test_max_file_size_uses_plan_entitlement():
 def test_max_file_size_falls_back_to_default_when_entitlement_is_zero():
     """权益显式配 0 视为未配置，回退默认上限。"""
     plan_id = uuid4()
-    membership = SimpleNamespace(plan_id=plan_id)
+    membership = _active_membership(plan_id)
     entitlement = _fake_entitlement(0)
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
