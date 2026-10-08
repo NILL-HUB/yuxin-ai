@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import { formatDuration } from '@/utils/duration'
 import { computed, ref } from 'vue'
 import type { AiToolRow } from './types'
 
@@ -24,6 +26,8 @@ const props = withDefaults(
     details: '',
   },
 )
+
+const { t } = useI18n()
 
 const open = ref(true)
 
@@ -143,7 +147,7 @@ const resolvedTitle = computed(() => {
         <span class="aicss-tool-call__del">-{{ removedCount }}</span>
       </span>
 
-      <span v-if="latency > 0" class="aicss-tool-call__latency">{{ latency.toFixed(2) }}s</span>
+      <span v-if="latency > 0" class="aicss-tool-call__latency">{{ formatDuration(latency, t) }}</span>
       <button
         v-if="rows.length > 0 || details"
         type="button"

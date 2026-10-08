@@ -1,5 +1,6 @@
 import { get, post } from '@/utils/request'
 import type {
+  ConversationCreditsSummary,
   GetConversationMessagesWithPageRequest,
   GetConversationMessagesWithPageResponse,
   GetRecentConversationsResponse,
@@ -17,7 +18,14 @@ export const getConversationMessages = (
   )
 }
 
-  // 删除特定的会话（进入回收站，可指定留存天数）
+  // 会话算力消耗汇总：每条消息的实扣额 + 会话累计（刷新/切换会话后回显）
+export const getConversationCredits = (conversation_id: string) => {
+  return get<BaseResponse<ConversationCreditsSummary>>(
+    `/conversations/${conversation_id}/credits`,
+  )
+}
+
+// 删除特定的会话（进入回收站，可指定留存天数）
   export const deleteConversation = (conversation_id: string, retentionDays?: number) => {
     return post<BaseResponse<Record<string, unknown>>>(`/conversations/${conversation_id}/delete`, {
       body: retentionDays ? { retention_days: retentionDays } : undefined,

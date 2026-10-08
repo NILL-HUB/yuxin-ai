@@ -465,6 +465,7 @@ class AssistantAgentService(BaseService):
         # 若不改用 direct_answer，该模式永远不扣费）
         billing_aggregator = BillingUsageAggregator(
             task_id=str(message.id),
+            message_id=message.id,
             pricing_engine=PricingEngine(),
             feature_key="direct_answer",
         )
@@ -619,6 +620,7 @@ class AssistantAgentService(BaseService):
 
         billing_aggregator = BillingUsageAggregator(
             task_id=str(message.id),
+            message_id=message.id,
             pricing_engine=PricingEngine(),
         )
         reconciliation_service = BillingReconciliationService()
@@ -766,6 +768,7 @@ class AssistantAgentService(BaseService):
 
         billing_aggregator = BillingUsageAggregator(
             task_id=str(message.id),
+            message_id=message.id,
             pricing_engine=PricingEngine(),
         )
         reconciliation_service = BillingReconciliationService()

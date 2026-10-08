@@ -175,6 +175,7 @@ class CreditService:
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_input_tokens: int | None = None,
+        message_id: UUID | None = None,
     ) -> dict:
         """扣减用户算力值，用于非消息上下文的公共 AI 功能调用。
 
@@ -184,6 +185,10 @@ class CreditService:
 
         model_id/input_tokens/output_tokens/cached_input_tokens 透传给
         consume_for_message，使预扣即按模型售价精确计价（不再依赖 1:1 全局汇率）。
+
+        `message_id` 传入时：流水以该消息 id 作为 source_id（source='message'），
+        使「单条消息消耗 / 会话累计消耗」可按 message_id 聚合回显；
+        未传入时沿用 idempotency_key 派生的合成 id（仅幂等、不可回查）。
         """
         if token_count <= 0:
             return {"consumed": False, "reason": "no tokens", "token_count": 0}
@@ -205,13 +210,16 @@ class CreditService:
 
         import uuid
 
-        if idempotency_key:
-            synthetic_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"{idempotency_key}:{feature_key}")
+        if message_id is not None:
+            # 消息级计费：source_id 用真实消息 id（可回查/可聚合）
+            target_id = message_id
+        elif idempotency_key:
+            target_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"{idempotency_key}:{feature_key}")
         else:
-            synthetic_id = uuid.uuid4()
+            target_id = uuid.uuid4()
         return self.consume_for_message(
             account_id,
-            synthetic_id,
+            target_id,
             token_count=token_count,
             model_id=model_id,
             input_tokens=input_tokens,

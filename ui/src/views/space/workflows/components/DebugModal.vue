@@ -2,6 +2,7 @@
 import { useVueFlow } from '@vue-flow/core'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatDuration } from '@/utils/duration'
 import { useDebugWorkflow } from '@/hooks/use-workflow'
 import type { ValidatedError } from '@arco-design/web-vue'
 import {
@@ -231,11 +232,11 @@ watch(
               </div>
               <div class="flex-1 flex flex-col gap-2">
                 <div class="text-gray-500">{{ t('workflowEditor.totalTime') }}</div>
-                <div class="text-gray-700">{{ latency.toFixed(2) }}s</div>
+                <div class="text-gray-700">{{ formatDuration(latency, t) }}</div>
               </div>
               <div class="flex-1 flex flex-col gap-2">
                 <div class="text-gray-500">{{ t('workflowEditor.toolConsumption') }}</div>
-                <div class="text-gray-700">{{ toolLatency.toFixed(2) }}s</div>
+                <div class="text-gray-700">{{ formatDuration(toolLatency, t) }}</div>
               </div>
             </div>
           </div>

@@ -23,6 +23,10 @@ class BillingUsageAggregator:
     feature_key: str = "assistant_agent"
     # 累计原始 token 数，用于 final() 调用 consume_for_feature(token_count=...)
     total_tokens: int = 0
+    # 本轮对应的助手消息 id：扣费流水以它为 source_id（source='message'），
+    # 使「单条消息消耗 / 会话累计消耗」可按 message_id 聚合回显（2026-10-08 反馈：
+    # 此前用 task_id 派生合成 id，流水无法关联到消息 → 历史会话的算力显示恒为 0）。
+    message_id: Any = None
     # 可选注入：定价引擎。注入后 model_tokens 按模型售价（plan_usage.sell_credits）计价；
     # 未注入时回退全局汇率（credits_per_1k_tokens），与旧逻辑 1:1 兼容
     pricing_engine: Any = None
@@ -147,6 +151,10 @@ class BillingUsageAggregator:
         # 余额耗尽时仅静默扣 0（用户无感知，且误以为正常工作）。
         insufficient = False
         insufficient_reason = ""
+        # 本次**实际扣减**的算力值（套餐额度 + 永久算力）：final 事件必须回传它，
+        # 否则前端「本次消耗 / 会话累计消耗」恒显示 0（2026-10-08 实测：
+        # DB 已扣 5 算力、界面显示 0 —— 因为 final 的 delta 写死 0）。
+        charged_credits = 0
         # 实际扣费：如果注入了 credit_service 和 account_id，则调用 CreditService。
         # 计价口径（2026-09 修复）：同任务同模型的多笔调用先合并 token，再按
         # 模型单价一次精确计价（一次 ceil），避免每笔独立 ceil 把不足 1 算力的
@@ -194,7 +202,9 @@ class BillingUsageAggregator:
                             input_tokens=group["input_tokens"],
                             output_tokens=group["output_tokens"],
                             cached_input_tokens=group["cached_input_tokens"],
+                            message_id=self.message_id,
                         )
+                        charged_credits += self._charged_credits(consume_result)
                         if isinstance(consume_result, dict) and consume_result.get("insufficient"):
                             insufficient = True
                             insufficient_reason = str(consume_result.get("reason") or "")
@@ -203,7 +213,9 @@ class BillingUsageAggregator:
                         account_id=self.account_id,
                         feature_key=self.feature_key,
                         token_count=self.total_tokens,
+                        message_id=self.message_id,
                     )
+                    charged_credits += self._charged_credits(consume_result)
                     if isinstance(consume_result, dict) and consume_result.get("insufficient"):
                         insufficient = True
                         insufficient_reason = str(consume_result.get("reason") or "")
@@ -212,11 +224,15 @@ class BillingUsageAggregator:
                     "BillingUsageAggregator 扣费失败 task_id=%s", self.task_id, exc_info=True
                 )
 
+        # final 是用户可见的权威数字：以**实际扣费**覆盖 delta 估算累计
+        # （delta 用定价引擎估算，与扣费口径可能不同；界面与账单必须一致）。
+        if charged_credits > 0:
+            self.total_credits = charged_credits
         event = self._record(
             BillingEventType.FINAL.value,
             "summary",
             "billing",
-            0,
+            charged_credits,
             "billing_final",
             metadata=(
                 {"insufficient": True, "reason": insufficient_reason or "credits_exhausted"}
@@ -286,6 +302,24 @@ class BillingUsageAggregator:
                     "BillingUsageAggregator 提交失败 task_id=%s", self.task_id, exc_info=True
                 )
         return event
+
+    @staticmethod
+    def _charged_credits(consume_result: Any) -> int:
+        """从扣费返回值里取**实际扣减**的算力值（套餐额度 + 永久算力）。
+
+        - 正常路径：`actual_compute_units`（额度耗尽时可能小于应扣额，取真实值）；
+        - 幂等命中路径：只回 `amount`（负数），取绝对值。
+        """
+        if not isinstance(consume_result, dict):
+            return 0
+        actual = consume_result.get("actual_compute_units")
+        if actual is None:
+            amount = consume_result.get("amount")
+            actual = -int(amount) if isinstance(amount, (int, float)) and amount < 0 else 0
+        try:
+            return max(int(actual or 0), 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _record(
         self,

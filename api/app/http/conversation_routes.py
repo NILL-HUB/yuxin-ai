@@ -87,6 +87,29 @@ def register_routes(quart_app):
         data = {"list": resp.dump(messages), "paginator": asdict(paginator)}
         return _ok(data)
 
+    @quart_app.get("/conversations/<uuid:conversation_id>/credits")
+    async def async_conversation_credits(conversation_id) -> Response:
+        """会话算力消耗汇总：每条消息的消耗 + 会话累计（聊天卡片回显历史用）。
+
+        实时流只带「本轮」消耗；历史会话需要服务端回填，否则刷新后
+        「本次消耗 / 会话累计消耗」全部消失（2026-10-08 反馈）。
+        """
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.exception import NotFoundException
+
+        try:
+            data = await _to_thread(
+                _get_conversation_service().summarize_conversation_credits,
+                conversation_id,
+                account,
+            )
+        except NotFoundException:
+            return _err("conversation_not_found", "该会话不存在或被删除", 404)
+        return _ok(data)
+
     @quart_app.post("/conversations/<uuid:conversation_id>/delete")
     async def async_delete_conversation(conversation_id) -> Response:
         """async 删除会话（软删除 + 进入回收站，可指定留存天数；agent 代删默认 7 天）。"""

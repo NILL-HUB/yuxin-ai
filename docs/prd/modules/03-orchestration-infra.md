@@ -645,6 +645,28 @@ ResultSynthesizer 在合成最终回答时，需要融合两类记忆上下文�
 
 **回归测试**：`test_final_should_pass_feature_key_and_token_count_to_consume`（同任务两笔 750+750 token 合并为一次 1500 扣费）、`test_settle_merges_same_model_events_before_ceil`（两笔 400 token 合并 800 → ceil 1，diff=-1 退还）。
 
+### 15.4.1 聊天卡片的算力展示口径（2026-10-08 修复）
+
+**问题**：用户聊天卡片「本次消耗」与「会话累计消耗」恒显示 0（DB 实际已扣费）；刷新页面后两项直接消失。
+
+**根因（两处）**：
+1. `BillingUsageAggregator.final()` 的 `billing_final` 事件 `delta_credits` **写死 0**——真实扣费在 `final()` 内调用 `CreditService` 完成，但扣减额没有回传事件，而前端只读 `billing_final`；
+2. 扣费流水 `credit_transaction.source_id` 是 `consume_for_feature` 派生的**合成 UUID**（`uuid5(idempotency_key)`，与 `message.id` 无关），导致「按 message 聚合回显历史消耗」不可能。
+
+**修复**：
+- `final()` 回传**实际扣减额**（`_charged_credits`：优先 `actual_compute_units`，幂等命中路径退化为 `|amount|`），并以其覆盖估算累计；未扣费（无 credit_service / 系统承担）时 `delta_credits=0` 不谎报。
+- `consume_for_feature(message_id=...)` 新增参数：传入时流水以**真实消息 id** 作为 `source_id`（`source='message'`），幂等键随之为消息级；助手链路三处聚合器构造均带 `message_id=message.id`。
+- 新增 `GET /conversations/<conversation_id>/credits`（`ConversationService.summarize_conversation_credits`）：按 `message_id` 聚合消费额，返回 `{total_credits, message_credits}`；前端 `HomeView` 在会话加载/每轮结束后回填（`messageCreditsById` + 会话累计基数），实时流仍负责流式期间的即时反馈。
+
+**展示口径**：
+- 「本次消耗」= 该条消息自身模型调用（含 Agent 多轮/工具循环，按任务合并计价）的实扣额；
+- 「会话累计消耗」= 该会话各消息实扣额之和（服务端聚合，刷新/切换会话后仍可见）；
+- **不计入**上述两项：会话级辅助调用（生成会话标题、长历史摘要等）按次计费，不挂在具体消息上——余额会相应减少，但不会出现在这两个数字里。
+
+**耗时展示（2026-10-08 产品要求）**：聊天卡片与推理步骤的耗时统一走 `ui/src/utils/duration.ts`：不足 60 秒显示两位小数 + 「秒」，≥60 秒进位为整「分钟」，再往上为「小时」「天」（向下取整）；单位文案在 `common.duration.*`（zh/en 同步）。历史实现直接 `toFixed(2)+"s"`，英文单位用户看不懂。
+
+**回归测试**：`test_final_reports_actually_charged_credits`、`test_final_falls_back_to_idempotent_amount_when_units_missing`、`test_final_keeps_estimate_when_charging_skipped`、`test_consume_for_feature_records_message_id_as_source_id`、`test_conversation_service.py::TestConversationCreditsSummary`、`ui/src/utils/__tests__/duration.spec.ts`。
+
 ### 15.5 Agent 本机文件回收站（os_recycle_bin）修复记录（2026-09）
 
 「Agent 删除本机文件 → 用户回收站恢复」链路在端到端测试中发现并修复两个缺陷：

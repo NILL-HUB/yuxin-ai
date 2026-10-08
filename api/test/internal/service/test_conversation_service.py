@@ -1770,3 +1770,67 @@ class TestConversationServiceBasics:
         service.delete_conversation(conversation.id, account)
         assert len(updates) == 2
         assert updates[1][1] == {"is_deleted": True}
+
+
+class TestConversationCreditsSummary:
+    """会话算力汇总：聊天卡片回显历史消耗（2026-10-08 反馈：刷新后卡片消失）。"""
+
+    class _QueryStub:
+        def __init__(self, rows=None):
+            self._rows = rows or []
+
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def group_by(self, *_args, **_kwargs):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _SessionStub:
+        def __init__(self, message_rows, aggregate_rows):
+            self._message_rows = message_rows
+            self._aggregate_rows = aggregate_rows
+            self.calls = 0
+
+        def query(self, *_args, **_kwargs):
+            self.calls += 1
+            # 第 1 次取会话内消息 id，第 2 次取按消息聚合的消费额
+            if self.calls == 1:
+                return TestConversationCreditsSummary._QueryStub(self._message_rows)
+            return TestConversationCreditsSummary._QueryStub(self._aggregate_rows)
+
+    def _build(self, monkeypatch, aggregate_rows, message_ids=()):
+        account = SimpleNamespace(id=uuid4())
+        conversation_id = uuid4()
+        session = self._SessionStub([(mid,) for mid in message_ids], aggregate_rows)
+        service = ConversationService(db=SimpleNamespace(session=session))
+        monkeypatch.setattr(
+            service,
+            "get_conversation",
+            lambda *_args, **_kwargs: SimpleNamespace(id=conversation_id),
+        )
+        return service, conversation_id, account
+
+    def test_aggregates_per_message_and_total(self, monkeypatch):
+        message_a, message_b = uuid4(), uuid4()
+        service, conversation_id, account = self._build(
+            monkeypatch,
+            [(message_a, -3), (message_b, -2), (None, -99)],
+            message_ids=(message_a, message_b),
+        )
+
+        result = service.summarize_conversation_credits(conversation_id, account)
+
+        # 净额取绝对值（退款/回补会抵消）；无 source_id 的行忽略
+        assert result["message_credits"] == {str(message_a): 3, str(message_b): 2}
+        assert result["total_credits"] == 5
+
+    def test_returns_zero_when_conversation_has_no_messages(self, monkeypatch):
+        service, conversation_id, account = self._build(monkeypatch, [], message_ids=())
+
+        assert service.summarize_conversation_credits(conversation_id, account) == {
+            "total_credits": 0,
+            "message_credits": {},
+        }

@@ -1,4 +1,10 @@
 export default  {
+    duration: {
+      seconds: '{value}秒',
+      minutes: '{value}分钟',
+      hours: '{value}小时',
+      days: '{value}天',
+    },
     credential: {
       configured: '已配置',
       empty: '未配置',

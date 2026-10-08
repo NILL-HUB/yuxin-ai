@@ -17,6 +17,7 @@ import { useGetHomeIntent } from '@/hooks/use-home'
 import { useChatImageUpload } from '@/hooks/use-chat-image-upload'
 import { useChatQueryInput } from '@/hooks/use-chat-query-input'
 import { useGetConversationName } from '@/hooks/use-conversation'
+import { getConversationCredits } from '@/services/conversation'
 import {
   useAssistantAgentChat,
   useGetAssistantAgentCapabilities,
@@ -171,6 +172,33 @@ const accumulateSessionCredits = (roundMessageId: string) => {
 const resetSessionCredits = () => {
   countedRoundMessageIds.clear()
   sessionCredits.value = 0
+  messageCreditsById.value = {}
+}
+// 服务端回显：每条消息的实扣额（键=message_id）与会话累计基数。
+// 实时流只带「本轮」消耗，历史会话必须靠服务端回填，否则刷新后
+// 「本次消耗 / 会话累计消耗」全部消失（2026-10-08 反馈）。
+const messageCreditsById = ref<Record<string, number>>({})
+const loadConversationCredits = async (conversationId: string) => {
+  if (!conversationId) {
+    resetSessionCredits()
+    return
+  }
+  try {
+    const resp = await getConversationCredits(conversationId)
+    messageCreditsById.value = resp.data?.message_credits || {}
+    // 以服务端口径为基数，实时累计在此基础上叠加（避免估算与实扣漂移）
+    sessionCredits.value = Number(resp.data?.total_credits || 0)
+    countedRoundMessageIds.clear()
+  } catch (error) {
+    // 回显失败不影响聊天：实时链路仍会展示本轮消耗
+    console.error('Failed to load conversation credits:', error)
+  }
+}
+// 单条消息展示的消耗：服务端值优先，其次（最新一条）用实时值
+const resolveMessageCredits = (item: { id?: string }) => {
+  const persisted = messageCreditsById.value[String(item.id || '')]
+  if (typeof persisted === 'number') return persisted
+  return item.id === messages.value[0]?.id ? currentRoundCredits.value : -1
 }
 // 本轮（最新一轮）的消耗：用于给最新消息展示「本次消耗」
 const currentRoundCredits = computed(() => {
@@ -337,6 +365,8 @@ const reloadAssistantMessages = async (
 ) => {
   await loadAssistantAgentMessages(init, conversation_id)
   normalizeAllMessageMetrics()
+  // 历史会话的算力回显（每条消息 + 会话累计）
+  await loadConversationCredits(conversation_id)
 }
 
 const handleQueryKeydown = (event: KeyboardEvent) => {
@@ -1779,7 +1809,7 @@ onUnmounted(() => {
               :agent_thoughts="item.agent_thoughts"
               :answer="item.answer"
               :answer_parts="item.answer_parts || []"
-              :credits="item.id === messages[0]?.id ? currentRoundCredits : -1"
+              :credits="resolveMessageCredits(item)"
               :artifacts="item.artifacts || []"
               :app="ASSISTANT_APP"
               :suggested_questions="
@@ -2003,8 +2033,10 @@ onUnmounted(() => {
             @dismiss="handleDismissScheduleSuggestion"
           />
         </div>
+        <!-- 会话累计消耗：实时事件在流式期间可见；刷新/切换会话后由服务端回显
+             （sessionCredits>0），不能只看 billingEvents（2026-10-08 反馈：刷新后卡片消失）。 -->
         <div
-          v-if="billingEvents.length > 0"
+          v-if="billingEvents.length > 0 || sessionCredits > 0"
           class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
         >
           <BillingUsageIndicator :events="billingEvents" :session-total="sessionCredits" />

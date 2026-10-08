@@ -6,6 +6,12 @@ export type GetConversationMessagesWithPageRequest = BasePaginatorRequest & {
 }
 
 // 获取指定会话消息列表响应结构
+/** 会话算力消耗汇总：每条消息的实扣额 + 会话累计（服务端权威口径）。 */
+export type ConversationCreditsSummary = {
+  total_credits: number
+  message_credits: Record<string, number>
+}
+
 export type GetConversationMessagesWithPageResponse = BasePaginatorResponse<{
   id: string
   conversation_id: string

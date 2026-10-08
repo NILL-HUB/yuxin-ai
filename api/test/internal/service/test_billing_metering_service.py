@@ -219,6 +219,63 @@ def test_final_with_reply_service_persists_events_and_settles():
     assert settled[0]["account_id"] == "account-1"
 
 
+def test_final_reports_actually_charged_credits():
+    """billing_final 必须回传**实际扣减额**，而不是写死 0。
+
+    2026-10-08 实测：DB 已扣 5 算力（三笔流水），但界面「本次消耗 / 会话累计消耗」
+    显示 0 —— 根因就是 final 事件的 delta_credits 恒为 0，前端只读 final。
+    """
+    credit_service = MagicMock()
+    credit_service.consume_for_feature.return_value = {
+        "amount": -5,
+        "actual_compute_units": 5,
+        "insufficient": False,
+    }
+    aggregator = BillingUsageAggregator(
+        task_id="task-charged", credit_service=credit_service, feature_key="assistant_agent"
+    )
+    aggregator.account_id = "account-1"
+    aggregator.model_tokens(
+        "assistant_agent",
+        model_id="m1",
+        input_tokens=5000,
+        output_tokens=2000,
+        reason="r",
+    )
+
+    final = aggregator.final()
+
+    assert final.delta_credits == 5
+    assert final.total_credits == 5
+    assert final.to_sse()["delta_credits"] == 5
+
+
+def test_final_falls_back_to_idempotent_amount_when_units_missing():
+    """幂等命中路径只回 amount（负数）：仍要取到实扣额，不能退化成 0。"""
+    credit_service = MagicMock()
+    credit_service.consume_for_feature.return_value = {"amount": -3, "idempotent": True}
+    aggregator = BillingUsageAggregator(
+        task_id="task-idem", credit_service=credit_service, feature_key="assistant_agent"
+    )
+    aggregator.account_id = "account-1"
+    aggregator.model_tokens(
+        "assistant_agent", model_id="m1", input_tokens=100, output_tokens=100, reason="r"
+    )
+
+    assert aggregator.final().delta_credits == 3
+
+
+def test_final_keeps_estimate_when_charging_skipped():
+    """未扣费（无 credit_service/account_id，或系统承担）时不谎报消耗。"""
+    aggregator = BillingUsageAggregator(task_id="task-free")
+    aggregator.delta("model", "m1", 7, reason="estimate")
+
+    final = aggregator.final()
+
+    assert final.delta_credits == 0
+    assert final.total_credits == 7  # 估算累计保留在 total，delta 表示「本次实扣 0」
+
+
 def test_final_without_reply_service_keeps_legacy_behavior():
     aggregator = BillingUsageAggregator(task_id="task-1")
     aggregator.account_id = "account-1"

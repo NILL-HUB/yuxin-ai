@@ -318,6 +318,36 @@ class TestCreditService:
             "token_count": 1000,
         }
 
+    def test_consume_for_feature_records_message_id_as_source_id(self):
+        """传 message_id 时流水必须以它为 source_id —— 否则「单条/会话算力」聚合不到。
+
+        2026-10-08 实测：聊天扣费走 consume_for_feature 的合成 id（uuid5(task_id)），
+        与 message.id 无关联 → 会话累计消耗回显恒为 0。
+        """
+        account_id = uuid4()
+        message_id = uuid4()
+        credit_account = CreditAccount(
+            account_id=account_id, permanent_credit=100, quota_credit=0,
+            total_granted=100, total_consumed=0,
+        )
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=None),  # 公共 AI 功能配置（未配置 → 可计费）
+            *_consume_stubs(credit_account, _membership(account_id)),
+        ])
+        service = CreditService(session=session)
+
+        result = service.consume_for_feature(
+            account_id,
+            "direct_answer",
+            token_count=1000,
+            message_id=message_id,
+        )
+
+        assert result["actual_compute_units"] >= 1
+        transactions = [item for item in session.added if isinstance(item, CreditTransaction)]
+        assert transactions, "未写入扣费流水"
+        assert str(transactions[-1].source_id) == str(message_id)
+
     def test_consume_for_message_with_engine_fallback_keeps_existing_rate(self):
         account_id = uuid4()
         message_id = uuid4()

@@ -1,4 +1,10 @@
 export default  {
+    duration: {
+      seconds: '{value}s',
+      minutes: '{value} min',
+      hours: '{value} h',
+      days: '{value} d',
+    },
     credential: {
       configured: 'Configured',
       empty: 'Not configured',

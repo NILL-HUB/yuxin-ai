@@ -5,6 +5,7 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 import { Message } from '@arco-design/web-vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatDuration } from '@/utils/duration'
 import AiToolCallState from './ai-chat-ui/AiToolCallState.vue'
 import type { AiToolRow } from './ai-chat-ui/types'
 
@@ -278,7 +279,7 @@ const _formatToolInput = (toolInput: unknown) => {
 const _getThoughtLatency = (agentThought: Record<string, unknown>) => {
   const raw = Number(agentThought?.latency)
   if (!Number.isFinite(raw) || raw <= 0) return '0.00s'
-  return `${raw.toFixed(2)}s`
+  return formatDuration(raw, t)
 }
 
 const _getThoughtTitle = (event: string) => {

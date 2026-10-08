@@ -34,6 +34,7 @@ from internal.core.agent.usage_utils import (
 )
 from internal.extension.async_database_extension import async_db
 from internal.model import App, Conversation, Message, MessageAgentThought, Account
+from internal.model.billing import CreditTransaction
 from internal.schema.conversation_schema import GetConversationMessagesWithPageReq
 from internal.exception import NotFoundException
 from internal.service.system_prompt_library_service import SystemPromptLibraryService
@@ -542,6 +543,50 @@ class ConversationService(BaseService):
             )
 
 
+
+    def summarize_conversation_credits(
+        self,
+        conversation_id: UUID,
+        account: Account,
+    ) -> dict:
+        """会话算力消耗汇总：每条消息的消耗 + 会话累计（供聊天卡片回显历史）。
+
+        数据源是 `credit_transaction`（`transaction_type='consume'`、
+        `source_id=message_id`）——即用户**实际被扣**的算力值，与实时流的
+        `billing_final`（2026-10-08 起同样携带实扣额）口径一致。
+        按 message_id 汇总后取净额绝对值（退款/回补会抵消）。
+        """
+        self.get_conversation(conversation_id, account)
+
+        message_ids = [
+            row[0]
+            for row in self.db.session.query(Message.id)
+            .filter(Message.conversation_id == conversation_id)
+            .all()
+        ]
+        if not message_ids:
+            return {"total_credits": 0, "message_credits": {}}
+        rows = (
+            self.db.session.query(
+                CreditTransaction.source_id,
+                func.sum(CreditTransaction.amount),
+            )
+            .filter(
+                CreditTransaction.transaction_type == "consume",
+                CreditTransaction.source_id.in_(message_ids),
+            )
+            .group_by(CreditTransaction.source_id)
+            .all()
+        )
+        message_credits: dict[str, int] = {}
+        for source_id, amount in rows:
+            if source_id is None:
+                continue
+            message_credits[str(source_id)] = abs(int(amount or 0))
+        return {
+            "total_credits": sum(message_credits.values()),
+            "message_credits": message_credits,
+        }
 
     def get_conversation(self, conversation_id: UUID, account: Account) -> Conversation:
         """根据传递的会话id+account获取指定的会话消息"""

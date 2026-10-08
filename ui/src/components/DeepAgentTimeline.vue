@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { formatDuration } from '@/utils/duration'
 import { QueueEvent } from '@/config'
 import { isImageArtifact, type ChatArtifact } from '@/views/shared/chat-output'
 import ChatImageGallery from './ChatImageGallery.vue'
@@ -383,7 +384,7 @@ const getTodoDotClass = (status: string) => {
                     : 'deep-agent-badge--state',
               ]"
             >{{ item.stateLabel }}</span>
-            <span v-if="item.latency > 0" class="deep-agent-step__latency">{{ item.latency.toFixed(2) }}s</span>
+            <span v-if="item.latency > 0" class="deep-agent-step__latency">{{ formatDuration(item.latency, t) }}</span>
           </div>
 
           <div v-if="item.detail" class="deep-agent-step__detail">

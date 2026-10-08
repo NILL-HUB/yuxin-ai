@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { formatDuration } from '@/utils/duration'
 import DotFlashing from '@/components/DotFlashing.vue'
 import { useAudioPlayer } from '@/hooks/use-audio'
 import { useMarkdownRenderer } from '@/hooks/use-markdown-renderer'
@@ -435,7 +436,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
             </template>
             <div class="flex items-center gap-1 text-gray-500">
               <icon-check />
-              {{ safeLatency.toFixed(2) }}s
+              {{ formatDuration(safeLatency, t) }}
             </div>
             <!-- 旧「X Tokens」为旧系统遗留，2026-10-07 改为展示算力消耗（仅最新一轮有数据；
                  历史消息的消耗待服务端补充后展示） -->
