@@ -1,4 +1,4 @@
-"""DeepThinkingAgent 和 BaiduCfcSandboxBackend 的完整测试套件。
+"""DeepThinkingAgent 和 E2bProtocolSandboxBackend 的完整测试套件。
 
 测试分层：
     Unit Tests  — 不需要网络，Mock 所有外部依赖
@@ -32,7 +32,7 @@ from internal.core.agent.agents.deep_thinking_agent import (
     StructuredDocumentOutlinePlan,
     StructuredDocumentSectionPlan,
 )
-from internal.core.agent.backends.baidu_cfc_sandbox_backend import BaiduCfcSandboxBackend
+from internal.core.agent.backends.e2b_protocol_sandbox_backend import E2bProtocolSandboxBackend
 from internal.core.agent.entities.artifact_policy_entity import ArtifactPolicy
 from internal.core.agent.entities.agent_entity import AgentConfig, get_agent_system_prompt_template
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
@@ -155,21 +155,21 @@ def _sandbox_runtime(enabled=True, backend=None, configs=None, credentials=None)
 
 
 # ============================================================
-#  Unit Tests: BaiduCfcSandboxBackend
+#  Unit Tests: E2bProtocolSandboxBackend
 # ============================================================
 
-class TestBaiduCfcSandboxBackend:
+class TestE2bProtocolSandboxBackend:
     """百度 CFC 沙箱后端单元测试（全部 Mock，无需网络）。"""
 
     def test_init_requires_api_key(self):
         """缺少 API Key（空串）时应抛出 ValueError。"""
         with pytest.raises(ValueError, match="api_key"):
-            BaiduCfcSandboxBackend(api_key="", domain="test.example.com")
+            E2bProtocolSandboxBackend(api_key="", domain="test.example.com")
 
     def test_init_requires_domain(self):
         """缺少 Domain（空串）时应抛出 ValueError。"""
         with pytest.raises(ValueError, match="domain"):
-            BaiduCfcSandboxBackend(api_key="test-key", domain="")
+            E2bProtocolSandboxBackend(api_key="test-key", domain="")
 
     def test_init_uses_explicit_credentials(self):
         """凭证一律由调用方显式传入（不再读 env）。"""
@@ -177,13 +177,13 @@ class TestBaiduCfcSandboxBackend:
             "E2B_API_KEY": "env-key-123",
             "E2B_DOMAIN": "env-domain.example.com",
         }):
-            backend = BaiduCfcSandboxBackend(api_key="explicit-key", domain="explicit.example.com")
+            backend = E2bProtocolSandboxBackend(api_key="explicit-key", domain="explicit.example.com")
             assert backend._api_key == "explicit-key"
             assert backend._domain == "explicit.example.com"
 
     def test_init_uses_explicit_template_args(self):
         """模板名与 fallback 模板名由调用方显式传入（不再读 env）。"""
-        backend = BaiduCfcSandboxBackend(
+        backend = E2bProtocolSandboxBackend(
             api_key="k",
             domain="d",
             template_alias="lite-template",
@@ -194,13 +194,13 @@ class TestBaiduCfcSandboxBackend:
 
     def test_id_property(self):
         """id 属性应返回非空字符串。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
         assert isinstance(backend.id, str)
         assert len(backend.id) > 0
 
     def test_execute_success(self):
         """execute() 成功时应返回正确的 ExecuteResponse。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         # Mock e2b Sandbox
         mock_result = MagicMock()
@@ -222,7 +222,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_execute_with_stderr(self):
         """execute() 有 stderr 输出时应加 [stderr] 前缀。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_result = MagicMock()
         mock_result.stdout    = "ok\n"
@@ -240,7 +240,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_execute_truncates_large_output(self):
         """超过 100000 字节的输出应被截断。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_result = MagicMock()
         mock_result.stdout    = "x" * 200_000   # 200KB 输出
@@ -258,7 +258,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_execute_handles_exception(self):
         """execute() 遇到异常时应返回 exit_code=1 而非抛出。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_sbx = MagicMock()
         mock_sbx.commands.run.side_effect = RuntimeError("连接超时")
@@ -271,7 +271,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_execute_custom_timeout(self):
         """execute() 应使用自定义 timeout 参数。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d", timeout=30)
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d", timeout=30)
 
         mock_result = MagicMock()
         mock_result.stdout    = "ok"
@@ -288,7 +288,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_create_sandbox_uses_template_fallback(self):
         """当主模板创建失败时，应自动尝试 fallback 模板。"""
-        backend = BaiduCfcSandboxBackend(
+        backend = E2bProtocolSandboxBackend(
             api_key="k",
             domain="d",
             timeout=30,
@@ -332,7 +332,7 @@ class TestBaiduCfcSandboxBackend:
             {"SANDBOX_TEMPLATE_ALIAS": "", "SANDBOX_FALLBACK_TEMPLATE_ALIAS": ""},
             clear=False,
         ), patch.dict("sys.modules", {"e2b_code_interpreter": fake_e2b_module}):
-            backend = BaiduCfcSandboxBackend(api_key="k", domain="d", sandbox_timeout=42)
+            backend = E2bProtocolSandboxBackend(api_key="k", domain="d", sandbox_timeout=42)
             sandbox = backend._get_sandbox()
 
         assert sandbox is mock_sbx
@@ -373,7 +373,7 @@ class TestBaiduCfcSandboxBackend:
                 "e2b_code_interpreter": fake_e2b_module,
             },
         ):
-            backend = BaiduCfcSandboxBackend(
+            backend = E2bProtocolSandboxBackend(
                 api_key="bce-v3/ALTAK-test-key",
                 domain="sandbox-execute.bj.baidubce.com",
                 sandbox_timeout=42,
@@ -418,7 +418,7 @@ class TestBaiduCfcSandboxBackend:
                 "e2b_code_interpreter": fake_e2b_module,
             },
         ):
-            backend = BaiduCfcSandboxBackend(
+            backend = E2bProtocolSandboxBackend(
                 api_key="e2b_0000000000000000000000000000000000000000",
                 domain="sandbox.example.com",
                 sandbox_timeout=42,
@@ -432,7 +432,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_upload_files_success(self):
         """upload_files() 成功时应返回无错误的响应列表。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_sbx = MagicMock()
         mock_sbx.files.write.return_value = None
@@ -449,7 +449,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_upload_files_partial_failure(self):
         """upload_files() 部分失败时应单独标记错误，不影响其他文件。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_sbx = MagicMock()
         mock_sbx.files.write.side_effect = [
@@ -469,7 +469,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_download_files_success(self):
         """download_files() 成功时应返回正确的字节内容。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_sbx = MagicMock()
         mock_sbx.files.read.return_value = b"file content here"
@@ -483,7 +483,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_close_kills_sandbox(self):
         """close() 应调用 sandbox.kill() 并清空 _sbx。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
 
         mock_sbx = MagicMock()
         backend._sbx = mock_sbx
@@ -495,7 +495,7 @@ class TestBaiduCfcSandboxBackend:
 
     def test_context_manager(self):
         """作为上下文管理器时，__exit__ 应自动关闭沙箱。"""
-        backend = BaiduCfcSandboxBackend(api_key="k", domain="d")
+        backend = E2bProtocolSandboxBackend(api_key="k", domain="d")
         mock_sbx = MagicMock()
         backend._sbx = mock_sbx
 
@@ -2479,7 +2479,7 @@ IPO招股说明书草案
         assert complete_event.total_price > 0
 
     def test_build_deep_agent_uses_sandbox_when_runtime_enabled(self):
-        """能力域已启用且路由要求沙箱时，应构建 BaiduCfcSandboxBackend。"""
+        """能力域已启用且路由要求沙箱时，应构建 E2bProtocolSandboxBackend。"""
         captured = {}
         agent = self._build_agent()
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda *_: None)
@@ -2497,9 +2497,9 @@ IPO招股说明书草案
 
         with _sandbox_runtime(configs={"template_alias": "llmops-code-interpreter-lite"}), \
              patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
-             patch.object(BaiduCfcSandboxBackend, "ensure_ready", return_value=None), \
+             patch.object(E2bProtocolSandboxBackend, "ensure_ready", return_value=None), \
              patch.object(
-                 BaiduCfcSandboxBackend,
+                 E2bProtocolSandboxBackend,
                  "execute",
                  return_value=SimpleNamespace(exit_code=0, output=f"/home/user/artifacts/{task_id}"),
              ), \
@@ -2513,7 +2513,7 @@ IPO招股说明书草案
                 timeline=timeline,
             )
 
-        assert isinstance(backend, BaiduCfcSandboxBackend)
+        assert isinstance(backend, E2bProtocolSandboxBackend)
         assert used_sandbox is True
         assert artifact_root == f"/home/user/artifacts/{task_id}"
         assert isinstance(captured["middleware"][0], DeepTimelineMiddleware)
@@ -2543,7 +2543,7 @@ IPO招股说明书草案
 
         with _sandbox_runtime(), \
              patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
-             patch.object(BaiduCfcSandboxBackend, "execute", return_value=SimpleNamespace(exit_code=0, output="/home/user/artifacts/test-task")), \
+             patch.object(E2bProtocolSandboxBackend, "execute", return_value=SimpleNamespace(exit_code=0, output="/home/user/artifacts/test-task")), \
              patch.dict(os.environ, {
                 "E2B_API_KEY": "test-key",
                 "E2B_DOMAIN": "sandbox.example.com",
@@ -2604,9 +2604,9 @@ IPO招股说明书草案
                 "execute_timeout_seconds": 3601,
              }), \
              patch("deepagents.create_deep_agent", side_effect=capture_create_deep_agent), \
-             patch.object(BaiduCfcSandboxBackend, "ensure_ready", return_value=None) as ensure_ready_mock, \
+             patch.object(E2bProtocolSandboxBackend, "ensure_ready", return_value=None) as ensure_ready_mock, \
              patch.object(
-                 BaiduCfcSandboxBackend,
+                 E2bProtocolSandboxBackend,
                  "execute",
                  return_value=SimpleNamespace(exit_code=0, output=f"/home/user/artifacts/{task_id}"),
              ), \
@@ -2620,7 +2620,7 @@ IPO招股说明书草案
                 timeline=timeline,
             )
 
-        assert isinstance(backend, BaiduCfcSandboxBackend)
+        assert isinstance(backend, E2bProtocolSandboxBackend)
         assert backend._template_alias == "lite-template"
         assert backend._fallback_template_alias == "fallback-template"
         assert backend._sandbox_timeout == 86401
@@ -2642,7 +2642,7 @@ IPO招股说明书草案
 
         with _sandbox_runtime(configs={"template_alias": "lite-template"}), \
              patch("deepagents.create_deep_agent", return_value=MagicMock()), \
-             patch.object(BaiduCfcSandboxBackend, "ensure_ready", side_effect=RuntimeError("template invalid")), \
+             patch.object(E2bProtocolSandboxBackend, "ensure_ready", side_effect=RuntimeError("template invalid")), \
              patch.dict(os.environ, {
                 "E2B_API_KEY": "test-key",
                 "E2B_DOMAIN": "sandbox.example.com",
@@ -2990,7 +2990,7 @@ class TestBaiduCfcSandboxIntegration:
         if not api_key.startswith("bce-v3/"):
             pytest.skip("E2B_API_KEY 不是百度 CFC BCE v3 凭证，跳过真实沙箱集成测试")
 
-        backend = BaiduCfcSandboxBackend(api_key=api_key, domain=domain)
+        backend = E2bProtocolSandboxBackend(api_key=api_key, domain=domain)
         yield backend
         backend.close()
 

@@ -14,15 +14,17 @@ from internal.core.agent.backends import (
     available_backends,
     build_sandbox_backend,
 )
-from internal.core.agent.backends.baidu_cfc_sandbox_backend import BaiduCfcSandboxBackend
+from internal.core.agent.backends.e2b_protocol_sandbox_backend import E2bProtocolSandboxBackend
 from internal.core.agent.entities.sandbox_runtime_entity import (
+    BACKEND_ALIYUN_SANDBOX,
     BACKEND_BAIDU_CFC,
     BACKEND_DISABLED,
+    BACKEND_E2B_CLOUD,
     BACKEND_HTTP_SANDBOX,
+    BACKEND_TENCENT_SCF,
     CAPABILITY_CODE_INTERPRETER,
     CAPABILITY_SKILL_EXEC,
     SandboxRuntime,
-    BACKEND_E2B_CLOUD,
 )
 from internal.exception import FailException
 
@@ -54,7 +56,9 @@ def test_all_declared_backends_are_registered():
     assert set(available_backends()) >= {
         BACKEND_BAIDU_CFC,
         BACKEND_E2B_CLOUD,
+        BACKEND_ALIYUN_SANDBOX,
         BACKEND_HTTP_SANDBOX,
+        BACKEND_TENCENT_SCF,
         BACKEND_DISABLED,
     }
 
@@ -108,7 +112,7 @@ def test_e2b_backend_constructed_from_runtime_configs(monkeypatch):
         credentials={"E2B_API_KEY": "k", "E2B_DOMAIN": "sandbox.example.com"},
     )
     backend = build_sandbox_backend(runtime)
-    assert isinstance(backend, BaiduCfcSandboxBackend)
+    assert isinstance(backend, E2bProtocolSandboxBackend)
     # 后端不再自行读 env 决定模板/凭证，而是消费 runtime
     assert backend._template_alias == "llmops-code-interpreter-lite"
     assert backend._fallback_template_alias == "code-interpreter-v1"

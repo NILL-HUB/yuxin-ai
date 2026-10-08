@@ -20,6 +20,7 @@ from typing import Any, Callable
 import requests
 
 from internal.core.agent.entities.sandbox_runtime_entity import (
+    BACKEND_ALIYUN_SANDBOX,
     BACKEND_BAIDU_CFC,
     BACKEND_DISABLED,
     BACKEND_E2B_CLOUD,
@@ -302,7 +303,7 @@ def _e2b_credentials(runtime: SandboxRuntime) -> tuple[str, str]:
 
 
 def _build_e2b_protocol(runtime: SandboxRuntime) -> Any | None:
-    """构造 E2B 协议沙箱后端（百度 CFC 与官方 E2B 共用同一实现，差异仅在凭证/域名）。"""
+    """构造 E2B 协议沙箱后端（百度 CFC / 官方 E2B 云 / 阿里云智能体沙箱共用同一实现，差异仅在凭证/域名）。"""
     if not runtime.enabled:
         logger.info(
             "沙箱未启用，跳过后端构造: capability=%s backend=%s reason=%s",
@@ -312,8 +313,8 @@ def _build_e2b_protocol(runtime: SandboxRuntime) -> Any | None:
         )
         return None
 
-    from internal.core.agent.backends.baidu_cfc_sandbox_backend import (
-        BaiduCfcSandboxBackend,
+    from internal.core.agent.backends.e2b_protocol_sandbox_backend import (
+        E2bProtocolSandboxBackend,
     )
 
     api_key, domain = _e2b_credentials(runtime)
@@ -322,7 +323,7 @@ def _build_e2b_protocol(runtime: SandboxRuntime) -> Any | None:
         logger.warning("沙箱后端凭证缺失（capability=%s）", runtime.capability)
         return None
 
-    return BaiduCfcSandboxBackend(
+    return E2bProtocolSandboxBackend(
         api_key=api_key,
         domain=domain,
         template_alias=runtime.get("template_alias") or None,
@@ -384,6 +385,7 @@ def _build_disabled(_runtime: SandboxRuntime) -> None:
 _REGISTRY: dict[str, SandboxBuilder] = {
     BACKEND_BAIDU_CFC: _build_e2b_protocol,
     BACKEND_E2B_CLOUD: _build_e2b_protocol,
+    BACKEND_ALIYUN_SANDBOX: _build_e2b_protocol,
     BACKEND_HTTP_SANDBOX: _build_http_sandbox,
     BACKEND_TENCENT_SCF: _build_tencent_scf,
     BACKEND_DISABLED: _build_disabled,
@@ -408,7 +410,7 @@ def build_sandbox_backend(runtime: SandboxRuntime) -> Any | None:
     """按运行时快照构造后端句柄。
 
     Returns:
-        - E2B 协议后端：`BaiduCfcSandboxBackend` 实例
+        - E2B 协议后端：`E2bProtocolSandboxBackend` 实例
         - 远端执行（HTTP / 腾讯云 SDK 直调）：`RemoteExecHandle` 子类实例
         - 未启用 / disabled：`None`
 

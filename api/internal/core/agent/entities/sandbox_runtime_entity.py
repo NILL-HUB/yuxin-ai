@@ -32,6 +32,7 @@ CAPABILITIES: tuple[str, ...] = (
 # --------------------------------------------------------------------------- #
 BACKEND_BAIDU_CFC = "baidu_cfc"      # 百度 CFC（E2B 协议）
 BACKEND_E2B_CLOUD = "e2b_cloud"      # 官方 E2B 云沙箱（E2B 协议）
+BACKEND_ALIYUN_SANDBOX = "aliyun_sandbox"  # 阿里云智能体沙箱 AgentBay（E2B v1 协议，API Key 前缀 e2b_）
 BACKEND_HTTP_SANDBOX = "http_sandbox"  # 通用 HTTP 远端执行（技能 SCF / 工作流代码节点共用，按能力域各自持 endpoint）
 BACKEND_TENCENT_SCF = "tencent_scf"  # 腾讯云函数 SDK 直调（InvokeFunction，IAM 鉴权、无需公网端点）
 BACKEND_DISABLED = "disabled"        # 显式未开通（不再静默降级）
@@ -39,6 +40,7 @@ BACKEND_DISABLED = "disabled"        # 显式未开通（不再静默降级）
 BACKENDS: tuple[str, ...] = (
     BACKEND_BAIDU_CFC,
     BACKEND_E2B_CLOUD,
+    BACKEND_ALIYUN_SANDBOX,
     BACKEND_HTTP_SANDBOX,
     BACKEND_TENCENT_SCF,
     BACKEND_DISABLED,
@@ -48,15 +50,31 @@ BACKENDS: tuple[str, ...] = (
 # 为什么 tencent_scf 不挂 code_interpreter：深思考需要 shell + 文件系统语义，
 # SDK 直调是「一次调用、一次结果」的无状态执行，语义不匹配（同 http_sandbox）。
 CAPABILITY_BACKENDS: dict[str, tuple[str, ...]] = {
-    CAPABILITY_CODE_INTERPRETER: (BACKEND_BAIDU_CFC, BACKEND_E2B_CLOUD, BACKEND_DISABLED),
+    CAPABILITY_CODE_INTERPRETER: (
+        BACKEND_BAIDU_CFC,
+        BACKEND_E2B_CLOUD,
+        BACKEND_ALIYUN_SANDBOX,
+        BACKEND_DISABLED,
+    ),
     CAPABILITY_SKILL_EXEC: (
         BACKEND_HTTP_SANDBOX,
         BACKEND_TENCENT_SCF,
         BACKEND_BAIDU_CFC,
+        BACKEND_ALIYUN_SANDBOX,
         BACKEND_DISABLED,
     ),
     CAPABILITY_WORKFLOW_CODE: (BACKEND_HTTP_SANDBOX, BACKEND_TENCENT_SCF, BACKEND_DISABLED),
 }
+
+# E2B 协议族后端：共用同一实现（`E2bProtocolSandboxBackend`）与同一套凭证键
+# （`E2B_API_KEY` / `E2B_DOMAIN`），差异仅在域名。消费方需要判定「是不是
+# E2B 语义（shell + 文件系统）」时**只认此集合**，不得逐一列举后端名
+# （历史教训：SkillSandboxExecutor 曾硬编码 `== baidu_cfc`，新增后端即漏判）。
+E2B_PROTOCOL_BACKENDS: tuple[str, ...] = (
+    BACKEND_BAIDU_CFC,
+    BACKEND_E2B_CLOUD,
+    BACKEND_ALIYUN_SANDBOX,
+)
 
 
 @dataclass(frozen=True)

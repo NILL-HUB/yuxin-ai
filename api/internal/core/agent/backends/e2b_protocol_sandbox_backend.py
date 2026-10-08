@@ -1,6 +1,11 @@
-"""百度云函数 CFC 沙箱后端（E2B 协议兼容）。
+"""E2B 协议沙箱后端（多云端共用实现）。
 
-百度 CFC 代码沙箱实现了 E2B 协议，通过 e2b-code-interpreter SDK 接入。
+服务三个后端（差异仅在凭证与域名，协议完全一致）：
+- `baidu_cfc`：百度云函数 CFC 代码沙箱（BCE v3 凭证，需绕过 upstream key 形态校验）
+- `e2b_cloud`：官方 E2B 云沙箱
+- `aliyun_sandbox`：阿里云智能体沙箱（AgentBay，`e2b_` 前缀 API Key，
+  E2B v1 协议端点 `api.<region>.sandbox.aliyuncs.com`）
+
 每次 Agent 调用 execute() 时，会在沙箱内执行真实的 Python/Shell 命令，
 并返回 stdout/stderr 输出，实现安全隔离的代码执行能力。
 
@@ -8,17 +13,16 @@
     upstream e2b-code-interpreter 对 API key 形态做了本地校验，只接受
     `e2b_...` 前缀。百度 CFC 使用的是 `bce-v3/...` 凭证，因此这里在
     进入 Sandbox.create() 前会针对百度 CFC 场景临时绕过该本地校验，让
-    SDK 继续把请求发到兼容的远端沙箱。
+    SDK 继续把请求发到兼容的远端沙箱。阿里云与官方 E2B 的 key 均为
+    `e2b_` 前缀，走正常校验路径。
 
-环境变量（在 .env 中配置）：
-    E2B_DOMAIN                 : 百度 CFC 沙箱域名，如 sandbox-execute.bj.baidubce.com
-    E2B_API_KEY                : 百度 CFC API Key（BCE v3 格式）
-    SANDBOX_TEMPLATE_ALIAS      : 主模板名，建议指向 2C / 2048 MiB 的低成本模板
-    SANDBOX_FALLBACK_TEMPLATE_ALIAS:
-                                 : 主模板失败时的备用模板名，默认回退到 code-interpreter-v1
+配置来源（唯一权威入口）：
+    凭证（api_key / domain）与模板/超时一律由调用方经
+    `SandboxConfigService.resolve_runtime` → `backends/factory` 显式传入，
+    本类**不读 env、不读 DB**（避免配置源分裂）。
 
 使用示例：
-    backend = BaiduCfcSandboxBackend()
+    backend = E2bProtocolSandboxBackend(api_key="...", domain="...")
     result = backend.execute("python3 -c 'print(1+1)'")
     print(result.output)  # '2'
 """
@@ -72,7 +76,7 @@ def _normalize_optional_string(value: str | None) -> str | None:
     return normalized or None
 
 
-class BaiduCfcSandboxBackend(BaseSandbox):
+class E2bProtocolSandboxBackend(BaseSandbox):
     """百度云函数 CFC 代码沙箱后端。
 
     继承 BaseSandbox：ls / read / write / edit / grep / glob 全部通过
@@ -92,11 +96,11 @@ class BaiduCfcSandboxBackend(BaseSandbox):
         timeout: int = _DEFAULT_TIMEOUT,
         sandbox_timeout: int = _SANDBOX_LIFETIME,
     ) -> None:
-        """初始化并创建百度 CFC 沙箱实例。
+        """初始化并创建远端 E2B 协议沙箱实例（实际创建延迟到首次执行）。
 
         Args:
-            api_key:        百度 CFC API Key（BCE v3 格式）。**必填**。
-            domain:         百度 CFC 域名。**必填**。
+            api_key:        远端沙箱 API Key（百度 CFC 为 BCE v3 格式；E2B/阿里云为 e2b_ 前缀）。**必填**。
+            domain:         远端沙箱域名（如 sandbox-execute.bj.baidubce.com / cn-beijing.sandbox.aliyuncs.com）。**必填**。
             template_alias: 沙箱模板名（默认模板由 SandboxConfigService 提供）。
             fallback_template_alias:
                             模板创建失败时的备用模板名。
@@ -111,7 +115,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
         self._fallback_template_alias = _normalize_optional_string(fallback_template_alias)
         self._timeout = timeout
         self._sandbox_timeout = sandbox_timeout
-        self._sandbox_id_val = f"baidu-cfc-{uuid.uuid4().hex[:8]}"
+        self._sandbox_id_val = f"e2b-remote-{uuid.uuid4().hex[:8]}"
         self._active_template_alias: str | None = None
         self._sbx = None  # e2b Sandbox 实例，延迟创建
 
@@ -212,7 +216,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
                 os.environ["E2B_DOMAIN"] = original_domain
 
     def _create_sandbox(self):
-        """创建 e2b_code_interpreter Sandbox 实例（指向百度 CFC）。"""
+        """创建 e2b_code_interpreter Sandbox 实例（指向配置的远端沙箱）。"""
         try:
             with self._scoped_e2b_env(), self._patched_upstream_api_key_validation():
                 from e2b_code_interpreter import Sandbox  # noqa: PLC0415
@@ -220,7 +224,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
 
                 if not template_candidates:
                     sbx = Sandbox.create(timeout=self._sandbox_timeout)
-                    logger.info("百度 CFC 沙箱创建成功: sandbox_id=%s", sbx.sandbox_id)
+                    logger.info("E2B 沙箱创建成功: sandbox_id=%s", sbx.sandbox_id)
                     self._sandbox_id_val = sbx.sandbox_id
                     self._active_template_alias = None
                     return sbx
@@ -230,7 +234,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
                     try:
                         sbx = Sandbox.create(template=template_alias, timeout=self._sandbox_timeout)
                         logger.info(
-                            "百度 CFC 沙箱创建成功: template=%s sandbox_id=%s",
+                            "E2B 沙箱创建成功: template=%s sandbox_id=%s",
                             template_alias,
                             sbx.sandbox_id,
                         )
@@ -241,18 +245,18 @@ class BaiduCfcSandboxBackend(BaseSandbox):
                         last_error = e
                         if index < len(template_candidates) - 1:
                             logger.warning(
-                                "百度 CFC 沙箱模板创建失败，准备尝试 fallback: template=%s, error=%s",
+                                "E2B 沙箱模板创建失败，准备尝试 fallback: template=%s, error=%s",
                                 template_alias,
                                 e,
                             )
                         else:
-                            logger.error("百度 CFC 沙箱创建失败: template=%s, error=%s", template_alias, e)
+                            logger.error("E2B 沙箱创建失败: template=%s, error=%s", template_alias, e)
 
                 if last_error is not None:
                     raise last_error
-                raise RuntimeError("百度 CFC 沙箱创建失败：未能获得有效的模板候选项")
+                raise RuntimeError("E2B 沙箱创建失败：未能获得有效的模板候选项")
         except Exception as e:
-            logger.error("百度 CFC 沙箱创建失败: %s", e)
+            logger.error("E2B 沙箱创建失败: %s", e)
             raise
 
     # ------------------------------------------------------------------ #
@@ -269,7 +273,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
     # ------------------------------------------------------------------ #
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        """在百度 CFC 沙箱内执行 shell 命令。
+        """在远端 E2B 沙箱内执行 shell 命令。
 
         Args:
             command: 完整的 shell 命令字符串，例如 "ls -la /workspace"。
@@ -317,7 +321,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
             )
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """向百度 CFC 沙箱上传文件。
+        """向远端 E2B 沙箱上传文件。
 
         Args:
             files: [(路径, 字节内容), ...] 列表
@@ -343,7 +347,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
         return responses
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """从百度 CFC 沙箱下载文件。
+        """从远端 E2B 沙箱下载文件。
 
         Args:
             paths: 文件绝对路径列表
@@ -383,7 +387,7 @@ class BaiduCfcSandboxBackend(BaseSandbox):
             finally:
                 self._sbx = None
 
-    def __enter__(self) -> "BaiduCfcSandboxBackend":
+    def __enter__(self) -> "E2bProtocolSandboxBackend":
         return self
 
     def __exit__(self, *_) -> None:

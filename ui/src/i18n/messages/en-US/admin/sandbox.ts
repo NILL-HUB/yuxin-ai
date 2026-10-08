@@ -10,6 +10,7 @@ export default {
   backends: {
     baidu_cfc: 'Baidu CFC sandbox (E2B protocol)',
     e2b_cloud: 'E2B cloud sandbox',
+    aliyun_sandbox: 'Alibaba Cloud Agent Sandbox (AgentBay)',
     http_sandbox: 'HTTP remote execution service',
     tencent_scf: 'Tencent Cloud Function (SDK invoke)',
     disabled: 'Disabled',

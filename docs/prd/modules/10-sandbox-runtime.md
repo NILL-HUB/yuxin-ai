@@ -9,7 +9,7 @@
 
 | capability | 典型消费方 | 说明 |
 | --- | --- | --- |
-| `code_interpreter` | 深度思考（DeepThinkingAgent）、builtin 工具 `execute_code` | E2B 协议沙箱（百度 CFC / 官方 E2B 云） |
+| `code_interpreter` | 深度思考（DeepThinkingAgent）、builtin 工具 `execute_code` | E2B 协议沙箱（百度 CFC / 官方 E2B 云 / 阿里云智能体沙箱） |
 | `skill_exec` | 技能包同步与执行（`SkillScfClient` / `SkillSandboxExecutor`） | HTTP 远端执行服务 / 腾讯云函数 SDK 直调 / E2B 协议沙箱 |
 | `workflow_code` | 工作流 Python 代码节点（`CodeNode`） | HTTP 远端执行服务 / 腾讯云函数 SDK 直调 |
 
@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | `id` | uuid pk | |
 | `capability` | varchar(32) | `code_interpreter` / `skill_exec` / `workflow_code` |
-| `backend` | varchar(32) | `baidu_cfc` / `e2b_cloud` / `http_sandbox` / `tencent_scf` / `disabled` |
+| `backend` | varchar(32) | `baidu_cfc` / `e2b_cloud` / `aliyun_sandbox` / `http_sandbox` / `tencent_scf` / `disabled` |
 | `label` | varchar(64) | 展示名（由 `_BACKEND_LABELS` 代码定义，启动时校正） |
 | `configs` | jsonb | **白名单键**（模板名/超时/endpoint/函数名），**不含密钥** |
 | `credentials` | jsonb | 后端凭证（**加密**，键=env 名，如 `E2B_API_KEY`）；键清单由 `_ALLOWED_CREDENTIAL_KEYS` 代码声明 |
@@ -48,10 +48,18 @@
 ### 能力域允许的后端（`CAPABILITY_BACKENDS`）
 
 ```python
-code_interpreter: (baidu_cfc, e2b_cloud, disabled)
-skill_exec:       (http_sandbox, tencent_scf, baidu_cfc, disabled)
+code_interpreter: (baidu_cfc, e2b_cloud, aliyun_sandbox, disabled)
+skill_exec:       (http_sandbox, tencent_scf, baidu_cfc, aliyun_sandbox, disabled)
 workflow_code:    (http_sandbox, tencent_scf, disabled)
 ```
+
+### E2B 协议族（`E2B_PROTOCOL_BACKENDS`）
+
+`baidu_cfc` / `e2b_cloud` / `aliyun_sandbox` 共用同一实现
+（`E2bProtocolSandboxBackend`，原 `BaiduCfcSandboxBackend`，2026-10-08 重命名）与同一套凭证键
+（`E2B_API_KEY` / `E2B_DOMAIN`），差异仅在域名。消费方需要判定「是不是 E2B 语义
+（shell + 文件系统）」时**只认 `E2B_PROTOCOL_BACKENDS` 集合**，不得逐一列举后端名
+（历史教训：`SkillSandboxExecutor` 曾硬编码 `== baidu_cfc`，新增后端即漏判）。
 
 ### 配置键白名单（`SandboxConfigService._ALLOWED_CONFIG_KEYS`）
 
@@ -59,9 +67,27 @@ workflow_code:    (http_sandbox, tencent_scf, disabled)
 | --- | --- |
 | `baidu_cfc` | `template_alias`、`fallback_template_alias`、`profile`、`execute_timeout_seconds`、`sandbox_timeout_seconds`、`allow_local_exec` |
 | `e2b_cloud` | `template_alias`、`execute_timeout_seconds`、`sandbox_timeout_seconds` |
+| `aliyun_sandbox` | `template_alias`、`fallback_template_alias`、`execute_timeout_seconds`、`sandbox_timeout_seconds` |
 | `http_sandbox` | `endpoint`、`timeout_seconds`、`allow_local_exec` |
 | `tencent_scf` | `function_name`、`region`、`namespace`、`qualifier`、`timeout_seconds`、`allow_local_exec` |
 | `disabled` | （无） |
+
+### 阿里云智能体沙箱后端（`aliyun_sandbox`，2026-10-08 落地）
+
+产品为阿里云 **智能体沙箱（AgentBay）**——面向 AI Agent 的云端执行环境
+（代码空间 / 浏览器 / 云电脑 / 云手机），其代码执行面**兼容 E2B v1 协议**：
+
+- 端点：`api.<region>.sandbox.aliyuncs.com`（如 `api.cn-beijing.sandbox.aliyuncs.com`）；
+- 凭证：`E2B_API_KEY`（`e2b_` 前缀，在 AgentBay 控制台「服务管理」或经
+  `Sandbox` OpenAPI 的 `CreateApiKey` 创建）、`E2B_DOMAIN`（如 `cn-beijing.sandbox.aliyuncs.com`）；
+- 模板：平台预置 `base` 模板（`fc-e2b-registry.<region>.cr.aliyuncs.com/runtime/base`），
+  亦可用 `CreateTemplate` 自定义（公共运行时镜像直接使用不构建）；
+- 实现：**复用 `E2bProtocolSandboxBackend`**（与百度 CFC / 官方 E2B 同一实现），
+  无需任何新代码路径——这是 §7「沿主干延伸」的直接体现。
+
+> 关键版本约束：e2b 主包**固定在 2.40.0**（`requirements.txt`）。2.40.0 的沙箱创建走
+> v1 协议（`POST /sandboxes`）；更高版本改用 `/v2/sandboxes`，阿里云端未实现（405）。
+> 升级 e2b 前必须先在阿里云端验证 v2 端点。
 
 ### 腾讯云函数后端（`tencent_scf`，2026-10-08 落地）
 
@@ -186,7 +212,7 @@ Admin 端与全部消费方自动识别新后端（前端按 `overview.backends`
   - **子进程内 setrlimit（best-effort）**：CPU(`RLIMIT_CPU` 60s) / 地址空间(`RLIMIT_AS` 1 GiB) / 单文件(`RLIMIT_FSIZE` 64 MiB) / 进程数(`RLIMIT_NPROC` 512) / 句柄(`RLIMIT_NOFILE` 256) / 关闭 core dump。常量在 `skill_executor.py` 顶部（`_LOCAL_EXEC_*`），可调。由 runner 在子进程内应用，平台不支持或越权时**忽略而非失败**。
   - **最小化子进程 env**：不继承父进程完整环境，只传白名单（`PATH`/`LANG`/`LC_*`/`SSL_CERT_*`）+ 技能包 env（经 `Popen(env=...)` 注入，**不落盘**）。API 的密钥/连接串不会泄漏给第三方技能代码。
   - **不再污染父进程 `os.environ`**：移除旧的 `_apply_bundle_env` / `_restore_env`。
-- `BaiduCfcSandboxBackend` 不再往 `os.environ` 写凭证：改为 `_scoped_e2b_env()` 上下文管理器，在构造 e2b SDK 的作用域内临时注入并在退出时**严格还原**（原值不存在则删除），不泄漏到父进程。
+- `E2bProtocolSandboxBackend`（原 `BaiduCfcSandboxBackend`）不再往 `os.environ` 写凭证：改为 `_scoped_e2b_env()` 上下文管理器，在构造 e2b SDK 的作用域内临时注入并在退出时**严格还原**（原值不存在则删除），不泄漏到父进程。
 
 > **边界（务必明确）**：以上是**故障与资源围栏**，不是安全沙箱——它管资源/崩溃/超时，**管不了**读容器内可读文件、发起网络请求。真正的安全边界仍是远端沙箱（E2B/CFC 或 HTTP 执行服务）。`allow_local_exec` 应仅在无可信远端沙箱、且接受该风险时才开启。
 

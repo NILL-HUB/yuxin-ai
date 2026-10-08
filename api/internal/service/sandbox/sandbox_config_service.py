@@ -20,6 +20,7 @@ from sqlalchemy import true
 
 from internal.core.agent.backends.endpoint_utils import is_placeholder_endpoint
 from internal.core.agent.entities.sandbox_runtime_entity import (
+    BACKEND_ALIYUN_SANDBOX,
     BACKEND_BAIDU_CFC,
     BACKEND_DISABLED,
     BACKEND_E2B_CLOUD,
@@ -65,6 +66,12 @@ _ALLOWED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
         "execute_timeout_seconds",
         "sandbox_timeout_seconds",
     ),
+    BACKEND_ALIYUN_SANDBOX: (
+        "template_alias",
+        "fallback_template_alias",
+        "execute_timeout_seconds",
+        "sandbox_timeout_seconds",
+    ),
     BACKEND_HTTP_SANDBOX: ("endpoint", "timeout_seconds", "allow_local_exec"),
     BACKEND_TENCENT_SCF: (
         "function_name",
@@ -83,6 +90,8 @@ _ALLOWED_CREDENTIAL_KEYS: dict[str, tuple[str, ...]] = {
     # 百度 CFC 与官方 E2B 同走 E2B 协议，凭证相同（差异仅在域名取值）
     BACKEND_BAIDU_CFC: ("E2B_API_KEY", "E2B_DOMAIN"),
     BACKEND_E2B_CLOUD: ("E2B_API_KEY", "E2B_DOMAIN"),
+    # 阿里云智能体沙箱：API Key 为 e2b_ 前缀（AgentBay 控制台/OpenAPI 创建），域名为 cn-<region>.sandbox.aliyuncs.com
+    BACKEND_ALIYUN_SANDBOX: ("E2B_API_KEY", "E2B_DOMAIN"),
     BACKEND_HTTP_SANDBOX: (),
     # 腾讯云 SDK 直调：IAM 长期密钥 + 函数侧共享 token（纵深防御，函数已 fail-closed 校验）
     BACKEND_TENCENT_SCF: ("TENCENTCLOUD_SECRET_ID", "TENCENTCLOUD_SECRET_KEY", "SANDBOX_TOKEN"),
@@ -93,6 +102,7 @@ _ALLOWED_CREDENTIAL_KEYS: dict[str, tuple[str, ...]] = {
 _BACKEND_LABELS: dict[str, str] = {
     BACKEND_BAIDU_CFC: "百度 CFC 沙箱（E2B 协议）",
     BACKEND_E2B_CLOUD: "E2B 云沙箱",
+    BACKEND_ALIYUN_SANDBOX: "阿里云智能体沙箱（AgentBay）",
     BACKEND_HTTP_SANDBOX: "HTTP 远端执行服务",
     BACKEND_TENCENT_SCF: "腾讯云函数（SDK 直调）",
     BACKEND_DISABLED: "未开通",
@@ -111,6 +121,17 @@ _DEFAULT_CONFIGS: dict[tuple[str, str], dict] = {
         "template_alias": "code-interpreter-v1",
         "execute_timeout_seconds": 3600,
         "sandbox_timeout_seconds": 86400,
+    },
+    (CAPABILITY_CODE_INTERPRETER, BACKEND_ALIYUN_SANDBOX): {
+        "template_alias": "base",
+        "execute_timeout_seconds": 3600,
+        "sandbox_timeout_seconds": 86400,
+    },
+    (CAPABILITY_SKILL_EXEC, BACKEND_ALIYUN_SANDBOX): {
+        "template_alias": "base",
+        "execute_timeout_seconds": 60,
+        "sandbox_timeout_seconds": 300,
+        "allow_local_exec": False,
     },
     (CAPABILITY_SKILL_EXEC, BACKEND_HTTP_SANDBOX): {
         "timeout_seconds": 60,
@@ -501,7 +522,7 @@ class SandboxConfigService:
         """
         if backend == BACKEND_DISABLED:
             return False, _REASON_DISABLED
-        if backend in (BACKEND_BAIDU_CFC, BACKEND_E2B_CLOUD):
+        if backend in (BACKEND_BAIDU_CFC, BACKEND_E2B_CLOUD, BACKEND_ALIYUN_SANDBOX):
             has_credentials = bool(
                 str(credentials.get("E2B_API_KEY") or "").strip()
                 and str(credentials.get("E2B_DOMAIN") or "").strip()

@@ -10,6 +10,7 @@ export default {
   backends: {
     baidu_cfc: '百度 CFC 沙箱（E2B 协议）',
     e2b_cloud: 'E2B 云沙箱',
+    aliyun_sandbox: '阿里云智能体沙箱（AgentBay）',
     http_sandbox: 'HTTP 远端执行服务',
     tencent_scf: '腾讯云函数（SDK 直调）',
     disabled: '未开通',

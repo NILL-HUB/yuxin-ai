@@ -1,4 +1,4 @@
-from .baidu_cfc_sandbox_backend import BaiduCfcSandboxBackend
+from .e2b_protocol_sandbox_backend import E2bProtocolSandboxBackend
 from .endpoint_utils import is_placeholder_endpoint
 from .factory import (
     HttpSandboxHandle,
@@ -10,7 +10,7 @@ from .factory import (
 )
 
 __all__ = [
-    "BaiduCfcSandboxBackend",
+    "E2bProtocolSandboxBackend",
     "HttpSandboxHandle",
     "RemoteExecHandle",
     "TencentScfHandle",

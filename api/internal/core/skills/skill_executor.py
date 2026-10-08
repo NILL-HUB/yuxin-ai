@@ -22,10 +22,10 @@ from internal.core.agent.backends import (
 )
 from internal.core.agent.backends.endpoint_utils import is_placeholder_endpoint
 from internal.core.agent.entities.sandbox_runtime_entity import (
-    BACKEND_BAIDU_CFC,
     BACKEND_HTTP_SANDBOX,
     BACKEND_TENCENT_SCF,
     CAPABILITY_SKILL_EXEC,
+    E2B_PROTOCOL_BACKENDS,
 )
 from internal.core.agent.sandbox_runtime_registry import get_sandbox_runtime
 from internal.exception import FailException
@@ -325,7 +325,7 @@ class SkillSandboxExecutor:
     @property
     def is_configured(self) -> bool:
         runtime = self._runtime()
-        return runtime.enabled and runtime.backend == BACKEND_BAIDU_CFC
+        return runtime.enabled and runtime.backend in E2B_PROTOCOL_BACKENDS
 
     def _resolve_timeouts(self, runtime) -> int:
         """解析单次执行超时：显式覆盖优先，否则取配置中心。"""
@@ -335,12 +335,13 @@ class SkillSandboxExecutor:
 
     def execute_skill(self, payload: dict[str, Any]) -> Any:
         runtime = self._runtime()
-        if not (runtime.enabled and runtime.backend == BACKEND_BAIDU_CFC):
+        if not (runtime.enabled and runtime.backend in E2B_PROTOCOL_BACKENDS):
             if runtime.get_bool("allow_local_exec", False):
                 return self._execute_skill_locally(payload)
             raise FailException(
                 "技能沙箱不可用：请在 admin 沙箱配置中为 skill_exec 启用后端"
-                "（http_sandbox / baidu_cfc）；如需本地兜底执行请显式开启 allow_local_exec"
+                "（http_sandbox / tencent_scf / baidu_cfc / aliyun_sandbox）；"
+                "如需本地兜底执行请显式开启 allow_local_exec"
             )
 
         bundle = payload.get("bundle")
