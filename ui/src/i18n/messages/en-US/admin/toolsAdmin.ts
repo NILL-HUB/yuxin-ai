@@ -15,8 +15,6 @@ export default  {
       credentialProbeOk: 'All credentials present',
       credentialProbeMissing: 'Missing credentials: {keys}',
       credentialProbeFailed: 'Failed to check credentials',
-      credentialConfigured: 'Configured',
-      credentialEmpty: 'Not configured',
       credentialSourceDb: 'Admin config',
       credentialSourceEnv: 'Env var',
       credentialSourceNone: 'Not configured',

@@ -1,4 +1,15 @@
 export default  {
+    credential: {
+      configured: 'Configured',
+      empty: 'Not configured',
+      maskNone: '(none)',
+      replace: 'Replace',
+      fill: 'Set',
+      inputPlaceholder: 'Enter the credential value',
+      replacePlaceholder: 'Enter a new value to replace; clear + save removes this credential',
+      willUpdate: 'Updates on save',
+      willClear: 'Removed on save',
+    },
     actions: {
       cancel: 'Cancel',
       save: 'Save',

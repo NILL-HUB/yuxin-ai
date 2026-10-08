@@ -15,8 +15,6 @@ export default  {
       credentialProbeOk: '凭证齐备',
       credentialProbeMissing: '缺失凭证：{keys}',
       credentialProbeFailed: '检查凭证失败',
-      credentialConfigured: '已配置',
-      credentialEmpty: '未配置',
       credentialSourceDb: '后台配置',
       credentialSourceEnv: '环境变量',
       credentialSourceNone: '未配置',

@@ -157,6 +157,8 @@ backends/factory.build_sandbox_backend(runtime)  -> 后端句柄 / None
   - `POST /admin/sandbox/probe`：body `{capability}`，返回配置层可用性判定与原因
 - 权限：`sandbox:read` / `sandbox:update`（`api/internal/core/rbac.py` 的 `PERMISSION_CATALOG`；viewer 默认持有 `sandbox:read`）；映射在 `api/app/http/support.py` 的 `_admin_route_permission`
 - 前端：`ui/src/views/admin/AdminSandboxView.vue`（卡片式后端选择 + 激活 + 探测 + 配置键值编辑）；**保存仅同步单个卡片**（不整页重建，保留其它卡片未保存草稿与当前选择），保存非激活后端时提示需「设为激活」才生效；`ui/src/services/admin-sandbox.ts`、`ui/src/models/admin-sandbox.ts`、`ui/src/i18n/messages/{zh-CN,en-US}/admin/sandbox.ts`；菜单在 `AdminLayout.vue` 系统配置组
+- 凭证行展示（与内置工具凭证页共用 `ui/src/components/admin/CredentialFieldRow.vue`）：**未编辑时只展示「已配置 + 掩码」+ 替换/填写按钮**，点按钮才出现输入框（占位提示「留空并保存 = 删除该键」），编辑中可取消；只提交被编辑过的键。
+  > 历史观感问题（2026-10-08 反馈）：掩码此前只作为空输入框的 placeholder → 「有值却看着是空框」。两页共用同一行渲染，避免再次各写一套漂移。
 
 ## 5. 热切换语义
 

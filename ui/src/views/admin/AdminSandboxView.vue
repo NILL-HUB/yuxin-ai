@@ -12,6 +12,8 @@ import {
 import type { SandboxCapabilityOverview, SandboxConfigItem } from '@/models/admin-sandbox'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
+import AppTag from '@/components/AppTag.vue'
+import CredentialFieldRow from '@/components/admin/CredentialFieldRow.vue'
 
 const { t } = useI18n()
 const adminStore = useAdminStore()
@@ -34,6 +36,12 @@ const credentialMeta = ref<Record<string, CredentialMeta>>({})
 const credentialDrafts = ref<Record<string, Record<string, string>>>({})
 /** 已编辑过的凭证键：`${capability}::${backend}::${key}`（只提交被编辑项，避免误清空） */
 const credentialTouched = ref<Set<string>>(new Set())
+/**
+ * 正在编辑的凭证键：`${capability}::${backend}::${key}`。
+ * 未编辑时只展示「已配置 + 掩码」状态，避免出现「有值却是空输入框」的迷惑观感
+ * （掩码此前只作为 placeholder，看起来就是空的）；点「替换 / 填写」才出现输入框。
+ */
+const credentialEditing = ref<Set<string>>(new Set())
 
 const canUpdate = computed(() => adminStore.hasPermission('sandbox:update'))
 
@@ -58,8 +66,13 @@ const applyRowState = (row: SandboxConfigItem) => {
   credentialMeta.value[rowKey] = { keys: credentialKeys, masked: row.credentials || {} }
   credentialDrafts.value[rowKey] = toCredentialDraft(credentialKeys)
   const touched = new Set(credentialTouched.value)
-  for (const key of credentialKeys) touched.delete(`${rowKey}::${key}`)
+  const editing = new Set(credentialEditing.value)
+  for (const key of credentialKeys) {
+    touched.delete(`${rowKey}::${key}`)
+    editing.delete(`${rowKey}::${key}`)
+  }
   credentialTouched.value = touched
+  credentialEditing.value = editing
 }
 
 /** 仅刷新各能力域概览（激活态 / 可用性 / 原因），不动草稿与用户选择。 */
@@ -91,16 +104,45 @@ const currentDraft = (capability: string) => {
 const currentCredentialKeys = (capability: string) =>
   credentialMeta.value[draftKeyOf(capability)]?.keys || []
 
-const credentialPlaceholder = (capability: string, key: string) => {
-  const masked = credentialMeta.value[draftKeyOf(capability)]?.masked?.[key]
-  return masked || t('admin.sandbox.credentialEmpty')
+const credentialId = (capability: string, key: string) => `${draftKeyOf(capability)}::${key}`
+
+/** 已配置的凭证掩码（后端只回掩码，绝不回明文）；空串表示该键尚未配置。 */
+const credentialMask = (capability: string, key: string) =>
+  credentialMeta.value[draftKeyOf(capability)]?.masked?.[key] || ''
+
+const isCredentialConfigured = (capability: string, key: string) =>
+  Boolean(credentialMask(capability, key))
+
+const isCredentialEditing = (capability: string, key: string) =>
+  credentialEditing.value.has(credentialId(capability, key))
+
+const isCredentialTouched = (capability: string, key: string) =>
+  credentialTouched.value.has(credentialId(capability, key))
+
+const startCredentialEdit = (capability: string, key: string) => {
+  const editing = new Set(credentialEditing.value)
+  editing.add(credentialId(capability, key))
+  credentialEditing.value = editing
+}
+
+/** 取消编辑：丢弃草稿并撤销 touched（避免把「没打算改」的键提交成清空）。 */
+const cancelCredentialEdit = (capability: string, key: string) => {
+  const editing = new Set(credentialEditing.value)
+  editing.delete(credentialId(capability, key))
+  credentialEditing.value = editing
+  const rowKey = draftKeyOf(capability)
+  if (credentialDrafts.value[rowKey]) credentialDrafts.value[rowKey][key] = ''
+  const touched = new Set(credentialTouched.value)
+  touched.delete(credentialId(capability, key))
+  credentialTouched.value = touched
 }
 
 const onCredentialInput = (capability: string, key: string, value: string) => {
   const rowKey = draftKeyOf(capability)
   if (!credentialDrafts.value[rowKey]) credentialDrafts.value[rowKey] = {}
   credentialDrafts.value[rowKey][key] = value ?? ''
-  credentialTouched.value.add(`${rowKey}::${key}`)
+  credentialTouched.value.add(credentialId(capability, key))
+  startCredentialEdit(capability, key)
 }
 
 const loadAll = async () => {
@@ -182,7 +224,7 @@ const saveConfig = async (capability: string) => {
   // 仅提交**被编辑过**的凭证键（含显式清空的空值），避免误清空未触碰的既有凭证
   const credentials: Record<string, string> = {}
   for (const key of Object.keys(credentialDrafts.value[rowKey] || {})) {
-    if (credentialTouched.value.has(`${rowKey}::${key}`)) {
+    if (credentialTouched.value.has(credentialId(capability, key))) {
       credentials[key] = credentialDrafts.value[rowKey][key] || ''
     }
   }
@@ -245,9 +287,9 @@ onMounted(loadAll)
       <template #title>
         <div class="flex items-center gap-3">
           <span>{{ capabilityLabel(item.capability) }}</span>
-          <a-tag :color="item.enabled ? 'green' : 'red'">
+          <AppTag :variant="item.enabled ? 'success' : 'danger'">
             {{ item.enabled ? t('admin.sandbox.statusEnabled') : t('admin.sandbox.statusDisabled') }}
-          </a-tag>
+          </AppTag>
         </div>
       </template>
 
@@ -336,21 +378,21 @@ onMounted(loadAll)
           <div v-if="!currentCredentialKeys(item.capability).length" class="text-xs text-gray-400">
             {{ t('admin.sandbox.noCredentialKeys') }}
           </div>
-          <div
+          <CredentialFieldRow
             v-for="key in currentCredentialKeys(item.capability)"
             :key="key"
-            class="flex items-center gap-2 mb-2"
-          >
-            <span class="w-48 font-mono text-xs text-gray-600">{{ key }}</span>
-            <a-input
-              :model-value="credentialDrafts[draftKeyOf(item.capability)]?.[key] || ''"
-              :disabled="!canUpdate"
-              :placeholder="credentialPlaceholder(item.capability, key)"
-              class="w-72"
-              allow-clear
-              @update:model-value="(v: string) => onCredentialInput(item.capability, key, v)"
-            />
-          </div>
+            :label="key"
+            :configured="isCredentialConfigured(item.capability, key)"
+            :mask="credentialMask(item.capability, key)"
+            :editing="isCredentialEditing(item.capability, key)"
+            :draft="credentialDrafts[draftKeyOf(item.capability)]?.[key] || ''"
+            :touched="isCredentialTouched(item.capability, key)"
+            :disabled="!canUpdate"
+            class="mb-2"
+            @start-edit="startCredentialEdit(item.capability, key)"
+            @cancel-edit="cancelCredentialEdit(item.capability, key)"
+            @update:value="(value: string) => onCredentialInput(item.capability, key, value)"
+          />
         </div>
       </div>
     </a-card>

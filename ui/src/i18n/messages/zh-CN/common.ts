@@ -1,4 +1,15 @@
 export default  {
+    credential: {
+      configured: '已配置',
+      empty: '未配置',
+      maskNone: '（无）',
+      replace: '替换',
+      fill: '填写',
+      inputPlaceholder: '请输入凭证值',
+      replacePlaceholder: '输入新值以替换；留空并保存表示删除该凭证',
+      willUpdate: '保存后更新',
+      willClear: '保存后删除',
+    },
     actions: {
       cancel: '取消',
       save: '保存',

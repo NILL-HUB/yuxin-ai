@@ -25,9 +25,8 @@ export default {
   configTitle: 'Config',
   credentialTitle: 'Credentials',
   credentialHint:
-    'Keys for this backend (key = env var name). Stored values are encrypted and shown masked; clearing a field and saving removes that key. Runtime precedence: configured here > environment variable.',
+    'Keys for this backend (key = env var name). Values are stored encrypted and only shown masked; the input appears after clicking "Replace / Set", and clearing it then saving removes the key. Runtime precedence: configured here > environment variable.',
   noCredentialKeys: 'This backend needs no credentials',
-  credentialEmpty: 'Not configured',
   saveConfig: 'Save config',
   saveSuccess: 'Config saved',
   saveSuccessNotActivated:

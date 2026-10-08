@@ -107,6 +107,8 @@ export type MembershipPlan = {
 export type Membership = {
   id: string
   status: string
+  /** 服务端生效判定（status=active 且未过期）：身份标识据此回落「免费用户」。 */
+  is_active: boolean
   started_at: number | null
   expires_at: number | null
   source: string

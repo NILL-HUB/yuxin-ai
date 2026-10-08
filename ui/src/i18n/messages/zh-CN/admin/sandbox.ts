@@ -25,9 +25,8 @@ export default {
   configTitle: '配置项',
   credentialTitle: '凭证',
   credentialHint:
-    '该后端的密钥（键为环境变量名）。已配置的值加密存储、仅显示掩码；留空并保存表示清除该键。运行时读取优先级：此处配置 > 环境变量。',
+    '该后端的密钥（键为环境变量名）。值加密入库、仅显示掩码；点「替换 / 填写」后才出现输入框，清空并保存表示删除该键。运行时读取优先级：此处配置 > 环境变量。',
   noCredentialKeys: '该后端无需配置凭证',
-  credentialEmpty: '未配置',
   saveConfig: '保存配置',
   saveSuccess: '配置已保存',
   saveSuccessNotActivated: '配置已保存；该后端尚未激活，点击「设为激活」后才会生效',

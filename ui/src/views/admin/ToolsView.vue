@@ -17,6 +17,7 @@ import {
   updateBuiltinToolCredential,
 } from '@/services/admin-tools'
 import type { BuiltinCredentialProvider } from '@/services/admin-tools'
+import CredentialFieldRow from '@/components/admin/CredentialFieldRow.vue'
 import type { CreateApiToolProviderRequest, UpdateApiToolProviderRequest } from '@/models/api-tool'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
@@ -390,8 +391,30 @@ const credentialProviders = ref<BuiltinCredentialProvider[]>([])
 const credentialDrafts = ref<Record<string, Record<string, string>>>({})
 const credentialTouched = ref<Set<string>>(new Set())
 const credentialSaving = ref<Set<string>>(new Set())
+/** 正在编辑的凭证键：未编辑时只展示「已配置 + 掩码」，避免出现空输入框（同沙箱页口径） */
+const credentialEditing = ref<Set<string>>(new Set())
 
 const credentialTouchKey = (provider: string, key: string) => `${provider}::${key}`
+
+const isCredentialEditing = (provider: string, key: string) =>
+  credentialEditing.value.has(credentialTouchKey(provider, key))
+
+const startCredentialEdit = (provider: string, key: string) => {
+  const editing = new Set(credentialEditing.value)
+  editing.add(credentialTouchKey(provider, key))
+  credentialEditing.value = editing
+}
+
+/** 取消编辑：丢弃草稿并撤销 touched（避免把「没打算改」的键提交成清空）。 */
+const cancelCredentialEdit = (provider: string, key: string) => {
+  const editing = new Set(credentialEditing.value)
+  editing.delete(credentialTouchKey(provider, key))
+  credentialEditing.value = editing
+  if (credentialDrafts.value[provider]) credentialDrafts.value[provider][key] = ''
+  const touched = new Set(credentialTouched.value)
+  touched.delete(credentialTouchKey(provider, key))
+  credentialTouched.value = touched
+}
 
 const loadCredentialProviders = async () => {
   credentialLoading.value = true
@@ -405,6 +428,7 @@ const loadCredentialProviders = async () => {
     }
     credentialDrafts.value = drafts
     credentialTouched.value = new Set()
+    credentialEditing.value = new Set()
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.toolsAdmin.credentialLoadFailed')))
   } finally {
@@ -416,6 +440,7 @@ const onCredentialInput = (provider: string, key: string, value: string) => {
   if (!credentialDrafts.value[provider]) credentialDrafts.value[provider] = {}
   credentialDrafts.value[provider][key] = value ?? ''
   credentialTouched.value.add(credentialTouchKey(provider, key))
+  startCredentialEdit(provider, key)
 }
 
 const handleSaveCredential = async (provider: string) => {
@@ -815,43 +840,27 @@ onMounted(() => {
                   </div>
                 </div>
                 <div class="space-y-2">
-                  <div
+                  <CredentialFieldRow
                     v-for="item in provider.keys"
                     :key="item.key"
-                    class="flex items-center gap-3 flex-wrap"
-                  >
-                    <div class="w-72 shrink-0 font-mono text-xs text-gray-600">
-                      {{ item.key }}
-                    </div>
-                    <a-input
-                      :model-value="credentialDrafts[provider.provider]?.[item.key] || ''"
-                      :placeholder="
-                        item.configured
-                          ? item.masked || t('admin.toolsAdmin.credentialConfigured')
-                          : t('admin.toolsAdmin.credentialEmpty')
-                      "
-                      size="small"
-                      allow-clear
-                      class="!w-80"
-                      @update:model-value="
-                        (v: string) => onCredentialInput(provider.provider, item.key, v)
-                      "
-                    />
-                    <a-tag
-                      size="small"
-                      :color="
-                        item.source === 'db' ? 'green' : item.source === 'env' ? 'arcoblue' : 'gray'
-                      "
-                    >
-                      {{
-                        item.source === 'db'
-                          ? t('admin.toolsAdmin.credentialSourceDb')
-                          : item.source === 'env'
-                            ? t('admin.toolsAdmin.credentialSourceEnv')
-                            : t('admin.toolsAdmin.credentialSourceNone')
-                      }}
-                    </a-tag>
-                  </div>
+                    :label="item.key"
+                    :configured="item.configured"
+                    :mask="item.masked"
+                    :editing="isCredentialEditing(provider.provider, item.key)"
+                    :draft="credentialDrafts[provider.provider]?.[item.key] || ''"
+                    :touched="credentialTouched.has(credentialTouchKey(provider.provider, item.key))"
+                    :source="item.source"
+                    :source-label="
+                      item.source === 'db'
+                        ? t('admin.toolsAdmin.credentialSourceDb')
+                        : item.source === 'env'
+                          ? t('admin.toolsAdmin.credentialSourceEnv')
+                          : t('admin.toolsAdmin.credentialSourceNone')
+                    "
+                    @start-edit="startCredentialEdit(provider.provider, item.key)"
+                    @cancel-edit="cancelCredentialEdit(provider.provider, item.key)"
+                    @update:value="(value: string) => onCredentialInput(provider.provider, item.key, value)"
+                  />
                 </div>
               </a-card>
             </div>

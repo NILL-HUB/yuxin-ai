@@ -50,7 +50,7 @@ const buttonStub = {
 const inputStub = {
   props: ['modelValue', 'placeholder', 'disabled'],
   emits: ['update:modelValue'],
-  template: '<input :value="modelValue" />',
+  template: '<input :value="modelValue" :placeholder="placeholder" />',
 }
 const tagStub = { template: '<span class="arco-tag"><slot /></span>' }
 const radioGroupStub = {
@@ -74,6 +74,17 @@ const overviewItem = (capability: string, activeBackend: string) => ({
   ],
 })
 
+/** 一行带凭证掩码的配置（E2B_API_KEY 已配置、E2B_DOMAIN 未配置）。 */
+const credentialRow = (capability: string, backend: string) => ({
+  capability,
+  backend,
+  label: backend,
+  configs: {},
+  is_active: true,
+  credentials: { E2B_API_KEY: 'e2b_****b262' },
+  credential_keys: ['E2B_API_KEY', 'E2B_DOMAIN'],
+})
+
 const configRow = (capability: string, backend: string) => ({
   capability,
   backend,
@@ -88,7 +99,12 @@ const configRow = (capability: string, backend: string) => ({
 type SandboxViewVm = {
   selectedBackend: Record<string, string>
   drafts: Record<string, { key: string; value: string }[]>
+  credentialEditing: Set<string>
+  credentialTouched: Set<string>
   selectBackend: (capability: string, backend: string) => void
+  startCredentialEdit: (capability: string, key: string) => void
+  cancelCredentialEdit: (capability: string, key: string) => void
+  onCredentialInput: (capability: string, key: string, value: string) => void
 }
 
 const renderView = async () => {
@@ -111,6 +127,34 @@ const renderView = async () => {
   })
   mocks.activateSandboxBackend.mockResolvedValue({
     data: { item: configRow('skill_exec', 'baidu_cfc') },
+  })
+
+  const wrapper = mount(AdminSandboxView, {
+    global: {
+      stubs: {
+        'a-card': cardStub,
+        'a-button': buttonStub,
+        'a-input': inputStub,
+        'a-tag': tagStub,
+        'a-radio-group': radioGroupStub,
+        'a-radio': radioStub,
+      },
+    },
+  })
+  await flushPromises()
+  return wrapper
+}
+
+/** 渲染「凭证已配置」场景：code_interpreter 的激活后端带掩码凭证。 */
+const renderWithCredentials = async () => {
+  mocks.getSandboxOverview.mockResolvedValue({
+    data: { items: [overviewItem('code_interpreter', 'baidu_cfc')] },
+  })
+  mocks.listSandboxConfigs.mockResolvedValue({
+    data: { items: [credentialRow('code_interpreter', 'baidu_cfc')] },
+  })
+  mocks.updateSandboxConfig.mockResolvedValue({
+    data: { item: credentialRow('code_interpreter', 'baidu_cfc') },
   })
 
   const wrapper = mount(AdminSandboxView, {
@@ -214,5 +258,87 @@ describe('AdminSandboxView', () => {
     expect(vm.selectedBackend.skill_exec).toBe('baidu_cfc')
     expect(vm.drafts['code_interpreter::baidu_cfc']).toEqual([{ key: 'profile', value: 'lite' }])
     expect(mocks.messageSuccess).toHaveBeenCalledWith('admin.sandbox.activateSuccess')
+  })
+
+  // ── 凭证展示：已配置的值必须**可见**（掩码），不能是空输入框 ──────────────
+
+  it('shows status tag and mask for configured credentials instead of an empty input', async () => {
+    const wrapper = await renderWithCredentials()
+
+    expect(wrapper.text()).toContain('common.credential.configured')
+    expect(wrapper.text()).toContain('e2b_****b262') // 掩码可见（不再只当 placeholder）
+    expect(wrapper.text()).toContain('common.credential.empty') // 未配置键的状态
+    // 未编辑时不该渲染输入框：出现空框正是本次要修掉的迷惑观感
+    expect(wrapper.findAll('input')).toHaveLength(0)
+    expect(wrapper.text()).toContain('common.credential.replace')
+    expect(wrapper.text()).toContain('common.credential.fill')
+  })
+
+  it('reveals the input only after clicking replace, with clear semantics', async () => {
+    const wrapper = await renderWithCredentials()
+
+    await clickButtonByText(wrapper, 'common.credential.replace')
+
+    const inputs = wrapper.findAll('input')
+    expect(inputs).toHaveLength(1)
+    // 已配置键：placeholder 说明「输入新值以替换；留空并保存表示删除」
+    expect(inputs[0].attributes('placeholder')).toBe('common.credential.replacePlaceholder')
+
+    await clickButtonByText(wrapper, 'common.credential.fill')
+    const placeholders = wrapper.findAll('input').map((input) => input.attributes('placeholder'))
+    expect(placeholders).toContain('common.credential.inputPlaceholder')
+  })
+
+  it('submits only the touched credential key on save', async () => {
+    const wrapper = await renderWithCredentials()
+    const vm = vmOf(wrapper)
+
+    vm.onCredentialInput('code_interpreter', 'E2B_API_KEY', 'new-key-value')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('common.credential.willUpdate')
+
+    await clickButtonByText(wrapper, 'admin.sandbox.saveConfig')
+
+    expect(mocks.updateSandboxConfig).toHaveBeenCalledWith(
+      'code_interpreter',
+      'baidu_cfc',
+      {},
+      { E2B_API_KEY: 'new-key-value' },
+    )
+    // 保存后回到「状态 + 掩码」展示态
+    expect(vm.credentialEditing.size).toBe(0)
+    expect(vm.credentialTouched.size).toBe(0)
+  })
+
+  it('clearing a configured credential submits an empty value (removal semantics)', async () => {
+    const wrapper = await renderWithCredentials()
+    const vm = vmOf(wrapper)
+
+    vm.onCredentialInput('code_interpreter', 'E2B_API_KEY', '')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('common.credential.willClear')
+
+    await clickButtonByText(wrapper, 'admin.sandbox.saveConfig')
+
+    expect(mocks.updateSandboxConfig).toHaveBeenCalledWith(
+      'code_interpreter',
+      'baidu_cfc',
+      {},
+      { E2B_API_KEY: '' },
+    )
+  })
+
+  it('cancelling an edit discards the draft so nothing is submitted', async () => {
+    const wrapper = await renderWithCredentials()
+    const vm = vmOf(wrapper)
+
+    vm.onCredentialInput('code_interpreter', 'E2B_API_KEY', 'typo-value')
+    vm.cancelCredentialEdit('code_interpreter', 'E2B_API_KEY')
+    await wrapper.vm.$nextTick()
+
+    await clickButtonByText(wrapper, 'admin.sandbox.saveConfig')
+
+    expect(mocks.updateSandboxConfig).toHaveBeenCalledWith('code_interpreter', 'baidu_cfc', {}, {})
+    expect(wrapper.findAll('input')).toHaveLength(0)
   })
 })
