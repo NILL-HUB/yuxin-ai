@@ -127,4 +127,4 @@ async def _a2a_message_stream(service, req_id, params):
         payload = {"task": task}
         yield f"event: message\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    return Response(_stream(), mimetype="text/event-stream")
+    return _support._sse_stream_response(_stream())

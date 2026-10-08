@@ -65,13 +65,8 @@ def register_routes(quart_app):
             )
         except Exception:
             logger.exception("async SSE 上下文加载失败: app_id=%s", app_id)
-            return Response(
-                b'event: error\ndata:{"error":"context_load_failed"}\n\n',
-                mimetype="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                },
+            return _support._sse_stream_response(
+                b'event: error\ndata:{"error":"context_load_failed"}\n\n'
             )
 
         async def generate():
@@ -95,12 +90,4 @@ def register_routes(quart_app):
                 logger.exception("async SSE 流执行失败: app_id=%s", app_id)
                 yield b'event: error\ndata:{"error":"internal_error"}\n\n'
 
-        return Response(
-            generate(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
+        return _support._sse_stream_response(generate())

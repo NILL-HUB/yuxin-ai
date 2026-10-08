@@ -243,14 +243,26 @@ def _sse_response(generator):
             except Exception:
                 pass
 
-    sse_response = Response(_stream(), mimetype="text/event-stream")
-    sse_response.headers["Cache-Control"] = "no-cache"
-    # 不显式设置 Connection: HTTP/1.1 默认持久连接，显式写死 "keep-alive" 会与
-    # 请求端（如显式 Connection: close 的客户端）冲突，导致 uvicorn 在结束响应时
-    # 不回写分块终止符（0\r\n\r\n），客户端报 "incomplete chunked read"，服务端
-    # 报 "ASGI callable returned without completing response"。交由传输层按请求决定。
-    sse_response.headers["X-Accel-Buffering"] = "no"
-    return sse_response
+    return _sse_stream_response(_stream())
+
+
+def _sse_stream_response(iterator):
+    """构造 SSE 流式响应（全部 SSE 出口的唯一构造入口）。
+
+    ⚠️ `timeout = None` 必须保留：Quart 的 RESPONSE_TIMEOUT 默认 60s，超时会在
+    写出 chunked 终止符**之前**掐断响应——客户端读到截断流（http.client 抛
+    IncompleteRead），服务端报 "ASGI callable returned without completing
+    response"。长对话/深度思考单帧可远超 60s（SSE_MAX_FRAME_SECONDS=1800），
+    故响应级超时必须关闭，流的活性与终止由生成器侧（心跳 + 单帧兜底）负责。
+
+    不显式设置 Connection：HTTP/1.1 默认持久连接，写死 "keep-alive" 会与显式
+    声明 Connection: close 的客户端冲突，交由传输层按请求决定。
+    """
+    response = Response(iterator, mimetype="text/event-stream")
+    response.timeout = None
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 async def _resolve_account(account_id_override: str | None = None):
@@ -766,11 +778,14 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     if _admin_match(segments, ("admin", "payment-configs")):
         return "payment_config:read" if method == "GET" else "payment_config:manage"
     # 邮件/短信发送配置、桌面客户端连接配置、桌面端更新检查、全局控制配置（系统配置域）。
-    if _admin_match(segments, ("admin", "mail-config")) or _admin_match(
-        segments, ("admin", "sms-config")
-    ) or _admin_match(segments, ("admin", "desktop-client-config")) or _admin_match(
-        segments, ("admin", "desktop-update")
-    ) or _admin_match(segments, ("admin", "global-control-config")):
+    if (
+        _admin_match(segments, ("admin", "mail-config"))
+        or _admin_match(segments, ("admin", "sms-config"))
+        or _admin_match(segments, ("admin", "desktop-client-config"))
+        or _admin_match(segments, ("admin", "desktop-update"))
+        or _admin_match(segments, ("admin", "push-config"))
+        or _admin_match(segments, ("admin", "global-control-config"))
+    ):
         return "system_config:manage"
 
     return None
@@ -782,7 +797,8 @@ def _admin_route_permission(method: str, path: str) -> str | None:
 _USER_API_BLOCKED_PREFIXES = (
     "/admin",
     "/memory/write",
-    "/memory/retrieve",
+    # /memory/retrieve 已放行：检索的是"用户自己的记忆"（owner 由 JWT 主体强制，
+    # 越权账号会被 403），用户记忆页需要它做召回测试；写与健康检查仍仅管理员可用。
     "/memory/health",
     "/analysis/",
     "/tags",
