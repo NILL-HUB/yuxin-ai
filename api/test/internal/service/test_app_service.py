@@ -11,6 +11,7 @@ from test.context import TestApp
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.app_entity import AppConfigType, AppStatus
 from internal.entity.conversation_entity import InvokeFrom
+from internal.entity.memory_recall_entity import MemoryRecallOutcome
 from internal.entity.audio_entity import ALLOWED_AUDIO_VOICES
 from internal.core.language_model.entities.model_entity import ModelParameterType
 from internal.exception import FailException, ForbiddenException, NotFoundException, ValidateErrorException
@@ -1928,7 +1929,7 @@ class TestAppService:
         )
         monkeypatch.setattr(
             "internal.service.app_debug_service.recall_user_memory_for_chat",
-            lambda **_kwargs: "用户偏好简洁回答",
+            lambda **_kwargs: MemoryRecallOutcome(text="用户偏好简洁回答"),
         )
 
         def _capture_stream(**kwargs):

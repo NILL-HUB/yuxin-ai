@@ -57,6 +57,40 @@ def _neo4j_to_json_safe(value):
     return value
 
 
+async def _memory_confirmation_decision(confirmation_id: str, *, approve: bool):
+    """机密记忆读取确认的批准/拒绝（两个端点共用；避免两处各写一套判定）。
+
+    主体键由 JWT 强制（``MemoryOwnerKey.for_user``）：确认记录只对发起者可见，
+    越权或过期一律 404（不泄露"存在但不属于你"）。
+    """
+    from app.http import asgi_app as a
+
+    account, err = await a._resolve_account()
+    if err is not None:
+        return err
+
+    from internal.entity.memory_owner_entity import MemoryOwnerKey
+    from internal.exception import NotFoundException
+    from internal.service.memory.read_confirmation_service import (
+        MemoryReadConfirmationService,
+    )
+
+    owner_key = MemoryOwnerKey.for_user(account.id).to_key()
+
+    def _run():
+        service = a._get_service(MemoryReadConfirmationService)
+        if approve:
+            service.confirm(confirmation_id, owner_key=owner_key)
+        else:
+            service.cancel(confirmation_id, owner_key=owner_key)
+        return service.get(confirmation_id, owner_key=owner_key)
+
+    try:
+        return a._ok(await a._to_thread(_run))
+    except NotFoundException as exc:
+        return a._json_resp(code="not_found", message=str(exc), status=404)
+
+
 def register_routes(quart_app):
     global _registered
     if _registered:
@@ -264,15 +298,27 @@ def register_routes(quart_app):
         top_k = _to_int(payload.get("top_k"), 20)
         time_range_days = payload.get("time_range_days")
         budget_tokens = _to_int(payload.get("budget_tokens"), 2000)
+        # 可选：显式限定视图子集（PREDEFINED_VIEWS 的键）。缺省为空 = 不限视图，
+        # 保持"召回测试"探针语义（便于排查"为什么没召回 X"）；
+        # 对话召回（用户侧 / admin 侧）则由 PolicyRouter 按意图自动限定视图。
+        raw_view_names = payload.get("view_names")
+        view_names = (
+            [str(v).strip() for v in raw_view_names if str(v).strip()]
+            if isinstance(raw_view_names, list)
+            else []
+        )
 
         owner_key = MemoryOwnerKey.for_user(account.id).to_key()
         options = RetrievalOptions(
             top_k=top_k,
             time_range_days=time_range_days,
             budget_tokens=budget_tokens,
+            view_names=view_names,
         )
 
         retriever = MemoryRetriever(digest_manager=a._get_service(DigestManager))
+        # 意图分类（规则通道，不调 LLM）：回填响应的 intent 字段
+        route = await a._to_thread(retriever.route_policy, query, owner_key)
         results = await a._to_thread(retriever.retrieve, query, owner_key, options)
 
         summary = None
@@ -296,11 +342,48 @@ def register_routes(quart_app):
                 for r in results
             ],
             "summary": summary,
-            "intent": "",
+            "intent": route.intent,
             "retrieval_path": retrieval_path,
             "latency_ms": round(0.0, 2),
         })
         return a._ok(resp_data)
+
+    @quart_app.get("/memory/confirmations/<string:confirmation_id>")
+    async def memory_confirmation_detail(confirmation_id):
+        """读取机密记忆确认详情（确认卡片用；主体键由 JWT 强制，越权一律 404）。"""
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+        from internal.exception import NotFoundException
+        from internal.service.memory.read_confirmation_service import (
+            MemoryReadConfirmationService,
+        )
+
+        owner_key = MemoryOwnerKey.for_user(account.id).to_key()
+
+        def _run():
+            return a._get_service(MemoryReadConfirmationService).get(
+                confirmation_id, owner_key=owner_key
+            )
+
+        try:
+            return a._ok(await a._to_thread(_run))
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+
+    @quart_app.post("/memory/confirmations/<string:confirmation_id>/confirm")
+    async def memory_confirmation_confirm(confirmation_id):
+        """允许读取：授权在 TTL 内生效，之后同一批机密记忆可直接注入对话。"""
+        return await _memory_confirmation_decision(confirmation_id, approve=True)
+
+    @quart_app.post("/memory/confirmations/<string:confirmation_id>/cancel")
+    async def memory_confirmation_cancel(confirmation_id):
+        """拒绝读取：不写入任何授权，记录置 cancelled。"""
+        return await _memory_confirmation_decision(confirmation_id, approve=False)
 
     @quart_app.get("/memory/digest/<string:user_id>")
     async def memory_digest(user_id):

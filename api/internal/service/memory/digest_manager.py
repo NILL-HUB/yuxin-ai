@@ -241,6 +241,7 @@ class DigestManager:
             MATCH (e:Episode)
             WHERE {owner.neo4j_filter_condition("e")}
               AND e.explicit_category IS NOT NULL
+              AND coalesce(e.sensitivity, 'normal') <> 'confidential'
               AND e.t_invalidated_at IS NULL
               AND (e.status IS NULL OR NOT (e.status IN ['superseded', 'deprecated']))
             RETURN e.explicit_category AS category,
@@ -590,6 +591,7 @@ class DigestManager:
             MATCH (e:Episode)
             WHERE {owner.neo4j_filter_condition("e")}
               AND (e.storage_tier IS NULL OR e.storage_tier IN ['hot', 'warm'])
+              AND coalesce(e.sensitivity, 'normal') <> 'confidential'
             RETURN e.summary AS summary, e.content AS content, e.created_at AS created_at
             ORDER BY e.created_at DESC
             LIMIT $limit
@@ -744,6 +746,9 @@ class DigestManager:
             tasks=tasks,
             themes=themes,
         )
+        # 机密记忆（身份证/手机号/密码等）不进入摘要：摘要会被注入对话与展示页，
+        # 属于"无确认即读取"的路径，按敏感度分级必须排除。
+        text = text + chr(10) + chr(10) + "> 机密记忆（身份证/手机号/银行卡/密码/验证码/密钥等）不进入摘要，需在对话中确认后读取。"
 
         # 可选：调用 LLM 精炼（探针检测到死机或异常时使用模板结果）
         from internal.service.memory.llm_activity_probe import (

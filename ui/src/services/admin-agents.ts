@@ -2,6 +2,7 @@
 // 管理端 Agent（Agent 治理）API 封装。
 // 端点契约见 docs/api/admin-agents-api.md 与 api/app/http/admin_routes_7.py。
 import { get, post, patch, del, ssePost } from '@/utils/request'
+import type { MemoryConfirmation } from '@/models/memory-confirmation'
 
 type Envelope<T = unknown> = { code: string; message: string; data: T }
 
@@ -190,5 +191,37 @@ export async function gdprDeleteMemory(payload: {
   agent_id?: string
 }): Promise<{ owner_key: string; stats: Record<string, unknown> }> {
   const res = await post<Envelope<{ owner_key: string; stats: Record<string, unknown> }>>('/admin/memory/gdpr-delete', { body: payload })
+  return res.data
+}
+
+// ---------- 机密记忆读取确认（管理端 Agent 对话卡片） ----------
+
+export async function getAgentMemoryConfirmation(
+  agentId: string,
+  confirmationId: string,
+): Promise<MemoryConfirmation> {
+  const res = await get<Envelope<MemoryConfirmation>>(
+    `/admin/agents/${agentId}/memory/confirmations/${confirmationId}`,
+  )
+  return res.data
+}
+
+export async function confirmAgentMemoryConfirmation(
+  agentId: string,
+  confirmationId: string,
+): Promise<MemoryConfirmation> {
+  const res = await post<Envelope<MemoryConfirmation>>(
+    `/admin/agents/${agentId}/memory/confirmations/${confirmationId}/confirm`,
+  )
+  return res.data
+}
+
+export async function cancelAgentMemoryConfirmation(
+  agentId: string,
+  confirmationId: string,
+): Promise<MemoryConfirmation> {
+  const res = await post<Envelope<MemoryConfirmation>>(
+    `/admin/agents/${agentId}/memory/confirmations/${confirmationId}/cancel`,
+  )
   return res.data
 }

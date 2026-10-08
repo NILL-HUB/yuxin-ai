@@ -449,7 +449,7 @@ v5.2 修复了 3 个设计与实现之间的断裂点：
   不足时走 System 2（MemoryRetriever：Neo4j BM25 + pgvector + 图扩展），命中内容
   拼接注入。
 - **降级策略**：记忆引擎关闭（`memory_engine_enabled=false`）、Neo4j/pgvector/
-  Redis 不可用或检索超时（默认 1.2s）均静默返回空串——记忆读回是增强项，
+  Redis 不可用或检索超时（默认 2.5s）均静默返回空结果——记忆读回是增强项，
   绝不阻塞或拖慢主回复流。
 - **模板占位**：`agent_system_prompt_template` / `react_agent_system_prompt_template`
   原有 `<用户长期记忆>` 占位；`deep_thinking_system_prompt` 已补充该占位，

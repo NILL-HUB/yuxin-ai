@@ -52,8 +52,14 @@ def _ensure_constraints_and_indexes(driver: Driver) -> None:
         "CREATE CONSTRAINT episode_node_id IF NOT EXISTS FOR (n:Episode) REQUIRE n.node_id IS UNIQUE",
         # node_id 唯一约束（Entity）
         "CREATE CONSTRAINT entity_node_id IF NOT EXISTS FOR (n:Entity) REQUIRE (n.name, n.user_id) IS UNIQUE",
-        # 全文索引：覆盖 Episode/Entity/SemanticMemory 的 content 字段
-        "CREATE FULLTEXT INDEX memoryFullText IF NOT EXISTS FOR (n:Episode) ON EACH [n.content, n.summary]",
+        # 全文索引：与 migration/neo4j_init.cypher 对齐（检索器词法通道依赖这三个名字）
+        # ⚠️ 历史漂移：此处曾把 memoryFullText 建在 Episode 上，而 init.cypher 建在 MemoryNode 上——
+        #    同名索引配 IF NOT EXISTS，谁先跑谁生效，会让 Entity/SemanticMemory 的正文在部分
+        #    环境检索不到（视图过滤下 relations/knowledge 视图词法通道恒空）。统一为 MemoryNode：
+        #    Episode/Entity/SemanticMemory 均同挂 :MemoryNode 标签，覆盖三者正文与摘要。
+        "CREATE FULLTEXT INDEX memoryFullText IF NOT EXISTS FOR (n:MemoryNode) ON EACH [n.content, n.summary]",
+        "CREATE FULLTEXT INDEX entityFullText IF NOT EXISTS FOR (n:Entity) ON EACH [n.name, n.summary]",
+        "CREATE FULLTEXT INDEX communityFullText IF NOT EXISTS FOR (n:Community) ON EACH [n.title, n.summary, n.key]",
         # ── admin 主体：属性级分离（用户端用 user_id，admin 端用 admin_user_id + agent_id）──
         # 唯一约束对「属性缺失」天然豁免（故加这些约束不影响存量 user 节点——它们无 admin 属性）。
         # ⚠️ 前提：Neo4j 多属性唯一约束要求约束内**所有属性都存在**才施加。

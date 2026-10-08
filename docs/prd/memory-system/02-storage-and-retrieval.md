@@ -536,6 +536,92 @@ class ColdStorageEntry(BaseModel):
 > **用户主体下两者与改造前逐字节等价**（`user_id` 属性名 + 裸 UUID 值均未变），故存量结果集不变。
 > 上述 §6.2/§6.5 内嵌的 Python 代码块为**早期实现示意**（含 `AsyncDriver`、裸 `user_id` 形参等），
 > 与当前签名不符；当前实现以 `api/internal/service/memory/` 下的源码为准。
+> 其中清单里的 `QueryIntent`（factual/temporal/relational/action/reflection）即当前实现的
+> `policy_router.ConversationIntent`（已扩展为 7 类，含 greeting/meta）；模型层曾有的同名枚举
+> （factual/procedural/episodic/preference，从未被消费）已于 2026-10-04 删除。
+
+> **策略路由与视图限定（2026-10-04 落地）**：System 1/2 的**选路**与检索**视图子集**不再由
+> 调用方各自决定，统一收敛到 `MemoryRetriever`：
+>
+> - `route_policy(query, owner_key)`：`PolicyRouter`（**规则分类**，`llm_available=False`，不占
+>   对话召回的 2.5s 预算，且助手链路为「会话开始即启动、注入点再取回」）产出「意图 → `select_views` 视图子集 + `should_use_system2` 选路」；
+>   异常退化为不限视图 + 摘要优先（fail-open）。
+> - `retrieve_for_chat(query, owner_key)`：**用户侧（`user_memory_recall`）与 admin 侧
+>   （`admin_memory_recall`）共用的对话召回入口**——prefer_deep 时「深检优先、空则摘要兜底」，
+>   否则「摘要优先、空则深检」；返回文本按 `max_chars` 截断。
+> - 视图子集经 `RetrievalOptions.view_names` 下推到**四个召回分支**（TKG 标签谓词 /
+>   pgvector `user_memory.memory_type` / Community 标签 / 图扩展节点标签），**不允许任何分支绕过**；
+>   `view_names` 为空 = 不限视图（与接线前行为一致），非法视图名 fail-closed。
+> - `PREDEFINED_VIEWS` 的标签/边名已**照实**取自真实 schema（`migration/neo4j_init.cypher` +
+>   各写入点）：profile=`User/Trait/Preference`、episodes=`Episode`、skills=`Skill`、
+>   relations=`Entity`、knowledge=`SemanticMemory`、themes=`Community`（**新增第 6 个视图**，
+>   P5 主题层；REFLECTION 意图已纳入它）。
+> - REST `POST /memory/retrieve` 回填真实 `intent` 字段，并可按需传 `view_names` 复现/排查；
+>   缺省不传 = 不限视图（保持「召回测试」探针语义）。
+>
+> - `retrieve()` 新增 `prefer_deep` 选项（跳过 System 1 直连深检），供策略路由与 REST 复用；
+>   `time_range_days` 同样下推到四个分支（TKG / Community 按节点 `created_at`，pgvector 按
+>   `user_memory.created_at`，图扩展按节点时间戳；无 `created_at` 的节点宽容放行，不静默丢数据）。
+>
+> **记忆敏感度分级与读取确认（2026-10-05 落地）**：记忆按敏感度分两级——仅**机密**需要确认，
+> 其余一律不需要（这是「不让用户为日常记忆反复确认」的落点）。
+>
+> - **机密（confidential）**：身份证号 / 手机号 / 银行卡号 / 邮箱 / 密码口令 / 验证码 / 密钥；
+>   **normal（普通）**：其余全部。
+> - **单一定义**：`api/internal/service/memory/sensitivity.py`（`PII_PATTERNS` 与
+>   `MemoryGovernor.filter_pii` 的脱敏共用同一张正则表；`classify()` 分级、`is_read_confirmation()` 判确认语）。
+> - **写入落库**：Episode 节点 `sensitivity` / `sensitivity_types` 属性 + `user_memory.metadata` 同名字段
+>   （`ledger_writer` 的 full / summary / curated 三条路径一致）。
+> - **读取约束（四条路径都不许绕过）**：① 对话召回的注入文本默认剔除机密，命中时附「先请用户确认，
+>   确认后系统自动注入、无需调用工具」给模型的系统提示；② 放行只认两条通道——用户短句确认（如「确认读取」）
+>   或确认卡片授权（见下节，TTL 内白名单放行）；
+>   ③ Digest 的画像 / 近期事件分节排除机密并附说明；④ 画像落库同步 `sync_from_explicit_episodes`
+>   不再把机密 Episode 抄成 Trait / Preference 节点。
+> - **边界**：确认是「用户对自己记忆」的两步 UX，不是跨主体授权——跨主体隔离仍由 `MemoryOwnerKey` 负责；
+>   同一会话里用户自己刚说过的话不在该门内（属对话历史，非记忆召回）。
+> - **指挥官联动**：路由决策看不到记忆内容，故提示词明确「涉及用户自身信息的问题不得以信息不足要求澄清」，
+>   机密确认一律由执行侧承接，指挥官不额外增加确认步骤。
+>
+> **结构化确认卡片与短时授权（2026-10-05 落地，取代纯自然语言确认）**
+>
+> - **结构化出口**：召回命中机密且未获授权时，`retrieve_for_chat` 把条目写入
+>   `status["withheld"]`（`memory_id` / `types` / 中文 `label` / 脱敏 `preview`，序列化单点
+>   `WithheldConfidential.to_dict()`），由 `confidential_gate.gated_recall` 组装为
+>   `MemoryRecallOutcome`（`api/internal/entity/memory_recall_entity.py`）并创建确认记录。
+>   上层 SSE 出口发事件 `memory_confirmation_required`（用户端 `QueueEvent`、
+>   管理端 `AdminAgentChatEvent`），payload 形状同源：`confirmation_payload()` →
+>   `{confirmation_id, memory_items, count}`。**键名是 `memory_items` 而非 `items`**——用户端流里
+>   `items` 已属子任务契约（`SubtaskPlanItem[]`），同名不同形状会让前端类型系统无法区分。
+> - **放行策略单点**：`ConfidentialAccess`（`allow_all`=用户对话中明确确认；`ids`=卡片授权白名单），
+>   `MemoryRetriever._split_confidential` 是唯一判定点——两条确认通道在此汇合，不存在第二套读取判定。
+> - **确认状态**：`MemoryReadConfirmationService`（`internal/service/memory/read_confirmation_service.py`，
+>   Redis 单例，`@inject + @dataclass` 字段注入）。记录键 `memory:read-confirm:<id>`、授权集合
+>   `memory:read-auth:<owner_key>`，两者 TTL 30 分钟。**不建表**：确认是短时效交互态；需要长期审计留痕的
+>   `tool_confirmation`（工具高风险执行）语义不同，**不复用同一张表**，避免把工具名/额度等列语义污染成"记忆读取"。
+> - **端点**：用户侧 `GET /memory/confirmations/<id>`、`POST .../confirm|cancel`（主体键由 JWT 强制
+>   为 `for_user`）；管理端 `GET /admin/agents/<agent_id>/memory/confirmations/<id>` 与
+>   `POST .../confirm|cancel`（`for_admin` 主体键 + Agent 归属校验；权限沿用既有
+>   `agent_pool:read` / `agent_pool:manage` 映射，未新增权限点）。跨主体 / 过期 / 不存在一律 404。
+> - **前端接入范围**：`ui/src/components/MemoryConfirmationCard.vue`（基于 AppCard / AppButton / AppTag
+>   基座，类型标签走 i18n `memoryConfirmation.types.*`）渲染于首页助手 `HomeView.vue` 与管理端
+>   `admin/agents/ChatView.vue`；点「允许读取」后自动重发上一问（复用各自既有发送链路，未新增第三条发送路径）。
+>   **未接入**：WebApp 预览 / 「我的应用」 / 应用商店预览 / 应用调试等入口——其后端链路当前不发该事件，
+>   这些入口仍只保留召回文本里的"请先确认"提示（功能不退化，只是没有卡片）。
+> - **fail-open 两道防线**：确认服务取不到（DI 未绑定 / Redis 不可用）只退化为「无卡片、保留文本提示」，
+>   绝不牵连召回本身——历史缺陷：服务获取异常冒泡到召回层被吞，使整段召回结果为空（真机定位并修复）。
+> - **实测时延与已知缺口**（真机 2026-10-05，`retrieve_for_chat` 连续 5 次）：摘要快路径 ~0ms；
+>   深检中位 0.48s、最大 6.08s（嵌入/图查询抖动）。对话召回上限据此从 1.2s 放宽到 **2.5s**
+>   （仅在摘要无实质内容时才走到深检，代价有界）。
+> - **助手链路：召回早启动 + 晚取回**（`MemoryRecallHandle`）：深检抖动若发生在"要注入"的那一刻
+>   会直接变成用户等待，且超预算就空手而归（真机表现：同一问句"第一次没卡片、再问才有"）。
+>   故 `AssistantAgentService.chat` 在**会话解析后立即启动**召回（守护线程），在注入点再
+>   `result(2.5)` 取回——中间的指挥官 LLM 决策 / 工具装配（秒级）正好把抖动吸收掉。
+>   admin / WebApp / 应用调试入口仍为同步 2.5s（其召回本就是回合第一步，没有可藏的下游等待）。
+> - **摘要实质判定（`digest_has_substance`）三类跳过**：① 键名属元数据（更新/时间/规则/说明…）；
+>   ② 值只是日期或数字；③ 值只是 PII 标签枚举（模板固定的「机密记忆：身份证/手机号/…」说明行，
+>   按 `PII_TYPE_LABELS` 的标签原子 + 去尾"号"变体比对，不维护关键词表）。真机缺陷（2026-10-05）：
+>   说明行曾被当成内容 → 占位摘要被判为命中 → **摘要优先的意图不再深检**，记忆读回只剩占位文本，
+>   机密记忆也永远走不到机密闸门（卡片不出现）。
 
 ```python
 from __future__ import annotations

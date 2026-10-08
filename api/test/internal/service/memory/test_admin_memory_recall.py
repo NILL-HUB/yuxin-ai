@@ -2,11 +2,14 @@
 
 不变量：
 1. 主体键必须是 `admin:{admin_uuid}[:{agent_uuid}]`（不得退化成 for_user）；
-2. 召回是增强项：引擎关闭/异常/超时一律返回空串（fail-open），绝不抛出。
+2. 召回是增强项：引擎关闭/异常/超时一律返回空结果（fail-open），绝不抛出；
+3. 返回 ``MemoryRecallOutcome``（文本 + 待确认机密条目 + 确认 id），不是裸字符串。
 """
 from uuid import uuid4
 
 import pytest
+
+from internal.entity.memory_recall_entity import MemoryRecallOutcome
 
 
 def test_returns_empty_when_engine_disabled(monkeypatch):
@@ -14,17 +17,23 @@ def test_returns_empty_when_engine_disabled(monkeypatch):
     from internal.service.memory import admin_memory_recall
 
     monkeypatch.setattr(memory_settings, "memory_engine_enabled", False, raising=False)
-    assert admin_memory_recall.recall_admin_agent_memory_for_chat(
-        admin_user_id=uuid4(), query="hi"
-    ) == ""
+    assert (
+        admin_memory_recall.recall_admin_agent_memory_for_chat(
+            admin_user_id=uuid4(), query="hi"
+        ).text
+        == ""
+    )
 
 
 def test_empty_query_returns_empty():
     from internal.service.memory import admin_memory_recall
 
-    assert admin_memory_recall.recall_admin_agent_memory_for_chat(
-        admin_user_id=uuid4(), query="   "
-    ) == ""
+    assert (
+        admin_memory_recall.recall_admin_agent_memory_for_chat(
+            admin_user_id=uuid4(), query="   "
+        ).text
+        == ""
+    )
 
 
 def test_owner_key_is_admin_scoped(monkeypatch):
@@ -35,20 +44,17 @@ def test_owner_key_is_admin_scoped(monkeypatch):
     admin_id, agent_id = uuid4(), uuid4()
     captured = {}
 
-    def _fake_deep(*, owner_key, query):
+    def _fake_text(*, owner_key, query, max_chars):
         captured["owner_key"] = owner_key
-        return "召回文本"
+        return MemoryRecallOutcome(text="召回文本")
 
-    monkeypatch.setattr(
-        admin_memory_recall, "_retrieve_digest", lambda *, owner_key, query: ""
-    )
-    monkeypatch.setattr(admin_memory_recall, "_retrieve_deep", _fake_deep)
+    monkeypatch.setattr(admin_memory_recall, "_retrieve_memory", _fake_text)
 
-    text = admin_memory_recall.recall_admin_agent_memory_for_chat(
+    outcome = admin_memory_recall.recall_admin_agent_memory_for_chat(
         admin_user_id=admin_id, agent_id=agent_id, query="我的偏好"
     )
 
-    assert text == "召回文本"
+    assert outcome.text == "召回文本"
     assert captured["owner_key"] == MemoryOwnerKey.for_admin(
         admin_id, agent_id=agent_id
     ).to_key()
@@ -63,12 +69,10 @@ def test_admin_level_key_has_no_agent_segment(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(
-        admin_memory_recall, "_retrieve_digest", lambda *, owner_key, query: ""
-    )
-    monkeypatch.setattr(
         admin_memory_recall,
-        "_retrieve_deep",
-        lambda *, owner_key, query: captured.setdefault("owner_key", owner_key) or "",
+        "_retrieve_memory",
+        lambda *, owner_key, query, max_chars: captured.setdefault("owner_key", owner_key)
+        or MemoryRecallOutcome(),
     )
 
     admin_memory_recall.recall_admin_agent_memory_for_chat(
@@ -86,8 +90,11 @@ def test_exception_is_swallowed_returns_empty(monkeypatch):
     def _boom(*args, **kwargs):
         raise RuntimeError("neo4j down")
 
-    monkeypatch.setattr(admin_memory_recall, "_retrieve_digest", _boom)
+    monkeypatch.setattr(admin_memory_recall, "_retrieve_memory", _boom)
 
-    assert admin_memory_recall.recall_admin_agent_memory_for_chat(
-        admin_user_id=uuid4(), query="hi"
-    ) == ""
+    assert (
+        admin_memory_recall.recall_admin_agent_memory_for_chat(
+            admin_user_id=uuid4(), query="hi"
+        ).text
+        == ""
+    )

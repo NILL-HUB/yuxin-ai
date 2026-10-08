@@ -6,6 +6,7 @@ import ChatComposer from '@/components/ChatComposer.vue'
 import DesktopDevicePanel from '@/components/DesktopDevicePanel.vue'
 import SubtaskProgressPanel from '@/components/SubtaskProgressPanel.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
+import MemoryConfirmationCard from '@/components/MemoryConfirmationCard.vue'
 import RealtimeVoiceDock from '@/components/RealtimeVoiceDock.vue'
 import ScheduleSuggestionCard, { type ScheduleSuggestion } from '@/components/ScheduleSuggestionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
@@ -31,6 +32,11 @@ import {
   postToolConfirmationConfirm,
   postToolConfirmationCancel,
 } from '@/services/tool-confirmation'
+import {
+  confirmMemoryConfirmation,
+  cancelMemoryConfirmation,
+} from '@/services/memory-confirmation'
+import type { MemoryConfirmationPrompt } from '@/models/memory-confirmation'
 import { useAccountStore } from '@/stores/account'
 import { useCredentialStore } from '@/stores/credential'
 import storage from '@/utils/storage'
@@ -150,7 +156,32 @@ const hoveredHumanMessageIndex = ref<number | null>(null)
 const HUMAN_NAV_BOTTOM_DISTANCE_THRESHOLD = 500
 const isStreamingResponse = ref(false)
 const billingEvents = ref<BillingUsageEvent[]>([])
+// 会话级累计消耗（卡片主指标；2026-10-07 产品要求）：每轮 billing_final 的
+// delta_credits 累加，新建/切换会话时归零。按 message_id 去重，避免流式多次
+// 更新状态时重复计数。单条消息的消耗由消息项展示（见 ai-message 的 credits）。
+const sessionCredits = ref(0)
+const countedRoundMessageIds = new Set<string>()
+const accumulateSessionCredits = (roundMessageId: string) => {
+  if (!roundMessageId || countedRoundMessageIds.has(roundMessageId)) return
+  const final = billingEvents.value.filter((e) => e.event === 'billing_final').pop()
+  if (!final) return
+  countedRoundMessageIds.add(roundMessageId)
+  sessionCredits.value += Number(final.delta_credits ?? final.total_credits ?? 0)
+}
+const resetSessionCredits = () => {
+  countedRoundMessageIds.clear()
+  sessionCredits.value = 0
+}
+// 本轮（最新一轮）的消耗：用于给最新消息展示「本次消耗」
+const currentRoundCredits = computed(() => {
+  const final = billingEvents.value.filter((e) => e.event === 'billing_final').pop()
+  return final ? Number(final.delta_credits ?? final.total_credits ?? 0) : -1
+})
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
+const memoryConfirmationPrompt = ref<MemoryConfirmationPrompt | null>(null)
+const memoryConfirmationLoading = ref(false)
+// 最近一次用户提问（文本 + 图片）：确认读取机密记忆后自动重发上一问时复用既有发送链路
+const lastUserMessage = ref<{ query: string; image_urls: string[] } | null>(null)
 const scheduleSuggestion = ref<ScheduleSuggestion | null>(null)
 const subtaskProgress = ref<SubtaskProgress[] | null>(null)
 const subtaskTaskPlan = ref<StreamState['taskPlan'] | null>(null)
@@ -497,6 +528,7 @@ const initializeHomeAfterLogin = async () => {
       await loadSelectedConversationName(selectedConversationId.value)
     } else {
       messages.value = []
+      resetSessionCredits()
       currentConversationName.value = ''
       await loadSelectedConversationName('')
     }
@@ -513,6 +545,7 @@ watch(isAuthenticated, (loggedIn) => {
   if (loggedIn) return
   accountStore.clear()
   messages.value = []
+  resetSessionCredits()
   task_id.value = ''
   message_id.value = ''
   currentConversationName.value = ''
@@ -1097,6 +1130,11 @@ const handleSubmit = async () => {
   shouldAutoScrollToBottom.value = true
   billingEvents.value = []
   toolConfirmationPrompt.value = null
+  // 已允许读取（confirmed）的卡片在「自动重发上一问」期间保留，提示正在重新提问；
+  // 用户直接发起的新提问（pending 态卡片）则被新一轮流替换/清空。
+  if (memoryConfirmationPrompt.value?.status !== 'confirmed') {
+    memoryConfirmationPrompt.value = null
+  }
   scheduleSuggestion.value = null
   subtaskProgress.value = null
   subtaskTaskPlan.value = null
@@ -1141,6 +1179,9 @@ const handleSubmit = async () => {
   isStreamingResponse.value = true
   const humanQuery = query.value
   const humanImageUrls = image_urls.value
+  if (humanQuery.trim()) {
+    lastUserMessage.value = { query: humanQuery, image_urls: [...humanImageUrls] }
+  }
   query.value = ''
   image_urls.value = []
 
@@ -1183,8 +1224,12 @@ const handleSubmit = async () => {
 
         if (streamResult.didUpdate) {
           billingEvents.value = streamResult.state.billingEvents
+          accumulateSessionCredits(String(message_id.value || ''))
           if (streamResult.state.toolConfirmationPrompt) {
             toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+          }
+          if (streamResult.state.memoryConfirmationPrompt) {
+            memoryConfirmationPrompt.value = streamResult.state.memoryConfirmationPrompt
           }
           scheduleScrollToBottom()
         }
@@ -1196,6 +1241,11 @@ const handleSubmit = async () => {
     stopAutoScrollTicker()
     const requestDurationMs = Math.max(Date.now() - requestStartAt, 0)
     normalizeMessageMetrics(messages.value[0] as MessageMetrics, requestDurationMs)
+    // 「允许读取 → 重发上一问」这一轮流结束后，收起已允许态提示卡片；
+    // 若本轮又命中了新的机密记忆，卡片已是新的 pending 态，保持不变。
+    if (memoryConfirmationPrompt.value?.status === 'confirmed') {
+      memoryConfirmationPrompt.value = null
+    }
   }
 
   // 聊天响应完成后，重新加载消息以确保数据同步
@@ -1217,10 +1267,8 @@ const handleSubmit = async () => {
     }, 100)
   }
 
-  // 文本模式：回复完成后自动朗读；实时语音模式由语音会话自行朗读
-  if (!voiceMode.value && message_id.value && !isRecording.value) {
-    await startAudioStream(message_id.value)
-  }
+  // 回复完成不再自动朗读（2026-10-07 按产品要求改为**手动**）：朗读只经消息上的
+  // 播放按钮触发（startAudioStream 保留，供手动播放）。实时语音模式仍由语音会话自行朗读。
 }
 
 const handleConfirmTool = async (id: string) => {
@@ -1283,6 +1331,68 @@ const handleCancelTool = async (id: string) => {
 
 const handleDismissToolConfirmation = () => {
   toolConfirmationPrompt.value = null
+}
+
+// 允许读取机密记忆：后端写入 30 分钟授权后，用既有发送链路（handleSubmitQuestion
+// → handleSubmit）自动重发上一问，命中同一批记忆时即可直接注入。
+const handleAllowMemoryConfirmation = async () => {
+  const prompt = memoryConfirmationPrompt.value
+  if (!prompt) return
+  if (assistantAgentChatLoading.value) {
+    Message.warning(t('home.messages.pendingQueryWarning'))
+    return
+  }
+
+  memoryConfirmationLoading.value = true
+  try {
+    await confirmMemoryConfirmation(prompt.confirmation_id)
+  } catch {
+    memoryConfirmationPrompt.value = null
+    Message.warning(t('memoryConfirmation.expired'))
+    return
+  } finally {
+    memoryConfirmationLoading.value = false
+  }
+
+  memoryConfirmationPrompt.value = { ...prompt, status: 'confirmed' }
+
+  const last = lastUserMessage.value
+  if (!last?.query) {
+    // 极端兜底（理论上卡片只会在追问链路中出现）：提示用户自行再问一次
+    memoryConfirmationPrompt.value = null
+    Message.success(t('memoryConfirmation.allowed'))
+    return
+  }
+
+  if (last.image_urls.length > 0) {
+    image_urls.value = [...last.image_urls]
+  }
+  try {
+    await handleSubmitQuestion(last.query)
+  } catch {
+    Message.error(t('common.request.requestFailed'))
+  } finally {
+    // 重发结束收起已允许态卡片；若新一轮又命中机密记忆，卡片已是新的 pending 态
+    if (memoryConfirmationPrompt.value?.status === 'confirmed') {
+      memoryConfirmationPrompt.value = null
+    }
+  }
+}
+
+const handleDenyMemoryConfirmation = async () => {
+  const prompt = memoryConfirmationPrompt.value
+  if (!prompt) return
+
+  memoryConfirmationLoading.value = true
+  try {
+    await cancelMemoryConfirmation(prompt.confirmation_id)
+  } catch {
+    // 记录已过期/不存在：与拒绝一样直接收起卡片
+    Message.warning(t('memoryConfirmation.expired'))
+  } finally {
+    memoryConfirmationLoading.value = false
+    memoryConfirmationPrompt.value = null
+  }
 }
 
 const handleDismissScheduleSuggestion = () => {
@@ -1399,6 +1509,10 @@ const handleVoiceTurnStart = async (text: string) => {
   task_id.value = ''
   billingEvents.value = []
   toolConfirmationPrompt.value = null
+  if (memoryConfirmationPrompt.value?.status !== 'confirmed') {
+    memoryConfirmationPrompt.value = null
+  }
+  lastUserMessage.value = { query: queryText, image_urls: [] }
   scheduleSuggestion.value = null
   subtaskProgress.value = null
   subtaskTaskPlan.value = null
@@ -1472,8 +1586,12 @@ const handleVoiceStreamEvent = (payload: { event: string; data: Record<string, u
 
   if (streamResult.didUpdate) {
     billingEvents.value = streamResult.state.billingEvents
+    accumulateSessionCredits(String(message_id.value || ''))
     if (streamResult.state.toolConfirmationPrompt) {
       toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+    }
+    if (streamResult.state.memoryConfirmationPrompt) {
+      memoryConfirmationPrompt.value = streamResult.state.memoryConfirmationPrompt
     }
     scheduleScrollToBottom()
   }
@@ -1661,6 +1779,7 @@ onUnmounted(() => {
               :agent_thoughts="item.agent_thoughts"
               :answer="item.answer"
               :answer_parts="item.answer_parts || []"
+              :credits="item.id === messages[0]?.id ? currentRoundCredits : -1"
               :artifacts="item.artifacts || []"
               :app="ASSISTANT_APP"
               :suggested_questions="
@@ -1853,6 +1972,18 @@ onUnmounted(() => {
       <!-- 对话输入框 -->
       <div class="w-full flex flex-col shrink-0 pb-2 pt-2 gap-3">
         <div
+          v-if="memoryConfirmationPrompt"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
+        >
+          <MemoryConfirmationCard
+            :items="memoryConfirmationPrompt.items"
+            :status="memoryConfirmationPrompt.status"
+            :loading="memoryConfirmationLoading"
+            @allow="handleAllowMemoryConfirmation"
+            @deny="handleDenyMemoryConfirmation"
+          />
+        </div>
+        <div
           v-if="toolConfirmationPrompt"
           class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
         >
@@ -1876,7 +2007,7 @@ onUnmounted(() => {
           v-if="billingEvents.length > 0"
           class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
         >
-          <BillingUsageIndicator :events="billingEvents" />
+          <BillingUsageIndicator :events="billingEvents" :session-total="sessionCredits" />
         </div>
         <div
           v-if="subtaskProgress && subtaskProgress.length > 0"

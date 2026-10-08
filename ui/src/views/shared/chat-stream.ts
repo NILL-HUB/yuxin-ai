@@ -3,6 +3,9 @@ import type { BillingUsageEvent } from '@/models/billing-metering'
 import type { RoutingDecision } from '@/models/orchestration'
 import type { ToolConfirmationPrompt } from '@/models/tool-confirmation'
 export type { ToolConfirmationPrompt }
+import type { MemoryConfirmationPrompt } from '@/models/memory-confirmation'
+export type { MemoryConfirmationPrompt }
+import { normalizeMemoryConfirmationPrompt } from '@/models/memory-confirmation'
 import {
   buildChatOutputParts,
   extractArtifactsFromToolObservation,
@@ -137,6 +140,8 @@ export type StreamState = {
   routingDecision?: RoutingDecision | null
   orchestratorReject?: { reason: string; message: string } | null
   toolConfirmationPrompt?: ToolConfirmationPrompt | null
+  // 机密记忆读取确认（memory_confirmation_required 事件，随流开始时到达）
+  memoryConfirmationPrompt?: MemoryConfirmationPrompt | null
   // 多智能体子任务进度（subtask_started 初始化，subtask_completed 更新）
   subtasks?: SubtaskProgress[] | null
   // 任务规划元数据（subtask_started 事件携带）
@@ -476,6 +481,13 @@ export const applyChatStreamEvent = (
       rollback_strategy: String(data.rollback_strategy ?? ''),
       audit_hint: String(data.audit_hint ?? ''),
     } as ToolConfirmationPrompt
+    return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.memoryConfirmationRequired) {
+    // 机密记忆确认卡片：payload 由后端 confirmation_payload() 单点定义，
+    // 用户端与管理端同形（confirmation_id / items / count）。
+    nextState.memoryConfirmationPrompt = normalizeMemoryConfirmationPrompt(
+      data as unknown as Record<string, unknown>,
+    )
     return { state: nextState, didUpdate: true }
   } else {
     nextState.position += 1

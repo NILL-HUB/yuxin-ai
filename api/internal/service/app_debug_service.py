@@ -305,11 +305,12 @@ class AppDebugService(BaseService):
 
         # 6.0 记忆读回闭环：与应用工具插件/配置上下文并列，向 Agent 注入用户长期记忆。
         #     与应用调试/我的应用共用同一召回策略（fail-open，绝不阻断对话）。
+        #     机密记忆确认卡片暂只接入首页助手/管理端对话；此处保留召回文本提示。
         user_memory_text = recall_user_memory_for_chat(
             account_id=account.id,
             query=req.query.data,
             conversation_id=str(debug_conversation.id),
-        )
+        ).text
 
         agent_thoughts = {}
         runtime_flask_app = current_app._get_current_object() if has_app_context() else None
@@ -456,11 +457,12 @@ class AppDebugService(BaseService):
             long_term_memory = self._get_debug_long_term_memory_snapshot(app, account)
 
         # 记忆读回闭环：与应用调试/我的应用共用同一召回策略（fail-open）
+        # 机密记忆确认卡片暂只接入首页助手/管理端对话；此处保留召回文本提示。
         user_memory_text = recall_user_memory_for_chat(
             account_id=account.id,
             query=req.query.data,
             conversation_id=req.lane_id.data.strip() if req.lane_id.data else str(uuid4()),
-        )
+        ).text
 
         yield from self.app_runtime_service.stream_agent_events(
             app_id=app_id,

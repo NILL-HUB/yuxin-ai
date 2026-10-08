@@ -30,6 +30,9 @@ class QueueEvent(str, Enum):
     ORCHESTRATOR_ROUTING = "orchestrator_routing"
     ORCHESTRATOR_REJECT = "orchestrator_reject"
     TOOL_CONFIRMATION_REQUIRED = "tool_confirmation_required"
+    # 机密记忆读取确认（结构化确认卡片）：召回命中机密记忆但未获授权时，
+    # 由对话入口在开流前发出；用户点「允许读取」后同一批记忆即可注入。
+    MEMORY_CONFIRMATION_REQUIRED = "memory_confirmation_required"
     # 子任务进度事件（多智能体 DAG 执行专用）
     SUBTASK_STARTED = "subtask_started"
     SUBTASK_RUNNING = "subtask_running"

@@ -1,10 +1,15 @@
-"""记忆读回闭环（_retrieve_user_memory_for_chat）单元测试。
+"""记忆读回闭环（_start_user_memory_recall → result）单元测试。
 
-覆盖：
-- 引擎关闭 / 空 query → 空串（fail-open）
+契约（2026-10-05 起）：助手链路在会话开始处**启动**召回（守护线程句柄），
+在注入点再 ``result()`` 取回——早启动 + 晚 join，把深检抖动藏进下游等待。
+本文件覆盖：
+- 引擎关闭 / 空 query → 空文本（fail-open）
 - System 1（Digest 快路径）命中 → 返回 digest 文本
 - System 2（MemoryRetriever 深度检索）命中 → 拼接 top 内容
-- 检索异常 / 依赖缺失 → 空串（fail-open，不影响对话）
+- 检索异常 / 依赖缺失 → 空文本（fail-open，不影响对话）
+
+契约（2026-10-05 起）：召回返回 ``MemoryRecallOutcome``（文本 + 待确认机密条目 +
+确认 id），不再是裸字符串——机密记忆确认卡片需要结构化字段，裸字符串无法承载。
 """
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -49,6 +54,19 @@ class _FakeRetriever:
             raise RuntimeError("模拟检索故障")
         return self._results
 
+    def retrieve_for_chat(self, query, owner_key, **kwargs):
+        """按新契约返回文本并回填 status["withheld"]（无机密条目 → 空列表）。"""
+        status = kwargs.get("status")
+        if status is not None:
+            status["withheld"] = []
+        digest = self._system1_fast_path(query, owner_key)
+        if digest:
+            return digest
+        results = self.retrieve(query, owner_key)
+        return chr(10).join(
+            str(getattr(item, "content", "") or "") for item in results or []
+        )
+
 
 def _service():
     return AssistantAgentService(
@@ -60,7 +78,7 @@ def _service():
 
 
 def _patch_deps(monkeypatch, *, digest_text=None, results=None, engine_enabled=True):
-    """把 _retrieve_user_memory_for_chat 闭包内的依赖替换为替身。"""
+    """把召回闭包内的依赖替换为替身。"""
     from internal.config import memory_settings as memory_settings_module
 
     monkeypatch.setattr(
@@ -84,7 +102,18 @@ def _patch_deps(monkeypatch, *, digest_text=None, results=None, engine_enabled=T
 
     monkeypatch.setattr(app_module, "app", _FakeFlaskApp())
 
-    def _fake_get_service(_cls):
+    class _FakeConfirmations:
+        """确认服务替身：无授权、创建记录返回固定 id。"""
+
+        def authorized_ids(self, _owner_key):
+            return frozenset()
+
+        def create(self, *, owner_key, items):
+            return "conf-1"
+
+    def _fake_get_service(cls):
+        if cls.__name__ == "MemoryReadConfirmationService":
+            return _FakeConfirmations()
         return fake_digest
 
     monkeypatch.setattr(asgi_app, "_get_service", _fake_get_service)
@@ -107,20 +136,26 @@ class TestRetrieveUserMemoryForChat:
     def test_returns_empty_when_engine_disabled(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text="有记忆", engine_enabled=False)
         service = _service()
-        assert service._retrieve_user_memory_for_chat(account_id=_TEST_ACCOUNT_ID, query="你好", conversation_id="c1") == ""
+        outcome = service._start_user_memory_recall(
+            account_id=_TEST_ACCOUNT_ID, query="你好", conversation_id="c1"
+        ).result()
+        assert outcome.text == ""
 
     def test_returns_empty_when_query_blank(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text="有记忆", engine_enabled=True)
         service = _service()
-        assert service._retrieve_user_memory_for_chat(account_id=_TEST_ACCOUNT_ID, query="   ", conversation_id="c1") == ""
+        outcome = service._start_user_memory_recall(
+            account_id=_TEST_ACCOUNT_ID, query="   ", conversation_id="c1"
+        ).result()
+        assert outcome.text == ""
 
     def test_system1_digest_hit_returns_digest(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text="用户喜欢 Python", engine_enabled=True)
         service = _service()
-        text = service._retrieve_user_memory_for_chat(
-            account_id=_TEST_ACCOUNT_ID, query="帮我写代码", conversation_id="c1", max_wait_seconds=3
-        )
-        assert "Python" in text
+        outcome = service._start_user_memory_recall(
+            account_id=_TEST_ACCOUNT_ID, query="帮我写代码", conversation_id="c1"
+        ).result(3)
+        assert "Python" in outcome.text
 
     def test_system2_fallback_returns_joined_results(self, monkeypatch):
         _patch_deps(
@@ -133,16 +168,17 @@ class TestRetrieveUserMemoryForChat:
             engine_enabled=True,
         )
         service = _service()
-        text = service._retrieve_user_memory_for_chat(
-            account_id=_TEST_ACCOUNT_ID, query="有什么偏好", conversation_id="c1", max_wait_seconds=3
-        )
-        assert "偏好简洁" in text
-        assert "部署方案" in text
+        outcome = service._start_user_memory_recall(
+            account_id=_TEST_ACCOUNT_ID, query="有什么偏好", conversation_id="c1"
+        ).result(3)
+        assert "偏好简洁" in outcome.text
+        assert "部署方案" in outcome.text
 
     def test_fail_open_when_retrieve_raises(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text=None, results="raise", engine_enabled=True)
         service = _service()
-        text = service._retrieve_user_memory_for_chat(
-            account_id=_TEST_ACCOUNT_ID, query="触发异常", conversation_id="c1", max_wait_seconds=3
-        )
-        assert text == ""
+        outcome = service._start_user_memory_recall(
+            account_id=_TEST_ACCOUNT_ID, query="触发异常", conversation_id="c1"
+        ).result(3)
+        assert outcome.text == ""
+        assert outcome.needs_confirmation is False

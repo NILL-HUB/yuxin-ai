@@ -22,6 +22,7 @@ import desktopDevice from './desktopDevice'
 import memory from './memory'
 import externalDataSource from './externalDataSource'
 import toolConfirmation from './toolConfirmation'
+import memoryConfirmation from './memoryConfirmation'
 import policyChange from './policyChange'
 import login from './login'
 import semantic from './semantic'
@@ -53,6 +54,7 @@ export default {
   memory,
   externalDataSource,
   toolConfirmation,
+  memoryConfirmation,
   policyChange,
   login,
   semantic,

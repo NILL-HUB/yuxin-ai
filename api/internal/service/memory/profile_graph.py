@@ -156,6 +156,8 @@ class ProfileGraphService:
                       AND e.t_invalidated_at IS NULL
                       AND (e.status IS NULL OR NOT (e.status IN $invalid_statuses))
                       AND e.is_active <> false
+                      # 机密记忆（身份证/手机号/密码等）不进画像库：画像节点会被摘要等无确认路径读取
+                      AND coalesce(e.sensitivity, 'normal') <> 'confidential'
                     WITH e
                     ORDER BY e.created_at DESC
                     RETURN e.explicit_category AS category,

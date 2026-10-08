@@ -24,26 +24,20 @@ import json
 import logging
 import math
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from internal.config.memory_settings import SkillConfig
 from internal.entity.memory_owner_entity import MemoryOwnerKey
+from internal.model.memory_models import SkillStatus
 from internal.service.memory.metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
-
-class SkillStatus(str, Enum):
-    """技能状态枚举（5 个状态）。"""
-
-    CANDIDATE = "candidate"
-    EMERGING = "emerging"
-    ACTIVE = "active"
-    STALE = "stale"
-    DEPRECATED = "deprecated"
+# SkillStatus 的唯一事实源在 internal.model.memory_models（图内持久化取值、
+# 生命周期转移表与前端镜像共用同一集合）。此处只复用，不再本地定义——
+# 历史上两处各定义一套，模型层多出 'archived'、少 candidate/deprecated。
 
 
 class Skill(BaseModel):

@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from internal.entity.admin_agent_entity import AdminAgentPrincipal, AutomationLevel
+from internal.entity.memory_recall_entity import MemoryRecallOutcome
 from internal.exception import FailException
 from internal.service.admin_agent_chat_service import (
     MAX_TOOL_ITERATIONS,
@@ -96,7 +97,7 @@ def _service(principal, llm, tools):
     service._build_system_prompt = (
         lambda p, prompt_key, *, memory_text="", remaining_run_tokens=0: "系统提示词"
     )
-    service._recall_memory = lambda **kw: ""
+    service._recall_memory = lambda **kw: MemoryRecallOutcome()
     service._write_memory = lambda **kw: None
     service._persist = []
     service.append_message = lambda **kwargs: service._persist.append(kwargs) or SimpleNamespace(id=uuid4())
@@ -424,7 +425,7 @@ def test_resume_rejects_conversation_of_another_agent():
         service._build_system_prompt = (
             lambda p, prompt_key, *, memory_text="", remaining_run_tokens=0: "系统提示词"
         )
-        service._recall_memory = lambda **kw: ""
+        service._recall_memory = lambda **kw: MemoryRecallOutcome()
         service._write_memory = lambda **kw: None
         service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(prompt_key=None)
 
@@ -457,7 +458,7 @@ def test_chat_injects_admin_memory_into_system_prompt(monkeypatch):
         return "系统提示词"
 
     service._build_system_prompt = _fake_build_prompt
-    service._recall_memory = lambda **kw: "管理员上次说过：偏好简洁"
+    service._recall_memory = lambda **kw: MemoryRecallOutcome(text="管理员上次说过：偏好简洁")
 
     list(
         service.chat(
@@ -471,13 +472,69 @@ def test_chat_injects_admin_memory_into_system_prompt(monkeypatch):
     assert "偏好简洁" in captured["memory_text"], "召回文本必须注入提示词"
 
 
+def test_chat_emits_memory_confirmation_frame_when_confidential_withheld():
+    """命中机密记忆未授权时必须发确认卡片帧（payload 与用户端同形状）。"""
+    llm = _FakeLLM([SimpleNamespace(content="好的。", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+    outcome = MemoryRecallOutcome(
+        text="（系统提示：本次命中 1 条机密记忆（手机号）…）",
+        withheld=[
+            {
+                "memory_id": "m1",
+                "types": ["phone"],
+                "label": "手机号",
+                "preview": "我的手机号是 [PHONE_REDACTED]",
+            }
+        ],
+        confirmation_id="conf-admin-1",
+    )
+    service._recall_memory = lambda **kw: outcome
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="我的手机号是多少",
+        )
+    )
+
+    body = "".join(frames)
+    assert "event: memory_confirmation_required" in body
+    payload_line = [f for f in frames if "memory_confirmation_required" in f][0]
+    payload = json.loads(payload_line.split("data:", 1)[1])
+    assert payload["confirmation_id"] == "conf-admin-1"
+    assert payload["count"] == 1
+    assert payload["memory_items"][0]["memory_id"] == "m1"
+    # 脱敏预览不得包含原始号码
+    assert "13812345678" not in payload_line
+
+
+def test_chat_without_withheld_does_not_emit_confirmation_frame():
+    """没有待确认条目时不得多发帧（避免前端空卡片）。"""
+    llm = _FakeLLM([SimpleNamespace(content="好的。", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+    service._recall_memory = lambda **kw: MemoryRecallOutcome(text="普通记忆")
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="你好",
+        )
+    )
+
+    assert "memory_confirmation_required" not in "".join(frames)
+
+
 def test_chat_writes_admin_memory_after_answer():
     """答后必须写入记忆（带 query 与 ai_response）。"""
     llm = _FakeLLM([SimpleNamespace(content="回答内容", tool_calls=[])])
     service = _service(_principal(), llm, [])
     captured = {}
 
-    service._recall_memory = lambda **kw: ""
+    service._recall_memory = lambda **kw: MemoryRecallOutcome()
     service._write_memory = lambda **kw: captured.update(kw)
 
     list(
@@ -524,7 +581,7 @@ def test_memory_write_failure_does_not_break_chat():
     def _boom(**kwargs):
         raise RuntimeError("write down")
 
-    service._recall_memory = lambda **kw: ""
+    service._recall_memory = lambda **kw: MemoryRecallOutcome()
     service._write_memory = _boom
 
     frames = list(

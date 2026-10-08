@@ -76,6 +76,35 @@ def _json_dumps(payload: dict) -> str:
 # 关系类型白名单：只允许字母数字下划线，防 Cypher 注入
 _RELATION_TYPE_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
+# LLM 抽出的关系谓词常为中文（"喜欢""住在"…），直接拼接 Cypher 会被 _RELATION_TYPE_RE
+# 拒绝 → 整条关系边丢失（Episode 仍写入，但"谁喜欢什么"这类关系不上图，relations 视图少料）。
+# 归一化：已知谓词映射为稳定英文边类型，未知的一律 RELATED_TO（保留语义可查性）。
+_RELATION_TYPE_ALIASES: dict[str, str] = {
+    "喜欢": "LIKES", "爱": "LIKES", "爱吃": "LIKES", "喜欢吃": "LIKES", "偏好": "PREFERS",
+    "讨厌": "DISLIKES", "不喜欢": "DISLIKES", "害怕": "FEARS",
+    "住在": "LIVES_IN", "居住": "LIVES_IN", "居住于": "LIVES_IN", "所在地": "LIVES_IN",
+    "工作": "WORKS_AT", "就职于": "WORKS_AT", "任职于": "WORKS_AT",
+    "认识": "KNOWS", "朋友": "KNOWS", "同事": "WORKS_WITH", "家人": "FAMILY_OF",
+    "拥有": "OWNS", "养": "OWNS", "有": "HAS", "掌握": "KNOWS_HOW_TO", "擅长": "GOOD_AT",
+    "想要": "WANTS", "计划": "PLANS", "目标": "AIMS_FOR", "属于": "BELONGS_TO",
+}
+
+
+def normalize_relation_type(raw: str) -> str:
+    """把关系谓词归一化为合法边类型（仅 [A-Za-z0-9_]）。
+
+    命中别名表 → 映射值；已是合法英文类型 → 原样大写；其余 → RELATED_TO。
+    """
+    text = str(raw or "").strip()
+    if text and _RELATION_TYPE_RE.match(text):
+        return text.upper()
+    if text in _RELATION_TYPE_ALIASES:
+        return _RELATION_TYPE_ALIASES[text]
+    for key, mapped in _RELATION_TYPE_ALIASES.items():
+        if key in text:
+            return mapped
+    return "RELATED_TO"
+
 
 @inject
 @dataclass
@@ -138,6 +167,12 @@ class LedgerWriter:
         owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """write_full_path 的原始实现。"""
+        # 敏感度分级：机密记忆（身份证/手机号/银行卡/密码/验证码/密钥）**照常存储**，
+        # 但召回默认不注入，需用户在对话中明确确认后才读取（sensitivity 模块 + 
+        # MemoryRetriever.retrieve_for_chat）。普通记忆的召回不需要任何确认。
+        from internal.service.memory.sensitivity import classify as classify_sensitivity
+
+        sensitivity, sensitivity_types = classify_sensitivity(event.content)
         now = datetime.now(UTC)
         driver = self._get_driver()
 
@@ -186,6 +221,8 @@ class LedgerWriter:
                 episode_node_id = self._create_episode_node(
                     driver, event, now, owner=owner_key,
                     explicit_detection=explicit_detection,
+                    sensitivity=sensitivity,
+                    sensitivity_types=sensitivity_types,
                 )
 
                 # 2. 合并实体并建立 Episode -> Entity 的 CONTAINS 边
@@ -312,6 +349,8 @@ class LedgerWriter:
                 "source": event.source.value if event.source else None,
                 "event_id": str(event.event_id),
                 "created_from": "memory_system",
+                "sensitivity": sensitivity,
+                "sensitivity_types": list(sensitivity_types or []),
             }
             if explicit_detection and explicit_detection.is_explicit:
                 vector_payload["explicit_category"] = (
@@ -478,6 +517,9 @@ class LedgerWriter:
         # 3. 写入 pgvector 向量（warm 标记）
         #    键值互补不变式：仅当 Episode 图节点创建成功后才写投影行。
         vector_id = None
+        from internal.service.memory.sensitivity import classify as classify_sensitivity
+
+        sensitivity, sensitivity_types = classify_sensitivity(summary or event.content)
         if episode_node_id:
             vector_id = self._upsert_vector(
                 point_id=episode_node_id,
@@ -493,6 +535,8 @@ class LedgerWriter:
                     "source": event.source.value if event.source else None,
                     "event_id": str(event.event_id),
                     "created_from": "memory_system",
+                    "sensitivity": sensitivity,
+                    "sensitivity_types": list(sensitivity_types or []),
                 },
                 owner_key=owner_key,
             )
@@ -605,6 +649,8 @@ class LedgerWriter:
         owner: Optional[MemoryOwnerKey] = None,
         content_override: Optional[str] = None,
         explicit_detection: Optional[ExplicitDetectionResult] = None,
+        sensitivity: str = "normal",
+        sensitivity_types: Optional[list[str]] = None,
     ) -> str:
         """创建 Episode 节点并返回其 node_id。
 
@@ -654,7 +700,9 @@ class LedgerWriter:
             session_id: $session_id,
             explicit_category: $explicit_category,
             explicit_polarity: $explicit_polarity,
-            explicit_subject: $explicit_subject
+            explicit_subject: $explicit_subject,
+            sensitivity: $sensitivity,
+            sensitivity_types: $sensitivity_types
         }})
         SET e += $owner_props
         RETURN e.node_id AS node_id
@@ -670,6 +718,8 @@ class LedgerWriter:
             "explicit_category": explicit_category,
             "explicit_polarity": explicit_polarity,
             "explicit_subject": explicit_subject,
+            "sensitivity": sensitivity,
+            "sensitivity_types": list(sensitivity_types or []),
         }
 
         with driver.session() as session:
@@ -763,10 +813,10 @@ class LedgerWriter:
             t_valid_at: 事实开始有效时间
             properties: 额外边属性（可选）
         """
-        if not _RELATION_TYPE_RE.match(relation_type or ""):
-            raise ValueError(
-                f"非法 relation_type: {relation_type!r}（仅允许字母数字下划线）"
-            )
+        raw_relation_type = relation_type
+        relation_type = normalize_relation_type(relation_type)
+        if relation_type != raw_relation_type:
+            logger.info("关系类型归一化: %r -> %r", raw_relation_type, relation_type)
 
         now = datetime.now(UTC)
         edge_id = str(uuid4())
@@ -1207,6 +1257,11 @@ class LedgerWriter:
             curated_metadata["user_id"] = str(owner_key.owner_account_id)
         curated_metadata["memory_type"] = memory_type
 
+        from internal.service.memory.sensitivity import classify as classify_sensitivity
+
+        sensitivity, sensitivity_types = classify_sensitivity(content)
+        curated_metadata["sensitivity"] = sensitivity
+        curated_metadata["sensitivity_types"] = list(sensitivity_types or [])
         # 1. 写入 Neo4j Episode 节点（source="agent_curated"，键的权威）
         driver = self._get_driver()
         node_created = False
@@ -1221,7 +1276,9 @@ class LedgerWriter:
                     created_at: datetime(),
                     storage_tier: 'hot',
                     source: 'agent_curated',
-                    memory_type: $memory_type
+                    memory_type: $memory_type,
+                    sensitivity: $sensitivity,
+                    sensitivity_types: $sensitivity_types
                 }})
                 RETURN e.node_id AS node_id
                 """
@@ -1230,6 +1287,8 @@ class LedgerWriter:
                         "node_id": str(memory_id),
                         "content": content,
                         "memory_type": memory_type,
+                        "sensitivity": sensitivity,
+                        "sensitivity_types": list(sensitivity_types or []),
                         **props,
                     })
                 node_created = True

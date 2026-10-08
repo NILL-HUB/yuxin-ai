@@ -396,6 +396,31 @@ admin 分支）。`budget_config` 未配置（空 dict）→ 恒放行。
 
 **错误**：`400 validate_error`（非法 `subject_type` / UUID）、`403 forbidden`（无权限）。
 
+### 机密记忆读取确认（`memory_confirmation_required` 卡片，2026-10-05）
+
+对话流命中机密记忆（身份证 / 手机号 / 银行卡 / 密码 / 验证码 / 密钥）且未获授权时，
+`POST /admin/agents/<agent_id>/chat` 的 SSE 流会先发一帧：
+
+```
+event: memory_confirmation_required
+data:{"confirmation_id":"<hex>","memory_items":[{"memory_id","types","label","preview"}],"count":1}
+```
+
+`preview` 已脱敏（PII 替换为 `[PHONE_REDACTED]` 一类占位符）；与用户端事件同名、payload 同源
+（`MemoryRecallOutcome.confirmation_payload()`，键为 `memory_items` 而非 `items`，避开用户端子任务契约）。
+
+| 方法 + 路径 | 权限 | 说明 |
+| --- | --- | --- |
+| `GET /admin/agents/<agent_id>/memory/confirmations/<confirmation_id>` | `agent_pool:read` | 确认详情（状态 + 脱敏条目） |
+| `POST .../confirm` | `agent_pool:manage` | 允许读取：写入 30 分钟有效的授权白名单（Redis），之后同一批记忆在 TTL 内可直接注入 |
+| `POST .../cancel` | `agent_pool:manage` | 拒绝读取（不写任何授权） |
+
+主体键与召回一致（`MemoryOwnerKey.for_admin(admin_user_id, agent_id)`）；跨 Agent / 跨管理员 /
+过期 / 不存在一律 `404 not_found`（不泄露"存在但不属于你"）。Redis 不可用时：
+读取按"未授权"、创建确认降级为「无卡片、保留文本提示」，绝不影响对话本身。
+实现：`api/internal/service/memory/read_confirmation_service.py`（状态承载）+
+`confidential_gate.py`（放行策略与确认创建）+ `AdminAgentChatService`（发帧）。
+
 ---
 
 ## 10. 尚未落地

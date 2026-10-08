@@ -3,8 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import MemoryConfirmationCard from '@/components/MemoryConfirmationCard.vue'
 import {
+  cancelAgentMemoryConfirmation,
   chatAgent,
+  confirmAgentMemoryConfirmation,
   gdprDeleteMemory,
   getMemoryStats,
   listAgents,
@@ -18,6 +21,10 @@ import {
   type MemoryItem,
   type MemoryStats,
 } from '@/services/admin-agents'
+import {
+  normalizeMemoryConfirmationPrompt,
+  type MemoryConfirmationPrompt,
+} from '@/models/memory-confirmation'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
 import { httpCode } from '@/config'
@@ -39,6 +46,11 @@ const messagesLoading = ref(false)
 const input = ref('')
 const streaming = ref(false)
 const streamBuffer = ref<ChatMessage[]>([])
+
+// 机密记忆读取确认（memory_confirmation_required 帧）：同用户端契约
+const memoryConfirmation = ref<MemoryConfirmationPrompt | null>(null)
+const memoryConfirmationLoading = ref(false)
+const lastUserText = ref('')
 
 const memoryLoading = ref(false)
 const memoryStats = ref<MemoryStats | null>(null)
@@ -120,6 +132,12 @@ const sendMessage = async () => {
   input.value = ''
   streaming.value = true
   streamBuffer.value = []
+  lastUserText.value = text
+  // 已允许读取（confirmed）的卡片在「自动重发上一问」期间保留，提示正在重新提问；
+  // 用户直接发起的新提问则清掉旧卡片（本轮若再命中机密记忆会收到新的确认帧）。
+  if (memoryConfirmation.value?.status !== 'confirmed') {
+    memoryConfirmation.value = null
+  }
   pushUserMessage(text)
 
   const onFrame = (frame: ChatFrame) => {
@@ -143,6 +161,9 @@ const sendMessage = async () => {
         content: String(frame.data.answer || ''),
         created_at: Math.floor(Date.now() / 1000),
       })
+    } else if (frame.event === 'memory_confirmation_required') {
+      // 机密记忆确认卡片：payload 形状与用户端同源（confirmation_id / items / count）
+      memoryConfirmation.value = normalizeMemoryConfirmationPrompt(frame.data)
     } else if (frame.event === 'error') {
       Message.error(String(frame.data.error || t('admin.agents.chatError')))
     }
@@ -165,7 +186,65 @@ const sendMessage = async () => {
   } finally {
     streaming.value = false
     streamBuffer.value = []
+    // 「允许读取 → 重发上一问」这一轮流结束后，收起已允许态提示卡片；
+    // 若本轮又命中新的机密记忆，卡片已是新的 pending 态，保持不变。
+    if (memoryConfirmation.value?.status === 'confirmed') {
+      memoryConfirmation.value = null
+    }
     await loadConversations()
+  }
+}
+
+// 允许读取机密记忆：写入授权后用既有发送入口（sendMessage）自动重发上一问
+const handleAllowMemoryConfirmation = async () => {
+  const prompt = memoryConfirmation.value
+  if (!prompt) return
+  if (streaming.value) {
+    Message.warning(t('admin.agents.sending'))
+    return
+  }
+
+  memoryConfirmationLoading.value = true
+  try {
+    await confirmAgentMemoryConfirmation(agentId, prompt.confirmation_id)
+  } catch {
+    memoryConfirmation.value = null
+    Message.warning(t('memoryConfirmation.expired'))
+    return
+  } finally {
+    memoryConfirmationLoading.value = false
+  }
+
+  memoryConfirmation.value = { ...prompt, status: 'confirmed' }
+
+  if (!lastUserText.value) {
+    memoryConfirmation.value = null
+    Message.success(t('memoryConfirmation.allowed'))
+    return
+  }
+  input.value = lastUserText.value
+  try {
+    await sendMessage()
+  } finally {
+    if (memoryConfirmation.value?.status === 'confirmed') {
+      memoryConfirmation.value = null
+    }
+  }
+}
+
+const handleDenyMemoryConfirmation = async () => {
+  const prompt = memoryConfirmation.value
+  if (!prompt) return
+
+  memoryConfirmationLoading.value = true
+  try {
+    await cancelAgentMemoryConfirmation(agentId, prompt.confirmation_id)
+  } catch {
+    // 记录已过期/不存在：与拒绝一样直接收起卡片
+    Message.warning(t('memoryConfirmation.expired'))
+  } finally {
+    memoryConfirmationLoading.value = false
+    memoryConfirmation.value = null
   }
 }
 
@@ -318,6 +397,15 @@ onMounted(async () => {
             <a-spin :size="14" />
             {{ t('admin.agents.sending') }}
           </div>
+        </div>
+        <div v-if="memoryConfirmation" class="border-t border-slate-200 p-3">
+          <MemoryConfirmationCard
+            :items="memoryConfirmation.items"
+            :status="memoryConfirmation.status"
+            :loading="memoryConfirmationLoading"
+            @allow="handleAllowMemoryConfirmation"
+            @deny="handleDenyMemoryConfirmation"
+          />
         </div>
         <div class="border-t border-slate-200 p-3">
           <div class="flex items-end gap-2">

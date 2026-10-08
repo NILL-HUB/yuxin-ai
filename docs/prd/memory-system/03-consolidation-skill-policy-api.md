@@ -39,7 +39,7 @@
 >   community_governance_enabled=True、profile_enabled=True、
 >   profile_promote_min_episodes=2。
 
-> **实现口径说明（2026-10-03 复核）**：§7~§10 的「完整 Python 实现 / FastAPI 路由定义」为 **v5.x 设计期参考实现**（async + FastAPI + `src.consolidation.engine` 风格），**与仓库当前实现不一致、不代表现状**。仓库当前实现为同步 + Quart：巩固引擎 `api/internal/service/memory/consolidation_engine.py`、冲突检测 `conflict_detector.py`、技能涌现 `skill_emergence.py`、策略路由 `policy_router.py`、记忆 API 路由在 `api/app/http/user_routes_9.py`（`/memory/*`）。读代码以仓库源码为准。
+> **实现口径说明（2026-10-03 复核）**：§7~§10 的「完整 Python 实现 / FastAPI 路由定义」为 **v5.x 设计期参考实现**（async + FastAPI + `src.consolidation.engine` 风格），**与仓库当前实现不一致、不代表现状**。仓库当前实现为同步 + Quart：巩固引擎 `api/internal/service/memory/consolidation_engine.py`、冲突检测 `conflict_detector.py`、技能涌现 `skill_emergence.py`、策略路由 `policy_router.py`、记忆 API 路由在 `api/app/http/user_routes_9.py`（`/memory/*`）。读代码以仓库源码为准。（§9.1 清单中的意图枚举现名为 `ConversationIntent`；`PolicyRouter` 已接线：`MemoryRetriever.route_policy` / `retrieve_for_chat` 消费，用户侧与 admin 侧对话召回共用，REST `/memory/retrieve` 回填 `intent`——2026-10-04。§9.1 的 `PREDEFINED_VIEWS` 标签/边名已按真实 schema 修正并新增 `themes` 视图，见 `02-storage-and-retrieval.md` §6.2 注记。）
 
 ---
 

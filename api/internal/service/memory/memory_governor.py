@@ -46,11 +46,12 @@ class PIIField(BaseModel):
 # PII 正则规则表
 # =========================================================
 
+# PII 正则表统一在 sensitivity.PII_PATTERNS（分级与脱敏共用一张表，避免两套定义）；
+# 这里保留 (replacement, pattern) 视图供 filter_pii 使用。
+from internal.service.memory.sensitivity import PII_PATTERNS as _SHARED_PII_PATTERNS
+
 _PII_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("[EMAIL_REDACTED]", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
-    ("[PHONE_REDACTED]", re.compile(r"\b1[3-9]\d{9}\b")),
-    ("[ID_REDACTED]", re.compile(r"\b\d{17}[\dXx]\b")),
-    ("[CARD_REDACTED]", re.compile(r"\b\d{16,19}\b")),
+    (replacement, pattern) for _pii_type, replacement, pattern in _SHARED_PII_PATTERNS
 ]
 
 

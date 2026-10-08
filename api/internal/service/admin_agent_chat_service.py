@@ -27,6 +27,7 @@ from internal.entity.admin_agent_chat_entity import (
     AdminAgentMessageRole,
 )
 from internal.entity.admin_agent_entity import AdminAgentPrincipal
+from internal.entity.memory_recall_entity import MemoryRecallOutcome
 from internal.exception import CustomException, FailException
 from pkg.sqlalchemy import SQLAlchemy
 
@@ -128,7 +129,7 @@ class AdminAgentChatService:
             # 主体键并注入提示词。两道防线（方法内吞错 + 调用点兜底）：记忆是增强项，
             # 任何失败都不得让整轮对话以 error 帧结束。
             try:
-                memory_text = self._recall_memory(
+                memory_recall = self._recall_memory(
                     admin_user_id=principal.admin_user_id,
                     agent_id=principal.agent_id,
                     query=text,
@@ -136,11 +137,19 @@ class AdminAgentChatService:
                 )
             except Exception:
                 logger.warning("管理端 Agent 记忆召回失败，静默降级", exc_info=True)
-                memory_text = ""
+                memory_recall = MemoryRecallOutcome()
+            # 命中机密记忆（身份证/手机号/密码等）且未获授权：先发结构化确认卡片。
+            # payload 形状与用户端同源（MemoryRecallOutcome.confirmation_payload），
+            # 事件名走 admin 侧枚举（两条链路契约独立，不共用 QueueEvent）。
+            if memory_recall.needs_confirmation:
+                yield self._frame(
+                    AdminAgentChatEvent.MEMORY_CONFIRMATION_REQUIRED,
+                    memory_recall.confirmation_payload(),
+                )
             system_prompt = self._build_system_prompt(
                 principal,
                 getattr(agent, "prompt_key", None),
-                memory_text=memory_text,
+                memory_text=memory_recall.text,
                 remaining_run_tokens=per_run_limit,
             )
             llm = self._build_model()
@@ -423,11 +432,12 @@ class AdminAgentChatService:
 
     def _recall_memory(
         self, *, admin_user_id, agent_id, query: str, conversation_id: str
-    ) -> str:
-        """召回 admin/Agent 主体记忆（fail-open：任何异常返回空串）。
+    ) -> MemoryRecallOutcome:
+        """召回 admin/Agent 主体记忆（fail-open：任何异常返回空结果）。
 
         主体键由 ``recall_admin_agent_memory_for_chat`` 内部构造为
         ``for_admin(admin_user_id, agent_id=...)``——admin 无 account，绝不走用户主体。
+        返回 ``MemoryRecallOutcome``：文本 + 待确认的机密记忆（确认卡片）。
         """
         from internal.service.memory.admin_memory_recall import (
             recall_admin_agent_memory_for_chat,

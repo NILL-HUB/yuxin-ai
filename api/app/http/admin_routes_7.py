@@ -239,6 +239,49 @@ def _timestamp(value):
     return datetime_to_timestamp(value)
 
 
+async def _admin_memory_confirmation_decision(agent_id, confirmation_id, *, approve: bool):
+    """机密记忆读取确认的批准/拒绝（两个端点共用；避免两处各写一套判定）。
+
+    主体键与召回一致（``MemoryOwnerKey.for_admin``）：只有该 Agent 记忆主体的
+    确认记录可见/可操作，跨主体一律 404。
+    """
+    from app.http import asgi_app as a
+
+    permission = "agent_pool:manage"
+    admin, err = await a._resolve_admin_permission(permission)
+    if err is not None:
+        return err
+
+    from uuid import UUID
+
+    from internal.entity.memory_owner_entity import MemoryOwnerKey
+    from internal.exception import NotFoundException
+    from internal.service.admin_agent_service import AdminAgentService
+    from internal.service.memory.read_confirmation_service import (
+        MemoryReadConfirmationService,
+    )
+
+    admin_user_id = UUID(str(admin.get("id")))
+
+    def _run():
+        if a._get_service(AdminAgentService).get_agent(
+            agent_id=agent_id, admin_user_id=admin_user_id
+        ) is None:
+            raise NotFoundException("Agent 不存在")
+        owner_key = MemoryOwnerKey.for_admin(admin_user_id, agent_id=agent_id).to_key()
+        service = a._get_service(MemoryReadConfirmationService)
+        if approve:
+            service.confirm(confirmation_id, owner_key=owner_key)
+        else:
+            service.cancel(confirmation_id, owner_key=owner_key)
+        return service.get(confirmation_id, owner_key=owner_key)
+
+    try:
+        return a._ok(await a._to_thread(_run))
+    except NotFoundException as exc:
+        return a._json_resp(code="not_found", message=str(exc), status=404)
+
+
 def register_routes(quart_app):
     """把批次 7 的 Admin 端点注册到 quart_app（幂等，重复调用直接返回）。"""
     global _registered
@@ -795,6 +838,64 @@ def register_routes(quart_app):
         if result is None:
             return a._json_resp(code="not_found", message="Agent 不存在", status=404)
         return a._ok(result)
+
+    @quart_app.get("/admin/agents/<uuid:agent_id>/memory/confirmations/<string:confirmation_id>")
+    async def admin_agent_memory_confirmation_detail(agent_id, confirmation_id):
+        """读取确认详情（机密记忆确认卡片用）。
+
+        主体键与召回一致（``MemoryOwnerKey.for_admin``），跨 Agent/跨管理员一律 404。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+        from internal.exception import NotFoundException
+        from internal.service.admin_agent_service import AdminAgentService
+        from internal.service.memory.read_confirmation_service import (
+            MemoryReadConfirmationService,
+        )
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            if a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            ) is None:
+                raise NotFoundException("Agent 不存在")
+            owner_key = MemoryOwnerKey.for_admin(
+                admin_user_id, agent_id=agent_id
+            ).to_key()
+            return a._get_service(MemoryReadConfirmationService).get(
+                confirmation_id, owner_key=owner_key
+            )
+
+        try:
+            return a._ok(await a._to_thread(_run))
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+
+    @quart_app.post(
+        "/admin/agents/<uuid:agent_id>/memory/confirmations/<string:confirmation_id>/confirm"
+    )
+    async def admin_agent_memory_confirmation_confirm(agent_id, confirmation_id):
+        """允许读取命中过机密记忆的条目（授权在 TTL 内生效，见确认服务）。"""
+        return await _admin_memory_confirmation_decision(
+            agent_id, confirmation_id, approve=True
+        )
+
+    @quart_app.post(
+        "/admin/agents/<uuid:agent_id>/memory/confirmations/<string:confirmation_id>/cancel"
+    )
+    async def admin_agent_memory_confirmation_cancel(agent_id, confirmation_id):
+        """拒绝读取（不写入任何授权）。"""
+        return await _admin_memory_confirmation_decision(
+            agent_id, confirmation_id, approve=False
+        )
 
     @quart_app.get("/admin/agents")
     async def admin_agent_list():

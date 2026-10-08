@@ -309,11 +309,13 @@ class WebAppService(BaseService):
         long_term_memory = token_buffer_memory.get_distant_summary(conversation) or (conversation.summary or "")
         # 记忆读回闭环：WebApp 需登录，account 即当前登录用户，故与首页助手/我的应用
         # 一致地注入其长期记忆（fail-open，不阻断对话）。
+        # 机密记忆确认卡片暂只接入首页助手/管理端对话；此处保留召回文本提示
+        # （命中机密时 outcome.text 已含「请先确认」的模型提示），功能不退化。
         user_memory_text = recall_user_memory_for_chat(
             account_id=account.id,
             query=req.query.data,
             conversation_id=str(conversation.id),
-        )
+        ).text
         sse_queue: "queue.Queue[Any]" = queue.Queue()
         _SENTINEL = object()
 

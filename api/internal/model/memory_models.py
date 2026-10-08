@@ -15,13 +15,10 @@
     │ StorageTier              │ doc1 §1.2（统一为 str Enum）             │
     │ NodeType                 │ doc1 §1.3                               │
     │ WritePath                │ doc1 §2.1                               │
-    │ SkillStatus              │ doc3                                    │
-    │ SkillMaturity            │ doc1 §1.7                               │
+    │ SkillStatus              │ doc3（唯一事实源，skill_emergence 与前端镜像共用） │
     │ ConflictType             │ doc3                                    │
     │ ConsolidationPhase       │ doc3                                    │
-    │ QueryIntent              │ doc2                                    │
     │ FunnelLayer              │ doc2                                    │
-    │ ViewProfile              │ doc2                                    │
     │ MemoryEvent              │ doc1 §1.1                               │
     │ MemoryNode               │ doc1 §1.3                               │
     │ MemoryEdge               │ doc1 §1.4 + doc2 §5.2（合并字段）       │
@@ -47,12 +44,16 @@
     │ ConflictResult           │ doc3                                    │
     │ DedupMerge               │ doc1 §1.9 + doc3（合并）                │
     │ TierTransition           │ doc1 §1.9 + doc3（合并）                │
-    │ Skill                    │ doc1 §1.7 + doc3（合并）                │
-    │ AuditEntry               │ doc3                                    │
-    │ PIIField                 │ doc3                                    │
     │ EntityCandidate          │ doc1 §2.4（重构为 BaseModel）            │
     │ EntityResolutionResult   │ doc1 §2.4（重构为 BaseModel）            │
     └──────────────────────────┴─────────────────────────────────────────┘
+
+    2026-10-05 清理：模型层的 AuditEntry / PIIField 两个设计期副本已删除（零消费；治理侧同名类在 memory_governor 内自用）。
+    2026-10-04 清理：模型层的 Skill / SkillMaturity / ViewProfile / QueryIntent 四个设计期副本已删除
+    （零生产调用方）——技能模型由 internal.service.memory.skill_emergence.Skill 实现、
+    视图配置由 internal.service.memory.policy_router.ViewProfile 实现；意图分类词表由
+    internal.service.memory.policy_router.ConversationIntent 实现（本模块曾有的
+    factual/procedural/episodic/preference 词表从未被消费，属设计期残留）。请勿在模型层重建同名副本。
 
 文档索引:
     doc1 = docs/prd/memory-system/01-data-models-and-write-path.md
@@ -117,20 +118,17 @@ class WritePath(str, Enum):
 
 
 class SkillStatus(str, Enum):
-    """技能生命周期状态。"""
+    """技能生命周期状态（唯一事实源）。
 
-    EMERGING = "emerging"   # 涌现中
-    ACTIVE = "active"       # 活跃
-    STALE = "stale"         # 过时
-    ARCHIVED = "archived"   # 已归档
+    图内持久化的取值就是本枚举；`skill_emergence`（生命周期转移）与前端
+    `ui/src/models/memory-graph.ts` 共用同一集合，禁止各自再定义一套。
+    """
 
-
-class SkillMaturity(str, Enum):
-    """技能成熟度等级。"""
-
-    EMERGING = "emerging"   # 初级：刚从频率扫描中涌现
-    ACTIVE = "active"       # 活跃：经过多次成功应用
-    STALE = "stale"         # 过时：长期未触发
+    CANDIDATE = "candidate"    # 候选：刚涌现，待模板/成熟度验证
+    EMERGING = "emerging"      # 涌现中
+    ACTIVE = "active"          # 活跃
+    STALE = "stale"            # 过时
+    DEPRECATED = "deprecated"  # 已弃用（终态）
 
 
 class ConflictType(str, Enum):
@@ -180,16 +178,6 @@ class ConsolidationPhase(str, Enum):
     REPORT = "report"      # 报告生成
 
 
-class QueryIntent(str, Enum):
-    """查询意图分类。"""
-
-    FACTUAL = "factual"        # 事实查询
-    PROCEDURAL = "procedural"  # 过程查询
-    EPISODIC = "episodic"      # 情景查询
-    PREFERENCE = "preference"  # 偏好查询
-    UNKNOWN = "unknown"        # 未知意图
-
-
 class FunnelLayer(str, Enum):
     """检索漏斗各层。"""
 
@@ -198,14 +186,6 @@ class FunnelLayer(str, Enum):
     RANK = "rank"          # 排序层
     EVIDENCE = "evidence"  # 证据层
     RENDER = "render"      # 渲染层
-
-
-class ViewProfile(str, Enum):
-    """记忆视图配置。"""
-
-    FULL = "full"      # 完整视图
-    DIGEST = "digest"  # 摘要视图
-    GRAPH = "graph"    # 图视图
 
 
 # ============================================================
@@ -517,10 +497,20 @@ class RetrievalOptions(BaseModel):
     """检索请求选项。"""
 
     top_k: int = Field(default=20, description="返回结果数量上限")
-    time_range_days: Optional[int] = Field(default=None, description="时间范围（天数）")
-    view_names: list[str] = Field(default_factory=list, description="视图名称列表")
+    time_range_days: Optional[int] = Field(
+        default=None,
+        description="时间窗（天）：按 created_at 下推到各召回分支过滤；None=不限时间",
+    )
+    view_names: list[str] = Field(
+        default_factory=list,
+        description="视图子集（PREDEFINED_VIEWS 的键，由 PolicyRouter.select_views 产出）；空=不限视图",
+    )
     require_evidence: bool = Field(default=False, description="是否要求返回证据链")
     budget_tokens: int = Field(default=2000, description="token 预算上限")
+    prefer_deep: bool = Field(
+        default=False,
+        description="跳过 System 1 摘要快路径、直连深度检索（策略路由判定 prefer_deep 时使用）",
+    )
 
 
 class RetrievalConfig(BaseModel):
@@ -720,58 +710,6 @@ class TierTransition(BaseModel):
     reason: str = Field(..., description="变更原因")
     weight: float = Field(..., description="变更时权重")
     at_time: datetime = Field(default_factory=lambda: datetime.now(UTC), description="变更时间")
-
-
-class Skill(BaseModel):
-    """从用户行为数据中涌现的可复用行为模式。
-
-    技能不是预先编程的，而是当同一行为模式重复出现超过阈值后
-    自动创建，并通过后续相关经验增量更新逐渐成熟。
-
-    Attributes:
-        skill_id: 技能全局唯一标识
-        name: 技能名称（如 "code_review_workflow"）
-        pattern: 行为模式描述
-        frequency: 技能被触发的累计次数
-        maturity: 成熟度等级
-        status: 生命周期状态
-        confidence: 技能置信度 [0, 1]
-        last_seen: 最后触发时间
-        first_seen: 首次触发时间
-        examples: 技能示例列表
-    """
-
-    skill_id: UUID = Field(default_factory=uuid4, description="技能唯一标识")
-    name: str = Field(..., min_length=1, description="技能名称")
-    pattern: str = Field(default="", description="行为模式描述")
-    frequency: int = Field(default=0, description="触发累计次数")
-    maturity: SkillMaturity = Field(default=SkillMaturity.EMERGING, description="成熟度等级")
-    status: SkillStatus = Field(default=SkillStatus.EMERGING, description="生命周期状态")
-    confidence: float = Field(default=0.0, description="技能置信度 [0, 1]")
-    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), description="最后触发时间")
-    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), description="首次触发时间")
-    examples: list[str] = Field(default_factory=list, description="技能示例列表")
-
-
-class AuditEntry(BaseModel):
-    """审计日志条目。"""
-
-    entry_id: UUID = Field(default_factory=uuid4, description="审计条目唯一标识")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="审计时间")
-    actor: str = Field(..., description="操作者")
-    action: str = Field(..., description="操作类型")
-    target: str = Field(..., description="操作目标")
-    before: Optional[dict[str, Any]] = Field(default=None, description="变更前状态")
-    after: Optional[dict[str, Any]] = Field(default=None, description="变更后状态")
-
-
-class PIIField(BaseModel):
-    """PII 字段处理策略（mask/redact/retain）。"""
-
-    field_name: str = Field(..., description="字段名称")
-    value: str = Field(..., description="字段值")
-    category: str = Field(..., description="PII 类别")
-    action: str = Field(..., description="处理动作：mask/redact/retain")
 
 
 # ============================================================

@@ -350,6 +350,8 @@ class MemoryDigest(BaseModel):
 
 从用户行为数据中涌现的可复用行为模式，不是预先编程的，而是当同一行为模式重复出现超过阈值后自动创建。
 
+> **实现口径（2026-10-04 复核）**：下方清单为**设计期草案**——其中的 `SkillMaturity`（`INITIAL/VERIFIED/MATURE`）代码从未采用，模型层同名副本已删除。当前实现：技能模型在 `internal/service/memory/skill_emergence.py` 的 `Skill`（成熟度为 0–1 连续分，无枚举档位），生命周期状态用 `internal/model/memory_models.py` 的 `SkillStatus`（`candidate/emerging/active/stale/deprecated`，唯一事实源）。
+
 ```python
 """技能模型 -- 从行为数据中涌现的可复用模式"""
 

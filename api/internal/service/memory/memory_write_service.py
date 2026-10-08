@@ -283,6 +283,10 @@ class MemoryWriteService:
                 "resolved_count": conflict_result.resolved_count,
                 "superseded_ids": conflict_result.superseded_ids,
             }
+            # 写入成功后失效该主体的 Digest 缓存（变更驱动重建）。
+            # 缺失这一步的实测后果：缓存里仍是写入前的旧摘要（TTL 最长 24h），
+            # 用户紧接着问"我喜欢吃什么"会拿到"暂无"或旧值，表现为"刚说的话它不记得"。
+            self._invalidate_digest_cache(owner_key, event)
             return result
 
         except Exception:
@@ -292,6 +296,22 @@ class MemoryWriteService:
                 exc_info=True,
             )
             return None
+
+    @staticmethod
+    def _invalidate_digest_cache(owner_key, event: MemoryEvent) -> None:
+        """写入成功后失效 Digest 缓存（失败不阻断写入）。
+
+        主体键口径与读路径一致：显式传入的 ``owner_key`` 优先，否则按历史语义
+        取 ``event.user_id``（用户主体为裸 UUID，见 ``MemoryOwnerKey``）。
+        """
+        try:
+            from app.http.app import injector
+            from internal.service.memory.digest_manager import DigestManager
+
+            subject_key = owner_key.to_key() if owner_key is not None else str(event.user_id)
+            injector.get(DigestManager).invalidate(subject_key)
+        except Exception:
+            logger.warning("写入后失效 Digest 缓存失败（不阻断写入）", exc_info=True)
 
     # =========================================================
     # 三条写入路径

@@ -73,6 +73,7 @@ USER_CASES = [
         MATCH (e:Episode)
         WHERE e.user_id = $user_id
           AND e.explicit_category IS NOT NULL
+          AND coalesce(e.sensitivity, 'normal') <> 'confidential'
           AND e.t_invalidated_at IS NULL
           AND (e.status IS NULL OR NOT (e.status IN ['superseded', 'deprecated']))
         RETURN e.explicit_category AS category,
@@ -111,6 +112,7 @@ USER_CASES = [
         MATCH (e:Episode)
         WHERE e.user_id = $user_id
           AND (e.storage_tier IS NULL OR e.storage_tier IN ['hot', 'warm'])
+          AND coalesce(e.sensitivity, 'normal') <> 'confidential'
         RETURN e.summary AS summary, e.content AS content, e.created_at AS created_at
         ORDER BY e.created_at DESC
         LIMIT $limit

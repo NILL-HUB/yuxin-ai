@@ -80,6 +80,7 @@ from internal.service.memory.salience_scorer import SalienceScorer
 from internal.service.memory.explicit_detector import ExplicitStatementDetector
 from internal.service.memory.write_time_conflict_resolver import WriteTimeConflictResolver
 from internal.service.memory.digest_manager import DigestManager
+from internal.service.memory.read_confirmation_service import MemoryReadConfirmationService
 from internal.service.memory.policy_router import PolicyRouter
 from internal.service.memory.memory_governor import MemoryGovernor
 from internal.service.memory.degradation_manager import DegradationManager
@@ -231,6 +232,12 @@ class ExtensionModule(Module):
 
         # 注册记忆系统服务（Track B/C 检索与巩固路径）
         binder.bind(DigestManager, to=DigestManager, scope=singleton)
+        # 机密记忆读取确认（结构化确认卡片的 pending/授权状态，Redis 承载）
+        binder.bind(
+            MemoryReadConfirmationService,
+            to=MemoryReadConfirmationService,
+            scope=singleton,
+        )
 
         # 注册记忆系统服务（Track D/E 策略治理与技能池）
         binder.bind(PolicyRouter, to=PolicyRouter, scope=singleton)
